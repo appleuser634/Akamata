@@ -1,0 +1,20 @@
+.{
+    .name = .akamata,
+    .version = "0.0.1",
+    .fingerprint = 0x87735abe232892b8,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "third_party",
+        "examples",
+        "tests",
+        "deploy",
+        "docs",
+        "README.md",
+        "LICENSE",
+        "todo.md",
+    },
+}

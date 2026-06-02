@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Akamata — Zig 製モダン Web フレームワーク</title>
+<style>
+  @page {
+    size: 13.333in 7.5in;     /* 16:9, ~ 1280x720 at print */
+    margin: 0;
+  }
+  :root {
+    --bg: #0f172a;
+    --fg: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent2: #f472b6;
+    --code-bg: #1e293b;
+    --code-fg: #f8fafc;
+    --kw: #c4b5fd;
+    --str: #86efac;
+    --num: #fda4af;
+    --com: #64748b;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+    font-family: "Helvetica Neue", "Hiragino Sans", "Yu Gothic", sans-serif;
+    font-size: 22pt; line-height: 1.5; }
+  .slide {
+    width: 13.333in;
+    height: 7.5in;
+    padding: 0.55in 0.75in 0.4in 0.75in;
+    box-sizing: border-box;
+    page-break-after: always;
+    page-break-inside: avoid;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25in;
+    position: relative;
+    overflow: hidden;
+  }
+  .slide:last-child { page-break-after: auto; }
+  .slide .pgnum {
+    position: absolute; right: 0.5in; bottom: 0.25in;
+    color: var(--muted); font-size: 11pt;
+  }
+  .slide.title .pgnum { display: none; }
+  h1 { font-size: 36pt; margin: 0; color: var(--accent); font-weight: 800; }
+  h2 { font-size: 28pt; margin: 0; color: var(--accent); font-weight: 800;
+    padding-bottom: 6pt; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 18pt; margin: 0; color: var(--accent2); font-weight: 700; }
+  p, ul, ol { margin: 0; }
+  ul, ol { padding-left: 1.2em; }
+  li { margin: 4pt 0; }
+  li strong { color: var(--accent); font-weight: 700; }
+  code { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; font-size: 0.9em;
+    background: var(--code-bg); padding: 1pt 6pt; border-radius: 3pt; color: var(--code-fg); }
+  pre { background: var(--code-bg); color: var(--code-fg);
+    border-radius: 8pt; padding: 14pt 18pt; margin: 0; overflow: hidden;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 14pt; line-height: 1.45;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+  .k { color: var(--kw); }
+  .s { color: var(--str); }
+  .n { color: var(--num); }
+  .c { color: var(--com); font-style: italic; }
+  .row { display: flex; gap: 0.3in; flex: 1; }
+  .col { flex: 1; display: flex; flex-direction: column; gap: 0.2in; }
+  .card { background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.3);
+    border-radius: 8pt; padding: 14pt 18pt; }
+  .card h3 { margin-bottom: 6pt; }
+  .badge { display: inline-block; background: rgba(244,114,182,0.15);
+    color: var(--accent2); padding: 2pt 10pt; border-radius: 999pt;
+    font-size: 0.6em; font-weight: 600; margin-left: 8pt; vertical-align: middle; }
+  table { border-collapse: collapse; width: 100%; font-size: 14pt; }
+  th, td { padding: 6pt 10pt; text-align: left; border-bottom: 1px solid rgba(148,163,184,0.3); }
+  th { color: var(--accent); font-weight: 700; }
+  .small { font-size: 13pt; color: var(--muted); }
+  .footer { color: var(--muted); font-size: 13pt; margin-top: auto; }
+  .center { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; height: 100%; }
+  .center h1 { font-size: 56pt; }
+  .center .sub { color: var(--muted); font-size: 22pt; margin-top: 0.2in; }
+  .quote { font-size: 28pt; font-style: italic; color: var(--accent); }
+  .big-stat { font-size: 64pt; font-weight: 800; color: var(--accent2); line-height: 1; }
+  .big-stat .unit { color: var(--muted); font-size: 24pt; font-weight: 400; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.25in; flex: 1; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3in; flex: 1; }
+  .accent { color: var(--accent); }
+  .accent2 { color: var(--accent2); }
+  .strike { text-decoration: line-through; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- ============ Slide 1: Cover ============ -->
+<section class="slide title">
+  <div class="center">
+    <h1>Akamata</h1>
+    <div class="sub">Zig 0.16 製のモダン Web フレームワーク<br>
+      <span class="accent2">VPS でも Cloudflare Workers でも、同じコードで動く</span>
+    </div>
+    <div style="margin-top: 0.6in; font-size: 14pt; color: var(--muted);">
+      v0.3 · 2026
+    </div>
+  </div>
+</section>
+
+<!-- ============ Slide 2: Why ============ -->
+<section class="slide">
+  <h2>なぜ作ったのか</h2>
+  <ul>
+    <li><strong>Zig</strong> のパフォーマンスと安全性 (依存ゼロ、メモリ管理が明示的) を Web に持ち込みたい</li>
+    <li>「<strong>VPS で動く小さな静的バイナリ</strong>」と「<strong>Cloudflare Workers の wasm モジュール</strong>」を <strong class="accent2">1 つのソース</strong>から両方ビルドしたい</li>
+    <li>Hono の DX (ハンドラ + ミドルウェア + 型安全 JSON) を Zig で実現</li>
+    <li>SQLite / Turso / D1 を URL 一つで切り替える透過的な DB 層</li>
+  </ul>
+  <div class="card">
+    <h3>結果</h3>
+    <p>本番運用可能な品質 · 5,300 万リクエスト連続処理してメモリリーク無し · P99 88µs · 検証された HTTP smuggling 防御</p>
+  </div>
+</section>
+
+<!-- ============ Slide 3: Hello World ============ -->
+<section class="slide">
+  <h2>Hello, Akamata</h2>
+  <p>Express / Hono を触ったことがあれば、ほぼ説明不要のはずです。</p>
+  <pre><code><span class="k">const</span> std = <span class="k">@import</span>(<span class="s">"std"</span>);
+<span class="k">const</span> am  = <span class="k">@import</span>(<span class="s">"akamata"</span>);
+
+<span class="k">const</span> State = <span class="k">struct</span> {};
+
+<span class="k">pub fn</span> main() !<span class="k">void</span> {
+    <span class="k">var</span> gpa: std.heap.DebugAllocator(.{}) = .init;
+    <span class="k">defer</span> _ = gpa.deinit();
+
+    <span class="k">var</span> app = am.App(State).init(gpa.allocator(), .{});
+    <span class="k">defer</span> app.deinit();
+
+    _ = <span class="k">try</span> app.useAll(am.mw.recover(State));
+    _ = <span class="k">try</span> app.get(<span class="s">"/"</span>, hello);
+
+    <span class="k">try</span> app.serve(.{ .port = <span class="n">8080</span> });
+}
+
+<span class="k">fn</span> hello(c: *am.Context(State)) !<span class="k">void</span> {
+    <span class="k">try</span> c.text(<span class="s">"Hello, Akamata!"</span>);
+}</code></pre>
+</section>
+
+<!-- ============ Slide 4: One source two targets ============ -->
+<section class="slide">
+  <h2>同じソース、2 つの形態</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>🖥️ Native バイナリ</h3>
+      <pre style="font-size: 13pt;"><code>zig build -Doptimize=ReleaseFast
+<span class="c"># 静的 musl バイナリ</span>
+zig build \
+  -Dtarget=x86_64-linux-musl \
+  -Doptimize=ReleaseFast</code></pre>
+      <p class="small">VPS · Docker · Cloudflare Containers</p>
+    </div>
+    <div class="card">
+      <h3>☁️ Cloudflare Workers</h3>
+      <pre style="font-size: 13pt;"><code>zig build \
+  -Dbackend=workers \
+  -Doptimize=ReleaseSmall
+<span class="c"># 約 140 KB の wasm</span>
+akamata deploy --workers</code></pre>
+      <p class="small">Edge · D1 / Turso · スケーラブル</p>
+    </div>
+  </div>
+  <p class="footer">ハンドラのコードは <strong class="accent">完全に同じ</strong>。<code>am.backend</code> 定数で必要に応じて分岐可能。</p>
+</section>
+
+<!-- ============ Slide 5: DB abstraction ============ -->
+<section class="slide">
+  <h2>DB を URL 1 つで切り替え</h2>
+  <pre><code><span class="k">var</span> db = <span class="k">try</span> am.db.open(alloc, url);</code></pre>
+  <table>
+    <thead><tr><th>URL スキーム</th><th>バックエンド</th><th>実行先</th></tr></thead>
+    <tbody>
+      <tr><td><code>file:./app.db</code></td><td>SQLite (in-process)</td><td>native のみ</td></tr>
+      <tr><td><code>libsql://&lt;db&gt;.turso.io?authToken=…</code></td><td>Turso (libsql HTTP)</td><td>native + Workers</td></tr>
+      <tr><td><code>https://&lt;db&gt;.turso.io?authToken=…</code></td><td>Turso (HTTPS alias)</td><td>native + Workers</td></tr>
+      <tr><td><code>d1:DB</code></td><td>Cloudflare D1 binding</td><td>Workers のみ</td></tr>
+    </tbody>
+  </table>
+  <p>ハンドラからは同一 vtable (<code>am.db.Db</code>)。<strong class="accent2">SQL も bind 引数も全く同じ</strong>。</p>
+</section>
+
+<!-- ============ Slide 6: Model ============ -->
+<section class="slide">
+  <h2>Model 層 — struct 1 つで完結</h2>
+  <pre><code><span class="k">pub const</span> Todo = <span class="k">struct</span> {
+    id: ?i64 = <span class="k">null</span>,
+    title: []<span class="k">const</span> u8,
+    priority: i32 = <span class="n">3</span>,
+    completed: <span class="k">bool</span> = <span class="k">false</span>,
+    created_at: ?i64 = <span class="k">null</span>,
+
+    <span class="k">pub const</span> __schema = .{
+        .table = <span class="s">"todos"</span>,
+        .indexes = .{ .{ .{ <span class="s">"completed"</span>, <span class="s">"priority"</span> }, .index } },
+        .defaults  = .{ .created_at = <span class="s">"unixepoch()"</span> },
+        .validates = .{
+            .title    = .{ am.model.rule.required, am.model.rule.max_len(<span class="n">200</span>) },
+            .priority = .{ am.model.rule.range(<span class="n">1</span>, <span class="n">3</span>) },
+        },
+    };
+};
+
+<span class="k">const</span> Todos = am.model.repo(Todo);</code></pre>
+  <p class="footer">バリデーション、デフォルト値、インデックス、DDL 生成、マイグレーションすべてここから自動派生</p>
+</section>
+
+<!-- ============ Slide 7: Repo API ============ -->
+<section class="slide">
+  <h2>型安全な CRUD — 生 SQL 不要</h2>
+  <pre><code><span class="c">// 読み取り</span>
+<span class="k">const</span> one    = <span class="k">try</span> Todos.find(db, arena, <span class="n">42</span>);          <span class="c">// ?Todo</span>
+<span class="k">const</span> all    = <span class="k">try</span> Todos.all(db, arena);              <span class="c">// []Todo</span>
+<span class="k">const</span> highs  = <span class="k">try</span> Todos.where(db, arena, .{ .priority = <span class="n">1</span> });
+
+<span class="c">// 書き込み</span>
+<span class="k">const</span> created = <span class="k">try</span> Todos.create(db, arena, .{ .title = <span class="s">"buy milk"</span> });
+<span class="k">try</span> Todos.save(db, arena, &amp;updated);
+<span class="k">try</span> Todos.delete(db, <span class="n">7</span>);
+
+<span class="c">// 抜け道 — 任意 SQL でも T にマップ</span>
+<span class="k">const</span> rows = <span class="k">try</span> Todos.queryRaw(db, arena,
+    <span class="s">"SELECT * FROM todos WHERE created_at &gt; ? ORDER BY id"</span>, .{cutoff});
+
+<span class="c">// N+1 撲滅 — 1 IN クエリで親 + 全子を取得</span>
+<span class="k">const</span> loaded = <span class="k">try</span> am.model.preload.hasMany(User, <span class="s">"posts"</span>, owners, db, arena);</code></pre>
+</section>
+
+<!-- ============ Slide 8: Handler shortcut ============ -->
+<section class="slide">
+  <h2>ハンドラはこれだけ</h2>
+  <div class="grid2">
+    <div>
+      <h3 class="strike" style="color: var(--muted); text-decoration: line-through;">Before — 13 行</h3>
+      <pre style="font-size: 11pt;"><code><span class="k">fn</span> createTodo(c: *Ctx) !<span class="k">void</span> {
+    <span class="k">const</span> Body = <span class="k">struct</span> { title: []<span class="k">const</span> u8 };
+    <span class="k">const</span> body = c.req.json(Body) <span class="k">catch</span> {
+        <span class="k">return</span> c.json(.{
+            .error_kind = <span class="s">"bad_request"</span>,
+            .message = <span class="s">"expected {title}"</span>,
+        }, <span class="n">400</span>);
+    };
+    <span class="k">const</span> errs = <span class="k">try</span> Todos.validate(body, c.arena);
+    <span class="k">if</span> (errs.len &gt; <span class="n">0</span>) {
+        <span class="k">return</span> c.json(.{ .errors = errs }, <span class="n">422</span>);
+    }
+    <span class="k">const</span> t = <span class="k">try</span> Todos.create(c.db(), c.arena, body);
+    <span class="k">try</span> c.json(t, <span class="n">201</span>);
+}</code></pre>
+    </div>
+    <div>
+      <h3>After — 3 行</h3>
+      <pre><code><span class="k">fn</span> createTodo(c: *Ctx) !<span class="k">void</span> {
+    <span class="k">const</span> todo = (<span class="k">try</span> c.input(Todo)) <span class="k">orelse return</span>;
+    <span class="k">const</span> t = <span class="k">try</span> Todos.create(c.db(), c.arena, todo);
+    <span class="k">try</span> c.json(t, <span class="n">201</span>);
+}</code></pre>
+      <ul style="font-size: 14pt; margin-top: 0.2in;">
+        <li><code>c.input(T)</code> — パース + バリデーション</li>
+        <li>失敗時は <strong class="accent">400 / 422 を自動応答</strong></li>
+        <li><code>orelse return</code> で早期 return</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Slide 9: Migration ============ -->
+<section class="slide">
+  <h2>自動マイグレーション</h2>
+  <p>モデルの <code>__schema</code> を起動時に DB と diff、必要な ALTER を自動生成。</p>
+  <pre><code><span class="k">const</span> plan = <span class="k">try</span> am.model.migrate.diff(arena, db, &amp;all_models);
+<span class="k">try</span> am.model.migrate.apply(arena, db, plan);
+<span class="c">// → CREATE TABLE / ADD COLUMN / CREATE INDEX を必要分だけ実行</span></code></pre>
+  <h3 style="margin-top: 0.2in;">あるいはバージョン付きファイルで</h3>
+  <pre><code>$ akamata migrate generate add_email
+<span class="c">→ migrations/20260523120000_add_email.sql 生成</span>
+
+$ ./myapp migrate-up
+<span class="c">→ schema_migrations を確認、未適用分のみ実行</span></code></pre>
+  <p class="footer">どちらの方式も SQLite / Turso / D1 全てに対応。Workers では JSPI 経由で実行。</p>
+</section>
+
+<!-- ============ Slide 10: One-shot deploy ============ -->
+<section class="slide">
+  <h2>1 コマンドでデプロイ</h2>
+  <pre><code>$ akamata deploy --workers \
+    --config=deploy/wrangler.toml \
+    --migrate=&lt;(./zig-out/bin/myapp --print-schema)</code></pre>
+  <ol>
+    <li><code>wrangler.toml</code> の <code>[[d1_databases]]</code> を読む</li>
+    <li>プレースホルダ UUID なら <code>wrangler d1 create</code> を実行、書き戻す</li>
+    <li>既存 DB ならアカウントから検出して採用</li>
+    <li><code>--migrate</code> で渡されたスキーマを本番 D1 に適用</li>
+    <li><code>zig build -Dbackend=workers</code></li>
+    <li><code>wrangler deploy</code></li>
+  </ol>
+  <p class="footer accent">2 回目以降は冪等。CI からも安全に呼べる。</p>
+</section>
+
+<!-- ============ Slide 11: JSPI ============ -->
+<section class="slide">
+  <h2>魔法の正体: JSPI</h2>
+  <p>D1 の async API を Zig 側から <strong class="accent">同期的に</strong> 呼べる仕組み。</p>
+  <div class="grid2">
+    <div class="card">
+      <h3>JS host (index.mjs)</h3>
+      <pre style="font-size: 12pt;"><code>d1_step: <span class="k">new</span> WebAssembly.Suspending(
+  <span class="k">async</span> (h) =&gt; {
+    <span class="k">const</span> e = d1stmts.get(h);
+    <span class="k">return</span> <span class="k">await</span> e.iter.next();
+  }
+);
+
+handleFetchAsync = WebAssembly.promising(
+  exports.handle_fetch);</code></pre>
+    </div>
+    <div class="card">
+      <h3>Zig 側 (d1.zig)</h3>
+      <pre style="font-size: 12pt;"><code><span class="k">extern</span> <span class="s">"akamata_d1"</span>
+    <span class="k">fn</span> d1_step(stmt: i32) i32;
+
+<span class="c">// 同期呼び出しに見える</span>
+<span class="k">while</span> ((<span class="k">try</span> stmt.step()) == .row)
+    <span class="k">try</span> rows.append(arena, row);</code></pre>
+    </div>
+  </div>
+  <p class="footer">wasm スタックを V8 が park / resume。Zig 側は変更ゼロ、Asyncify 比でコードサイズ膨張ゼロ。</p>
+</section>
+
+<!-- ============ Slide 12: Reliability ============ -->
+<section class="slide">
+  <h2>信頼性 — Production audit 済み</h2>
+  <div class="grid3">
+    <div class="card">
+      <h3>HTTP smuggling 防御</h3>
+      <p class="small">CL + TE 同時拒否、複数 CL 拒否、不正 chunked 拒否。<strong class="accent">902 件の adversarial fuzz 後も panic 無し</strong>。</p>
+    </div>
+    <div class="card">
+      <h3>JWT 安全実装</h3>
+      <p class="small">alg=none / alg=RS256 偽装拒否、HS256 明示検証 (CVE-2015-2951)、時刻検証必須。</p>
+    </div>
+    <div class="card">
+      <h3>長時間負荷で安定</h3>
+      <p class="small">5 分間 53M req 処理して RSS フラット (リーク無し)、P99 ドリフト無し。</p>
+    </div>
+    <div class="card">
+      <h3>TLS 証明書検証</h3>
+      <p class="small">SAN/CN 検証、SSL_VERIFY_PEER 強制。中間者攻撃に晒さない安全な既定値。</p>
+    </div>
+    <div class="card">
+      <h3>graceful shutdown</h3>
+      <p class="small">SIGINT/SIGTERM で listener close → drain。zero-downtime 再起動を実現。</p>
+    </div>
+    <div class="card">
+      <h3>OOM safe</h3>
+      <p class="small">per-connection arena 別離、エラーは error union で型で強制。panic 発生条件を全箇所監査済み。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Slide 13: Performance ============ -->
+<section class="slide">
+  <h2>パフォーマンス <span class="badge">vs. Go / Hono</span></h2>
+  <div class="grid2">
+    <div>
+      <table>
+        <thead><tr><th>シナリオ</th><th>Akamata</th><th>Go</th><th>Hono+Bun</th></tr></thead>
+        <tbody>
+          <tr><td>/hello (text)</td><td><strong class="accent">175k</strong></td><td>208k</td><td>165k</td></tr>
+          <tr><td>/echo (JSON)</td><td><strong class="accent2">181k</strong></td><td>175k</td><td>128k</td></tr>
+          <tr><td>/db (SQLite)</td><td><strong class="accent2">91k</strong></td><td>46k (40% err)</td><td>138k</td></tr>
+        </tbody>
+      </table>
+      <p class="small">単位: req/s, M2 Pro 8 worker · 5 分間連続</p>
+    </div>
+    <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 0.2in;">
+      <div><span class="big-stat">88</span><span class="big-stat unit"> µs</span></div>
+      <p class="small">P99 latency (5 分連続実測)</p>
+      <div style="margin-top: 0.2in;"><span class="big-stat">2.5</span><span class="big-stat unit"> MB</span></div>
+      <p class="small">RSS (5,300 万 req 処理後)</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Slide 14: Observability ============ -->
+<section class="slide">
+  <h2>Observability — 即運用可能</h2>
+  <pre><code>$ curl https://app.example.com/metrics
+
+akamata_requests_total <span class="n">5891</span>
+akamata_requests_by_status{class=<span class="s">"2xx"</span>} <span class="n">5700</span>
+akamata_requests_by_status{class=<span class="s">"5xx"</span>} <span class="n">3</span>
+akamata_requests_by_method{method=<span class="s">"POST"</span>} <span class="n">1280</span>
+akamata_request_latency_seconds_bucket{le=<span class="s">"0.0001"</span>} <span class="n">4810</span>
+akamata_request_latency_seconds_sum <span class="n">0.872413</span>
+akamata_process_resident_memory_bytes <span class="n">2621440</span>
+akamata_process_uptime_seconds <span class="n">1234</span></code></pre>
+  <ul>
+    <li>カラリティ固定で TSDB が爆発しない (path ラベル無し、method は 8 値固定)</li>
+    <li>構造化アクセスログ (JSON, request_id 自動付与)</li>
+    <li>Prometheus に <code>scrape_interval: 15s</code> で繋ぐだけ</li>
+  </ul>
+</section>
+
+<!-- ============ Slide 15: CLI ============ -->
+<section class="slide">
+  <h2>akamata CLI</h2>
+  <pre><code><span class="c"># プロジェクト生成 (native + Workers の両方)</span>
+$ akamata init myapp --target=both
+
+<span class="c"># 開発</span>
+$ akamata dev                       <span class="c"># zig build run のエイリアス</span>
+
+<span class="c"># マイグレーション</span>
+$ akamata migrate generate add_users
+$ akamata migrate up
+
+<span class="c"># デプロイ</span>
+$ akamata deploy --workers --migrate=&lt;(./myapp --print-schema)
+$ akamata deploy --containers
+
+<span class="c"># タイポにも親切</span>
+$ akamata deplyo
+akamata: unknown subcommand `deplyo`
+Did you mean `akamata deploy`?</code></pre>
+</section>
+
+<!-- ============ Slide 16: Built-in middleware ============ -->
+<section class="slide">
+  <h2>標準ミドルウェアが豊富</h2>
+  <div class="grid3">
+    <div class="card"><h3>🛡️ recover</h3><p class="small">panic を 500 にして握る。一番外側に置く</p></div>
+    <div class="card"><h3>📝 logger / accessLog</h3><p class="small">stdout / JSON 構造化アクセスログ</p></div>
+    <div class="card"><h3>🆔 requestId</h3><p class="small">X-Request-ID 自動生成・伝播</p></div>
+    <div class="card"><h3>📊 metrics</h3><p class="small">Prometheus テキスト形式エクスポート</p></div>
+    <div class="card"><h3>🔒 jwt / bearerAuth</h3><p class="small">HS256/RS256、CVE-2015-2951 対策済み</p></div>
+    <div class="card"><h3>🌍 cors</h3><p class="small">プリフライト + Origin allowlist</p></div>
+    <div class="card"><h3>⏱️ rateLimit</h3><p class="small">token bucket per IP / per key</p></div>
+    <div class="card"><h3>🍪 session / csrf</h3><p class="small">署名付き Cookie + Double Submit</p></div>
+    <div class="card"><h3>📂 serveStatic</h3><p class="small">ファイル配信 (ETag, mime 推定)</p></div>
+  </div>
+</section>
+
+<!-- ============ Slide 17: WebSocket ============ -->
+<section class="slide">
+  <h2>WebSocket — HTTP ルートから upgrade</h2>
+  <pre><code>_ = <span class="k">try</span> app.ws(<span class="s">"/rooms/:id/ws"</span>, wsRoom);
+
+<span class="k">fn</span> wsRoom(c: *Ctx) !<span class="k">void</span> {
+    <span class="k">const</span> room_id = <span class="k">try</span> c.req.paramAs(u64, <span class="s">"id"</span>);
+    <span class="k">var</span> conn = <span class="k">try</span> am.ws.upgrade(Ctx, c, .{ .max_message_bytes = <span class="n">64</span> * <span class="n">1024</span> });
+    <span class="k">try</span> c.state().hub.attach(room_id, &amp;conn);
+    <span class="k">defer</span> c.state().hub.detach(room_id, &amp;conn);
+
+    <span class="k">while</span> (<span class="k">true</span>) {
+        <span class="k">const</span> msg = conn.readMessage() <span class="k">catch</span> <span class="k">return</span>;
+        <span class="k">defer</span> msg.deinit();
+        <span class="k">if</span> (msg.opcode == .text)
+            <span class="k">try</span> c.state().hub.broadcast(room_id, msg.payload);
+    }
+}</code></pre>
+  <p class="footer">Workers では Durable Object に自動委譲。ハンドラのコードは変えずに済む。</p>
+</section>
+
+<!-- ============ Slide 18: Validation ============ -->
+<section class="slide">
+  <h2>バリデーション — 宣言 1 行で完結</h2>
+  <pre><code><span class="k">pub const</span> __schema = .{
+    .validates = .{
+        .email = .{
+            am.model.rule.required,
+            am.model.rule.max_len(<span class="n">255</span>),
+            am.model.rule.format(.email),
+        },
+        .age   = .{ am.model.rule.range(<span class="n">0</span>, <span class="n">150</span>) },
+        .name  = .{ am.model.rule.required, am.model.rule.custom(noScriptTag) },
+    },
+};
+
+<span class="k">fn</span> noScriptTag(value: []<span class="k">const</span> u8, _: std.mem.Allocator) ?[]<span class="k">const</span> u8 {
+    <span class="k">if</span> (std.mem.indexOf(u8, value, <span class="s">"&lt;script&gt;"</span>) != <span class="k">null</span>)
+        <span class="k">return</span> <span class="s">"must not contain &lt;script&gt;"</span>;
+    <span class="k">return null</span>;
+}</code></pre>
+  <p class="footer">標準ルール: <code>required</code>, <code>min_len</code>, <code>max_len</code>, <code>range</code>, <code>format(.email/.url/.alphanumeric)</code>, <code>custom</code>, <code>customInt</code></p>
+</section>
+
+<!-- ============ Slide 19: Eager loading ============ -->
+<section class="slide">
+  <h2>Eager loading — N+1 撲滅</h2>
+  <pre><code><span class="c">// User の has_many :posts 関係</span>
+<span class="k">const</span> users = <span class="k">try</span> Users.all(db, arena);              <span class="c">// 1 クエリ</span>
+<span class="k">const</span> loaded = <span class="k">try</span> am.model.preload.hasMany(
+    User, <span class="s">"posts"</span>, users, db, arena);                <span class="c">// 1 IN クエリ</span>
+
+<span class="k">for</span> (loaded) |row| {
+    <span class="c">// row.parent: User</span>
+    <span class="c">// row.related: []Post   ← 既にロード済み</span>
+    std.log.info(<span class="s">"{s} has {d} posts"</span>, .{
+        row.parent.name, row.related.len
+    });
+}</code></pre>
+  <p class="footer">N 個の親 → <strong class="accent">合計 2 クエリだけ</strong>。<code>WHERE user_id IN (?, ?, ?, ...)</code> でバッチ取得。</p>
+</section>
+
+<!-- ============ Slide 20: HTML UI bundling ============ -->
+<section class="slide">
+  <h2>HTML UI も同梱 — 静的アセット不要</h2>
+  <pre><code><span class="k">const</span> index_html = <span class="k">@embedFile</span>(<span class="s">"index.html"</span>);
+
+<span class="k">fn</span> index(c: *Ctx) !<span class="k">void</span> {
+    <span class="k">const</span> accept = c.req.header(<span class="s">"accept"</span>) <span class="k">orelse</span> <span class="s">""</span>;
+    <span class="k">if</span> (std.mem.indexOf(u8, accept, <span class="s">"text/html"</span>) != <span class="k">null</span>) {
+        <span class="k">return</span> c.html(index_html);  <span class="c">// ブラウザ → HTML UI</span>
+    }
+    <span class="k">try</span> c.json(.{ .endpoints = .{ ... } }, <span class="n">200</span>);  <span class="c">// curl → JSON</span>
+}</code></pre>
+  <ul>
+    <li><code>@embedFile</code> でコンパイル時にバイナリ/wasm に焼き込み</li>
+    <li>同じバイナリだけで配信、追加デプロイ不要</li>
+    <li>Workers 上でも <strong class="accent">CDN なしで HTML 配信</strong></li>
+  </ul>
+</section>
+
+<!-- ============ Slide 21: Architecture diagram ============ -->
+<section class="slide">
+  <h2>アーキテクチャ全体像</h2>
+  <pre style="font-size: 13pt; line-height: 1.4;"><code>           ┌────────────────────────────────────┐
+           │     Zig アプリケーションコード     │
+           │   (handlers, models, middleware)   │
+           └─────────────┬──────────────────────┘
+                         │ am.App(State) + am.Context
+                         ▼
+           ┌────────────────────────────────────┐
+           │  Akamata Framework (src/)          │
+           │  HTTP parser · Router · Middleware │
+           │  am.db.Db (vtable) · am.model.*    │
+           └─────┬────────────────────────────┬─┘
+                 │                            │
+        ┌────────▼─────────┐         ┌────────▼──────────┐
+        │  -Dbackend=      │         │  -Dbackend=       │
+        │     <span class="accent">native</span>       │         │     <span class="accent2">workers</span>      │
+        │                  │         │                   │
+        │ std.Io.Threaded  │         │ wasm32-freestanding│
+        │  ↓               │         │  ↓ via JSPI       │
+        │ sqlite3.c        │         │ env.DB (D1)       │
+        │ OpenSSL (TLS)    │         │ fetch() (Turso)   │
+        └──────────────────┘         └───────────────────┘</code></pre>
+</section>
+
+<!-- ============ Slide 22: Use cases ============ -->
+<section class="slide">
+  <h2>どんなアプリ向けか</h2>
+  <div class="grid3">
+    <div class="card">
+      <h3>🚀 サーバレス API</h3>
+      <p class="small">Workers + D1 でスケール。コールドスタート ~30ms、wasm 約 150KB。</p>
+    </div>
+    <div class="card">
+      <h3>📱 モバイル/SaaS バックエンド</h3>
+      <p class="small">JWT 認証、フレンド機能、メッセージング、push 通知の標準装備。</p>
+    </div>
+    <div class="card">
+      <h3>💬 リアルタイム</h3>
+      <p class="small">WebSocket ハブ、Durable Object 対応、room/user 単位の broadcast。</p>
+    </div>
+    <div class="card">
+      <h3>🎯 マイクロサービス</h3>
+      <p class="small">Container 配信 1.8MB 静的 binary、起動 ~10ms、metrics 標準装備。</p>
+    </div>
+    <div class="card">
+      <h3>🔐 セキュリティ重視</h3>
+      <p class="small">production audit 済み、HTTP smuggling/JWT 偽装/MITM 防御。</p>
+    </div>
+    <div class="card">
+      <h3>📝 CRUD/管理画面</h3>
+      <p class="small">Model + auto-migrate + validation + HTML embed で 1 ファイル完結。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Slide 23: Comparison ============ -->
+<section class="slide">
+  <h2>競合との比較</h2>
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Akamata</th>
+        <th>Hono (Bun/Node)</th>
+        <th>Go net/http</th>
+        <th>Express</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>言語</td><td><strong class="accent">Zig</strong></td><td>TypeScript</td><td>Go</td><td>JavaScript</td></tr>
+      <tr><td>VPS デプロイ</td><td>✅ 静的 musl</td><td>⚠️ ランタイム必要</td><td>✅ 静的</td><td>⚠️ Node 必要</td></tr>
+      <tr><td>Workers</td><td>✅ wasm</td><td>✅ ネイティブ</td><td>❌</td><td>❌</td></tr>
+      <tr><td>D1 同期呼び出し</td><td>✅ JSPI</td><td>N/A (async)</td><td>—</td><td>—</td></tr>
+      <tr><td>SQLite 同梱</td><td>✅</td><td>via bun:sqlite</td><td>外部</td><td>外部</td></tr>
+      <tr><td>P99 (echo)</td><td><strong class="accent">87 µs</strong></td><td>~250 µs</td><td>~90 µs</td><td>~500 µs</td></tr>
+      <tr><td>バイナリサイズ (native)</td><td>1.8 MB</td><td>~80 MB (bun)</td><td>~10 MB</td><td>node + npm</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============ Slide 24: Roadmap ============ -->
+<section class="slide">
+  <h2>ロードマップ</h2>
+  <div class="grid2">
+    <div>
+      <h3>✅ v0.3 (現在)</h3>
+      <ul>
+        <li>Model 層 + Repo + 自動マイグレーション</li>
+        <li>Eager loading / リレーション / バリデーション</li>
+        <li>JSPI による完全な D1 サポート</li>
+        <li>akamata CLI 一発デプロイ</li>
+        <li>本番監査 (信頼性 / observability)</li>
+        <li>詳細チュートリアル + PDF</li>
+      </ul>
+    </div>
+    <div>
+      <h3>🚧 計画中</h3>
+      <ul>
+        <li>OpenTelemetry エクスポート</li>
+        <li>Reactor + io_uring / kqueue でさらなる高速化</li>
+        <li>Enum ↔ TEXT カラム自動マッピング</li>
+        <li>GraphQL 統合 (実験的)</li>
+        <li>ホットリロード (開発時)</li>
+        <li>WebTransport / HTTP/3</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Slide 25: Thanks ============ -->
+<section class="slide title">
+  <div class="center">
+    <h1 style="font-size: 48pt;">始めるには</h1>
+    <pre style="margin-top: 0.4in; font-size: 18pt;"><code>git clone https://github.com/yourorg/Akamata
+cd Akamata &amp;&amp; zig build cli
+akamata init myapp --target=both
+cd myapp &amp;&amp; zig build run</code></pre>
+    <div class="sub" style="margin-top: 0.5in;">
+      📘 <strong class="accent">詳細チュートリアル</strong>: <code>docs/tutorial.ja.md</code> (60–90 分で Todo アプリを完成)<br>
+      📖 ハンドブック: <code>docs/handbook.ja.md</code> (15 分版)<br>
+      🛠️ サンプル: <code>examples/{guestbook,chat,mobus}</code>
+    </div>
+    <div style="margin-top: 0.8in; color: var(--accent2); font-size: 24pt;">
+      Akamata で楽しい開発を 🚀
+    </div>
+  </div>
+</section>
+
+<script>
+  // Inject "N / total" badge into every non-title slide. Done at load time
+  // so Chrome's --print-to-pdf sees the populated DOM. CSS `counter(page)`
+  // unfortunately only works inside @page margin boxes, not in absolutely
+  // positioned overlays, hence this workaround.
+  (function () {
+    const slides = document.querySelectorAll(".slide");
+    const total = slides.length;
+    slides.forEach((s, i) => {
+      if (s.classList.contains("title")) return;
+      const span = document.createElement("div");
+      span.className = "pgnum";
+      span.textContent = (i + 1) + " / " + total;
+      s.appendChild(span);
+    });
+  })();
+</script>
+</body>
+</html>

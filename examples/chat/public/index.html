@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>Akamata Chat</title>
+  <style>
+    body { font: 14px/1.4 system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    #log { border: 1px solid #ccc; padding: 1rem; height: 320px; overflow-y: auto; background: #fafafa; }
+    .msg { margin: 0 0 .3rem; }
+    .msg .u { color: #06c; font-weight: bold; }
+    form { display: flex; gap: .5rem; margin-top: .5rem; }
+    input { padding: .4rem .6rem; font: inherit; }
+    input[type=text] { flex: 1; }
+  </style>
+</head>
+<body>
+  <h1>Akamata Chat</h1>
+  <p>Room ID: <input id="room" type="number" value="1" min="1" /> <button id="join">参加</button></p>
+  <div id="log"></div>
+  <form id="form">
+    <input id="user" type="text" placeholder="user" value="anon" />
+    <input id="text" type="text" placeholder="メッセージ" autocomplete="off" />
+    <button>送信</button>
+  </form>
+  <script>
+    let ws = null;
+    const log = document.getElementById('log');
+    function append(line) {
+      const div = document.createElement('div');
+      div.className = 'msg';
+      div.innerHTML = line;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+    }
+    document.getElementById('join').onclick = () => {
+      const room = document.getElementById('room').value;
+      if (ws) ws.close();
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}/rooms/${room}/ws`);
+      ws.onmessage = e => {
+        try {
+          const m = JSON.parse(e.data);
+          append(`<span class="u">${m.user}</span>: ${m.text}`);
+        } catch {
+          append(e.data);
+        }
+      };
+      ws.onopen = () => append(`<i>joined room ${room}</i>`);
+      ws.onclose = () => append(`<i>disconnected</i>`);
+    };
+    document.getElementById('form').onsubmit = async e => {
+      e.preventDefault();
+      const room = document.getElementById('room').value;
+      const user = document.getElementById('user').value;
+      const text = document.getElementById('text').value;
+      if (!text) return;
+      await fetch(`/rooms/${room}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ user, text }),
+      });
+      document.getElementById('text').value = '';
+    };
+  </script>
+</body>
+</html>

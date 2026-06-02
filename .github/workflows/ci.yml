@@ -1,0 +1,64 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.job.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - name: native-test
+            cmd: zig build test
+          - name: cli-build
+            cmd: zig build cli
+          - name: chat-native
+            cmd: zig build -Dexample=chat
+          - name: chat-workers
+            cmd: zig build -Dexample=chat -Dbackend=workers -Doptimize=ReleaseSmall
+          - name: mobus-native
+            cmd: zig build -Dexample=mobus
+          - name: mobus-workers
+            cmd: zig build -Dexample=mobus -Dbackend=workers -Doptimize=ReleaseSmall
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: ./third_party/sqlite/fetch.sh
+      - run: ${{ matrix.job.cmd }}
+
+  cli-smoke:
+    name: cli init smoke test
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: ./third_party/sqlite/fetch.sh
+      - run: zig build cli
+      - run: |
+          mkdir -p /tmp/cli-smoke && cd /tmp/cli-smoke
+          ${GITHUB_WORKSPACE}/zig-out/bin/akamata init testapp --target=both
+          test -f testapp/src/main.zig
+          test -f testapp/deploy/wrangler.toml
+          test -f testapp/deploy/Dockerfile
+
+  docker-build:
+    name: docker-build (chat container)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: ./third_party/sqlite/fetch.sh
+      - run: zig build -Dexample=chat -Dtarget=x86_64-linux-musl -Doptimize=ReleaseFast
+      - run: docker build -f deploy/Dockerfile -t akamata-chat .

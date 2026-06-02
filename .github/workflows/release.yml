@@ -1,0 +1,26 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  artifact:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-linux-musl, aarch64-linux-musl, x86_64-macos, aarch64-macos]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: ./third_party/sqlite/fetch.sh
+      - name: build
+        run: zig build -Dbackend=native -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast
+      - name: package
+        run: |
+          mkdir -p dist
+          tar -czf dist/akamata-chat-${{ matrix.target }}.tar.gz -C zig-out/bin chat
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz

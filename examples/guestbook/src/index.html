@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>akamata guestbook</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #e5e7eb; color: #111; font-size: .75rem; vertical-align: middle; }
+  @media (prefers-color-scheme: dark) { .badge { background: #374151; color: #f3f4f6; } }
+  form { display: grid; grid-template-columns: 1fr; gap: .5rem; margin: 1rem 0 1.5rem; }
+  input, textarea, button { font: inherit; padding: .5rem .6rem; border-radius: 6px; border: 1px solid #999; background: transparent; color: inherit; }
+  button { cursor: pointer; background: #2563eb; color: white; border-color: #2563eb; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  ul { list-style: none; padding: 0; }
+  li { padding: .75rem; border: 1px solid #999; border-radius: 8px; margin: .5rem 0; display: grid; grid-template-columns: 1fr auto; gap: .25rem .75rem; }
+  li .name { font-weight: 600; }
+  li .ts { color: #666; font-size: .8rem; }
+  li .msg { grid-column: 1 / -1; white-space: pre-wrap; }
+  li button { padding: .25rem .5rem; background: transparent; color: #b91c1c; border: 1px solid #b91c1c; font-size: .8rem; font-weight: normal; }
+  .empty { color: #666; font-style: italic; }
+  .error { color: #b91c1c; margin: .5rem 0; }
+</style>
+</head>
+<body>
+<h1>akamata guestbook <span class="badge" id="badge">…</span></h1>
+<p>JSON CRUD on <code>/entries</code>. Backend is selected at startup from <code>DATABASE_URL</code>.</p>
+
+<form id="post-form">
+  <input id="name" placeholder="your name" required maxlength="50">
+  <textarea id="message" placeholder="leave a message" required rows="3" maxlength="500"></textarea>
+  <button id="submit" type="submit">Post</button>
+</form>
+<div id="error" class="error"></div>
+
+<h2>Recent entries</h2>
+<ul id="list"><li class="empty">loading…</li></ul>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (ts) => new Date(ts * 1000).toLocaleString();
+
+async function refresh() {
+  try {
+    const r = await fetch("/entries", { headers: { accept: "application/json" } });
+    const data = await r.json();
+    const list = $("list");
+    if (!data.entries || data.entries.length === 0) {
+      list.innerHTML = '<li class="empty">no entries yet — be the first.</li>';
+      return;
+    }
+    list.innerHTML = data.entries.map(e => `
+      <li data-id="${e.id}">
+        <div class="name"></div>
+        <div class="ts">#${e.id} · <time></time></div>
+        <div class="msg"></div>
+        <button class="delete" type="button">delete</button>
+      </li>
+    `).join("");
+    [...list.querySelectorAll("li")].forEach((li, i) => {
+      const e = data.entries[i];
+      li.querySelector(".name").textContent = e.name;
+      li.querySelector("time").textContent = fmt(e.created_at);
+      li.querySelector(".msg").textContent = e.message;
+      li.querySelector(".delete").addEventListener("click", () => del(e.id));
+    });
+  } catch (err) {
+    showError("failed to load entries: " + err.message);
+  }
+}
+
+async function del(id) {
+  if (!confirm("delete entry #" + id + "?")) return;
+  try {
+    const r = await fetch("/entries/" + id, { method: "DELETE" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    await refresh();
+  } catch (err) {
+    showError("delete failed: " + err.message);
+  }
+}
+
+function showError(msg) {
+  $("error").textContent = msg;
+  setTimeout(() => { $("error").textContent = ""; }, 4000);
+}
+
+$("post-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("submit").disabled = true;
+  try {
+    const body = JSON.stringify({ name: $("name").value, message: $("message").value });
+    const r = await fetch("/entries", {
+      method: "POST",
+      headers: { "content-type": "application/json", "accept": "application/json" },
+      body,
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.message || ("HTTP " + r.status));
+    }
+    $("message").value = "";
+    await refresh();
+  } catch (err) {
+    showError("post failed: " + err.message);
+  } finally {
+    $("submit").disabled = false;
+  }
+});
+
+// Tag the badge with the runtime backend reported by /health.
+fetch("/health").then(r => r.json()).then(d => {
+  $("badge").textContent = d.backend || "?";
+}).catch(() => { $("badge").textContent = "offline"; });
+
+refresh();
+</script>
+</body>
+</html>

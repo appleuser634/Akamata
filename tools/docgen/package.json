@@ -1,0 +1,22 @@
+{
+  "name": "akamata-docgen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Internal tool: converts the framework's *.md docs into print-styled PDFs using marked + headless Chrome.",
+  "scripts": {
+    "build": "npm run build:handbook && npm run build:tutorial && npm run build:slides",
+    "build:handbook": "npm run build:handbook:en && npm run build:handbook:ja",
+    "build:tutorial": "npm run build:tutorial:en && npm run build:tutorial:ja",
+    "build:slides": "npm run build:slides:en && npm run build:slides:ja",
+    "build:handbook:en": "node md_to_pdf.mjs ../../docs/handbook.md ../../docs/handbook.pdf --title='Akamata Handbook'",
+    "build:handbook:ja": "node md_to_pdf.mjs ../../docs/handbook.ja.md ../../docs/handbook.ja.pdf --title='Akamata ハンドブック'",
+    "build:tutorial:en": "node md_to_pdf.mjs ../../docs/tutorial.md ../../docs/tutorial.pdf --title='Akamata Tutorial'",
+    "build:tutorial:ja": "node md_to_pdf.mjs ../../docs/tutorial.ja.md ../../docs/tutorial.ja.pdf --title='Akamata 詳細チュートリアル'",
+    "build:slides:en": "node html_to_pdf.mjs slides.html ../../docs/slides.pdf",
+    "build:slides:ja": "node html_to_pdf.mjs slides.ja.html ../../docs/slides.ja.pdf"
+  },
+  "dependencies": {
+    "marked": "^11.0.0"
+  }
+}

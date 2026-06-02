@@ -1,0 +1,2 @@
+sqlite-amalgamation-3530100
+source: https://www.sqlite.org/2026/sqlite-amalgamation-3530100.zip

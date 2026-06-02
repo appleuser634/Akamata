@@ -1,0 +1,6 @@
+# Bench artifacts (regenerable, large)
+rust/target/
+fastify/node_modules/
+fastify/package-lock.json
+hono/node_modules/
+hono/bun.lock

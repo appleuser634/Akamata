@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Akamata — A modern Zig web framework</title>
+<style>
+  @page {
+    size: 13.333in 7.5in;
+    margin: 0;
+  }
+  :root {
+    --bg: #0f172a;
+    --fg: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent2: #f472b6;
+    --code-bg: #1e293b;
+    --code-fg: #f8fafc;
+    --kw: #c4b5fd;
+    --str: #86efac;
+    --num: #fda4af;
+    --com: #64748b;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    font-size: 22pt; line-height: 1.5; }
+  .slide {
+    width: 13.333in;
+    height: 7.5in;
+    padding: 0.55in 0.75in 0.4in 0.75in;
+    box-sizing: border-box;
+    page-break-after: always;
+    page-break-inside: avoid;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25in;
+    position: relative;
+    overflow: hidden;
+  }
+  .slide:last-child { page-break-after: auto; }
+  .slide .pgnum {
+    position: absolute; right: 0.5in; bottom: 0.25in;
+    color: var(--muted); font-size: 11pt;
+  }
+  .slide.title .pgnum { display: none; }
+  h1 { font-size: 36pt; margin: 0; color: var(--accent); font-weight: 800; }
+  h2 { font-size: 28pt; margin: 0; color: var(--accent); font-weight: 800;
+    padding-bottom: 6pt; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 18pt; margin: 0; color: var(--accent2); font-weight: 700; }
+  p, ul, ol { margin: 0; }
+  ul, ol { padding-left: 1.2em; }
+  li { margin: 4pt 0; }
+  li strong { color: var(--accent); font-weight: 700; }
+  code { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; font-size: 0.9em;
+    background: var(--code-bg); padding: 1pt 6pt; border-radius: 3pt; color: var(--code-fg); }
+  pre { background: var(--code-bg); color: var(--code-fg);
+    border-radius: 8pt; padding: 14pt 18pt; margin: 0; overflow: hidden;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 14pt; line-height: 1.45;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+  .k { color: var(--kw); }
+  .s { color: var(--str); }
+  .n { color: var(--num); }
+  .c { color: var(--com); font-style: italic; }
+  .row { display: flex; gap: 0.3in; flex: 1; }
+  .col { flex: 1; display: flex; flex-direction: column; gap: 0.2in; }
+  .card { background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.3);
+    border-radius: 8pt; padding: 14pt 18pt; }
+  .card h3 { margin-bottom: 6pt; }
+  .badge { display: inline-block; background: rgba(244,114,182,0.15);
+    color: var(--accent2); padding: 2pt 10pt; border-radius: 999pt;
+    font-size: 0.6em; font-weight: 600; margin-left: 8pt; vertical-align: middle; }
+  table { border-collapse: collapse; width: 100%; font-size: 14pt; }
+  th, td { padding: 6pt 10pt; text-align: left; border-bottom: 1px solid rgba(148,163,184,0.3); }
+  th { color: var(--accent); font-weight: 700; }
+  .small { font-size: 13pt; color: var(--muted); }
+  .footer { color: var(--muted); font-size: 13pt; margin-top: auto; }
+  .center { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; height: 100%; }
+  .center h1 { font-size: 56pt; }
+  .center .sub { color: var(--muted); font-size: 22pt; margin-top: 0.2in; }
+  .big-stat { font-size: 64pt; font-weight: 800; color: var(--accent2); line-height: 1; }
+  .big-stat .unit { color: var(--muted); font-size: 24pt; font-weight: 400; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.25in; flex: 1; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3in; flex: 1; }
+  .accent { color: var(--accent); }
+  .accent2 { color: var(--accent2); }
+  .strike { text-decoration: line-through; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- 1: Cover -->
+<section class="slide title">
+  <div class="center">
+    <h1>Akamata</h1>
+    <div class="sub">A modern Zig 0.16 web framework<br>
+      <span class="accent2">One source — runs on a VPS, runs on Cloudflare Workers</span>
+    </div>
+    <div style="margin-top: 0.6in; font-size: 14pt; color: var(--muted);">
+      v0.3 · 2026
+    </div>
+  </div>
+</section>
+
+<!-- 2: Why -->
+<section class="slide">
+  <h2>Why we built it</h2>
+  <ul>
+    <li>Bring <strong>Zig</strong>'s performance + safety (zero deps, explicit memory) to the web</li>
+    <li>Ship "<strong>a small static binary for VPS</strong>" AND "<strong>a Cloudflare Workers wasm</strong>" from <strong class="accent2">one codebase</strong></li>
+    <li>Hono-style DX (handlers, middleware, typed JSON) in Zig</li>
+    <li>Transparent DB layer: SQLite / Turso / D1 swappable by URL</li>
+  </ul>
+  <div class="card">
+    <h3>Result</h3>
+    <p>Production-quality · 53M requests with zero leak · P99 88µs · audited HTTP smuggling defense</p>
+  </div>
+</section>
+
+<!-- 3: Hello -->
+<section class="slide">
+  <h2>Hello, Akamata</h2>
+  <p>If you've used Express or Hono, you already know how to read this.</p>
+  <pre><code><span class="k">const</span> std = <span class="k">@import</span>(<span class="s">"std"</span>);
+<span class="k">const</span> am  = <span class="k">@import</span>(<span class="s">"akamata"</span>);
+
+<span class="k">const</span> State = <span class="k">struct</span> {};
+
+<span class="k">pub fn</span> main() !<span class="k">void</span> {
+    <span class="k">var</span> gpa: std.heap.DebugAllocator(.{}) = .init;
+    <span class="k">defer</span> _ = gpa.deinit();
+
+    <span class="k">var</span> app = am.App(State).init(gpa.allocator(), .{});
+    <span class="k">defer</span> app.deinit();
+
+    _ = <span class="k">try</span> app.useAll(am.mw.recover(State));
+    _ = <span class="k">try</span> app.get(<span class="s">"/"</span>, hello);
+
+    <span class="k">try</span> app.serve(.{ .port = <span class="n">8080</span> });
+}
+
+<span class="k">fn</span> hello(c: *am.Context(State)) !<span class="k">void</span> {
+    <span class="k">try</span> c.text(<span class="s">"Hello, Akamata!"</span>);
+}</code></pre>
+</section>
+
+<!-- 4: One source two targets -->
+<section class="slide">
+  <h2>One source, two deploy shapes</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>🖥️ Native binary</h3>
+      <pre style="font-size: 13pt;"><code>zig build -Doptimize=ReleaseFast
+<span class="c"># static musl binary</span>
+zig build \
+  -Dtarget=x86_64-linux-musl \
+  -Doptimize=ReleaseFast</code></pre>
+      <p class="small">VPS · Docker · Cloudflare Containers</p>
+    </div>
+    <div class="card">
+      <h3>☁️ Cloudflare Workers</h3>
+      <pre style="font-size: 13pt;"><code>zig build \
+  -Dbackend=workers \
+  -Doptimize=ReleaseSmall
+<span class="c"># ~140 KB wasm</span>
+akamata deploy --workers</code></pre>
+      <p class="small">Edge · D1 / Turso · scales</p>
+    </div>
+  </div>
+  <p class="footer">Handler code is <strong class="accent">identical</strong>. Use the <code>am.backend</code> constant only where you really need to branch.</p>
+</section>
+
+<!-- 5: DB abstraction -->
+<section class="slide">
+  <h2>Swap the DB with a URL</h2>
+  <pre><code><span class="k">var</span> db = <span class="k">try</span> am.db.open(alloc, url);</code></pre>
+  <table>
+    <thead><tr><th>URL scheme</th><th>Backend</th><th>Runs where</th></tr></thead>
+    <tbody>
+      <tr><td><code>file:./app.db</code></td><td>SQLite (in-process)</td><td>native only</td></tr>
+      <tr><td><code>libsql://&lt;db&gt;.turso.io?authToken=…</code></td><td>Turso (libsql HTTP)</td><td>native + Workers</td></tr>
+      <tr><td><code>https://&lt;db&gt;.turso.io?authToken=…</code></td><td>Turso (HTTPS alias)</td><td>native + Workers</td></tr>
+      <tr><td><code>d1:DB</code></td><td>Cloudflare D1 binding</td><td>Workers only</td></tr>
+    </tbody>
+  </table>
+  <p>Handlers see the same <code>am.db.Db</code> vtable. <strong class="accent2">Same SQL, same bind args, no branching</strong>.</p>
+</section>
+
+<!-- 6: Model -->
+<section class="slide">
+  <h2>The Model layer — one struct does it all</h2>
+  <pre><code><span class="k">pub const</span> Todo = <span class="k">struct</span> {
+    id: ?i64 = <span class="k">null</span>,
+    title: []<span class="k">const</span> u8,
+    priority: i32 = <span class="n">3</span>,
+    completed: <span class="k">bool</span> = <span class="k">false</span>,
+    created_at: ?i64 = <span class="k">null</span>,
+
+    <span class="k">pub const</span> __schema = .{
+        .table = <span class="s">"todos"</span>,
+        .indexes = .{ .{ .{ <span class="s">"completed"</span>, <span class="s">"priority"</span> }, .index } },
+        .defaults  = .{ .created_at = <span class="s">"unixepoch()"</span> },
+        .validates = .{
+            .title    = .{ am.model.rule.required, am.model.rule.max_len(<span class="n">200</span>) },
+            .priority = .{ am.model.rule.range(<span class="n">1</span>, <span class="n">3</span>) },
+        },
+    };
+};
+
+<span class="k">const</span> Todos = am.model.repo(Todo);</code></pre>
+  <p class="footer">Validation, defaults, indexes, DDL, migrations — all derived from this one declaration</p>
+</section>
+
+<!-- 7: Repo API -->
+<section class="slide">
+  <h2>Typed CRUD — no raw SQL needed</h2>
+  <pre><code><span class="c">// reads</span>
+<span class="k">const</span> one    = <span class="k">try</span> Todos.find(db, arena, <span class="n">42</span>);          <span class="c">// ?Todo</span>
+<span class="k">const</span> all    = <span class="k">try</span> Todos.all(db, arena);              <span class="c">// []Todo</span>
+<span class="k">const</span> highs  = <span class="k">try</span> Todos.where(db, arena, .{ .priority = <span class="n">1</span> });
+
+<span class="c">// writes</span>
+<span class="k">const</span> created = <span class="k">try</span> Todos.create(db, arena, .{ .title = <span class="s">"buy milk"</span> });
+<span class="k">try</span> Todos.save(db, arena, &amp;updated);
+<span class="k">try</span> Todos.delete(db, <span class="n">7</span>);
+
+<span class="c">// escape hatch — arbitrary SQL still maps to T</span>
+<span class="k">const</span> rows = <span class="k">try</span> Todos.queryRaw(db, arena,
+    <span class="s">"SELECT * FROM todos WHERE created_at &gt; ? ORDER BY id"</span>, .{cutoff});
+
+<span class="c">// kills N+1 — one IN query fetches all children</span>
+<span class="k">const</span> loaded = <span class="k">try</span> am.model.preload.hasMany(User, <span class="s">"posts"</span>, owners, db, arena);</code></pre>
+</section>
+
+<!-- 8: Handler shortcut -->
+<section class="slide">
+  <h2>Handlers, abbreviated</h2>
+  <div class="grid2">
+    <div>
+      <h3 class="strike" style="color: var(--muted); text-decoration: line-through;">Before — 13 lines</h3>
+      <pre style="font-size: 11pt;"><code><span class="k">fn</span> createTodo(c: *Ctx) !<span class="k">void</span> {
+    <span class="k">const</span> Body = <span class="k">struct</span> { title: []<span class="k">const</span> u8 };
+    <span class="k">const</span> body = c.req.json(Body) <span class="k">catch</span> {
+        <span class="k">return</span> c.json(.{
+            .error_kind = <span class="s">"bad_request"</span>,
+            .message = <span class="s">"expected {title}"</span>,
+        }, <span class="n">400</span>);
+    };
+    <span class="k">const</span> errs = <span class="k">try</span> Todos.validate(body, c.arena);
+    <span class="k">if</span> (errs.len &gt; <span class="n">0</span>) {
+        <span class="k">return</span> c.json(.{ .errors = errs }, <span class="n">422</span>);
+    }
+    <span class="k">const</span> t = <span class="k">try</span> Todos.create(c.db(), c.arena, body);
+    <span class="k">try</span> c.json(t, <span class="n">201</span>);
+}</code></pre>
+    </div>
+    <div>
+      <h3>After — 3 lines</h3>
+      <pre><code><span class="k">fn</span> createTodo(c: *Ctx) !<span class="k">void</span> {
+    <span class="k">const</span> todo = (<span class="k">try</span> c.input(Todo)) <span class="k">orelse return</span>;
+    <span class="k">const</span> t = <span class="k">try</span> Todos.create(c.db(), c.arena, todo);
+    <span class="k">try</span> c.json(t, <span class="n">201</span>);
+}</code></pre>
+      <ul style="font-size: 14pt; margin-top: 0.2in;">
+        <li><code>c.input(T)</code> parses + validates</li>
+        <li>On failure <strong class="accent">400 / 422 auto-emitted</strong></li>
+        <li><code>orelse return</code> for early exit</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 9: Migration -->
+<section class="slide">
+  <h2>Auto-migration</h2>
+  <p>At startup, diff the model's <code>__schema</code> against the live DB, generate only the needed ALTERs.</p>
+  <pre><code><span class="k">const</span> plan = <span class="k">try</span> am.model.migrate.diff(arena, db, &amp;all_models);
+<span class="k">try</span> am.model.migrate.apply(arena, db, plan);
+<span class="c">// → CREATE TABLE / ADD COLUMN / CREATE INDEX as needed</span></code></pre>
+  <h3 style="margin-top: 0.2in;">Or versioned files</h3>
+  <pre><code>$ akamata migrate generate add_email
+<span class="c">→ creates migrations/20260523120000_add_email.sql</span>
+
+$ ./myapp migrate-up
+<span class="c">→ checks schema_migrations, applies pending ones</span></code></pre>
+  <p class="footer">Both modes work on SQLite / Turso / D1 alike. On Workers it goes through JSPI.</p>
+</section>
+
+<!-- 10: Deploy -->
+<section class="slide">
+  <h2>One command deploy</h2>
+  <pre><code>$ akamata deploy --workers \
+    --config=deploy/wrangler.toml \
+    --migrate=&lt;(./zig-out/bin/myapp --print-schema)</code></pre>
+  <ol>
+    <li>Reads <code>[[d1_databases]]</code> from <code>wrangler.toml</code></li>
+    <li>Placeholder UUID? Runs <code>wrangler d1 create</code>, writes the real one back</li>
+    <li>DB already exists? Picks it up via <code>wrangler d1 list</code></li>
+    <li>Applies the schema you piped through <code>--migrate</code></li>
+    <li><code>zig build -Dbackend=workers</code></li>
+    <li><code>wrangler deploy</code></li>
+  </ol>
+  <p class="footer accent">Idempotent on re-runs. Safe to call from CI.</p>
+</section>
+
+<!-- 11: JSPI -->
+<section class="slide">
+  <h2>The magic: JSPI</h2>
+  <p>Lets Zig call D1's async API <strong class="accent">as if it were synchronous</strong>.</p>
+  <div class="grid2">
+    <div class="card">
+      <h3>JS host (index.mjs)</h3>
+      <pre style="font-size: 12pt;"><code>d1_step: <span class="k">new</span> WebAssembly.Suspending(
+  <span class="k">async</span> (h) =&gt; {
+    <span class="k">const</span> e = d1stmts.get(h);
+    <span class="k">return</span> <span class="k">await</span> e.iter.next();
+  }
+);
+
+handleFetchAsync = WebAssembly.promising(
+  exports.handle_fetch);</code></pre>
+    </div>
+    <div class="card">
+      <h3>Zig side (d1.zig)</h3>
+      <pre style="font-size: 12pt;"><code><span class="k">extern</span> <span class="s">"akamata_d1"</span>
+    <span class="k">fn</span> d1_step(stmt: i32) i32;
+
+<span class="c">// looks synchronous</span>
+<span class="k">while</span> ((<span class="k">try</span> stmt.step()) == .row)
+    <span class="k">try</span> rows.append(arena, row);</code></pre>
+    </div>
+  </div>
+  <p class="footer">V8 parks the wasm stack across awaits and resumes it. Zero Zig changes, zero binary bloat vs. Asyncify.</p>
+</section>
+
+<!-- 12: Reliability -->
+<section class="slide">
+  <h2>Reliability — production audited</h2>
+  <div class="grid3">
+    <div class="card">
+      <h3>HTTP smuggling defense</h3>
+      <p class="small">CL + TE rejected, duplicate CL rejected, malformed chunked rejected. <strong class="accent">902 adversarial fuzz attempts, zero panics</strong>.</p>
+    </div>
+    <div class="card">
+      <h3>JWT done right</h3>
+      <p class="small">alg=none / alg=RS256 spoof rejected, HS256 explicitly verified (CVE-2015-2951), time validation mandatory.</p>
+    </div>
+    <div class="card">
+      <h3>Stable under load</h3>
+      <p class="small">53M requests in 5 minutes, RSS flat (no leak), P99 didn't drift.</p>
+    </div>
+    <div class="card">
+      <h3>TLS cert verification</h3>
+      <p class="small">SAN/CN check, SSL_VERIFY_PEER forced. MITM-safe default.</p>
+    </div>
+    <div class="card">
+      <h3>Graceful shutdown</h3>
+      <p class="small">SIGINT/SIGTERM closes the listener, drains. Zero-downtime restarts.</p>
+    </div>
+    <div class="card">
+      <h3>OOM safe</h3>
+      <p class="small">Per-connection arena isolation, errors carried in error unions. Every panic site audited.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 13: Performance -->
+<section class="slide">
+  <h2>Performance <span class="badge">vs. Go / Hono</span></h2>
+  <div class="grid2">
+    <div>
+      <table>
+        <thead><tr><th>Scenario</th><th>Akamata</th><th>Go</th><th>Hono+Bun</th></tr></thead>
+        <tbody>
+          <tr><td>/hello (text)</td><td><strong class="accent">175k</strong></td><td>208k</td><td>165k</td></tr>
+          <tr><td>/echo (JSON)</td><td><strong class="accent2">181k</strong></td><td>175k</td><td>128k</td></tr>
+          <tr><td>/db (SQLite)</td><td><strong class="accent2">91k</strong></td><td>46k (40% err)</td><td>138k</td></tr>
+        </tbody>
+      </table>
+      <p class="small">req/s, M2 Pro 8 workers · 5 minutes sustained</p>
+    </div>
+    <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 0.2in;">
+      <div><span class="big-stat">88</span><span class="big-stat unit"> µs</span></div>
+      <p class="small">P99 latency (5-min sustained)</p>
+      <div style="margin-top: 0.2in;"><span class="big-stat">2.5</span><span class="big-stat unit"> MB</span></div>
+      <p class="small">RSS after 53M requests</p>
+    </div>
+  </div>
+</section>
+
+<!-- 14: Observability -->
+<section class="slide">
+  <h2>Observability out of the box</h2>
+  <pre><code>$ curl https://app.example.com/metrics
+
+akamata_requests_total <span class="n">5891</span>
+akamata_requests_by_status{class=<span class="s">"2xx"</span>} <span class="n">5700</span>
+akamata_requests_by_status{class=<span class="s">"5xx"</span>} <span class="n">3</span>
+akamata_requests_by_method{method=<span class="s">"POST"</span>} <span class="n">1280</span>
+akamata_request_latency_seconds_bucket{le=<span class="s">"0.0001"</span>} <span class="n">4810</span>
+akamata_request_latency_seconds_sum <span class="n">0.872413</span>
+akamata_process_resident_memory_bytes <span class="n">2621440</span>
+akamata_process_uptime_seconds <span class="n">1234</span></code></pre>
+  <ul>
+    <li>Fixed cardinality keeps your TSDB happy (no path labels, methods are 8 fixed values)</li>
+    <li>Structured access logs (JSON, request_id auto-added)</li>
+    <li>Just point Prometheus at it with <code>scrape_interval: 15s</code></li>
+  </ul>
+</section>
+
+<!-- 15: CLI -->
+<section class="slide">
+  <h2>akamata CLI</h2>
+  <pre><code><span class="c"># scaffold (both native + Workers)</span>
+$ akamata init myapp --target=both
+
+<span class="c"># dev</span>
+$ akamata dev                       <span class="c"># alias for zig build run</span>
+
+<span class="c"># migrations</span>
+$ akamata migrate generate add_users
+$ akamata migrate up
+
+<span class="c"># deploy</span>
+$ akamata deploy --workers --migrate=&lt;(./myapp --print-schema)
+$ akamata deploy --containers
+
+<span class="c"># typo-friendly</span>
+$ akamata deplyo
+akamata: unknown subcommand `deplyo`
+Did you mean `akamata deploy`?</code></pre>
+</section>
+
+<!-- 16: Middleware -->
+<section class="slide">
+  <h2>Batteries included</h2>
+  <div class="grid3">
+    <div class="card"><h3>🛡️ recover</h3><p class="small">Traps panics, replies 500. Wrap as the outermost layer.</p></div>
+    <div class="card"><h3>📝 logger / accessLog</h3><p class="small">stdout / structured JSON access log</p></div>
+    <div class="card"><h3>🆔 requestId</h3><p class="small">X-Request-ID generated and propagated</p></div>
+    <div class="card"><h3>📊 metrics</h3><p class="small">Prometheus text exposition</p></div>
+    <div class="card"><h3>🔒 jwt / bearerAuth</h3><p class="small">HS256/RS256, CVE-2015-2951-safe</p></div>
+    <div class="card"><h3>🌍 cors</h3><p class="small">Preflight + Origin allowlist</p></div>
+    <div class="card"><h3>⏱️ rateLimit</h3><p class="small">Token bucket per-IP / per-key</p></div>
+    <div class="card"><h3>🍪 session / csrf</h3><p class="small">Signed cookies + double-submit</p></div>
+    <div class="card"><h3>📂 serveStatic</h3><p class="small">File serving with ETag, mime sniffing</p></div>
+  </div>
+</section>
+
+<!-- 17: WebSocket -->
+<section class="slide">
+  <h2>WebSocket — upgrade from any route</h2>
+  <pre><code>_ = <span class="k">try</span> app.ws(<span class="s">"/rooms/:id/ws"</span>, wsRoom);
+
+<span class="k">fn</span> wsRoom(c: *Ctx) !<span class="k">void</span> {
+    <span class="k">const</span> room_id = <span class="k">try</span> c.req.paramAs(u64, <span class="s">"id"</span>);
+    <span class="k">var</span> conn = <span class="k">try</span> am.ws.upgrade(Ctx, c, .{ .max_message_bytes = <span class="n">64</span> * <span class="n">1024</span> });
+    <span class="k">try</span> c.state().hub.attach(room_id, &amp;conn);
+    <span class="k">defer</span> c.state().hub.detach(room_id, &amp;conn);
+
+    <span class="k">while</span> (<span class="k">true</span>) {
+        <span class="k">const</span> msg = conn.readMessage() <span class="k">catch</span> <span class="k">return</span>;
+        <span class="k">defer</span> msg.deinit();
+        <span class="k">if</span> (msg.opcode == .text)
+            <span class="k">try</span> c.state().hub.broadcast(room_id, msg.payload);
+    }
+}</code></pre>
+  <p class="footer">On Workers, WS sessions are delegated to a Durable Object automatically — your handler code doesn't change.</p>
+</section>
+
+<!-- 18: Validation -->
+<section class="slide">
+  <h2>Validation — declare it, done</h2>
+  <pre><code><span class="k">pub const</span> __schema = .{
+    .validates = .{
+        .email = .{
+            am.model.rule.required,
+            am.model.rule.max_len(<span class="n">255</span>),
+            am.model.rule.format(.email),
+        },
+        .age   = .{ am.model.rule.range(<span class="n">0</span>, <span class="n">150</span>) },
+        .name  = .{ am.model.rule.required, am.model.rule.custom(noScriptTag) },
+    },
+};
+
+<span class="k">fn</span> noScriptTag(value: []<span class="k">const</span> u8, _: std.mem.Allocator) ?[]<span class="k">const</span> u8 {
+    <span class="k">if</span> (std.mem.indexOf(u8, value, <span class="s">"&lt;script&gt;"</span>) != <span class="k">null</span>)
+        <span class="k">return</span> <span class="s">"must not contain &lt;script&gt;"</span>;
+    <span class="k">return null</span>;
+}</code></pre>
+  <p class="footer">Built-ins: <code>required</code>, <code>min_len</code>, <code>max_len</code>, <code>range</code>, <code>format(.email/.url/.alphanumeric)</code>, <code>custom</code>, <code>customInt</code></p>
+</section>
+
+<!-- 19: Eager loading -->
+<section class="slide">
+  <h2>Eager loading — defeat N+1</h2>
+  <pre><code><span class="c">// User has_many :posts</span>
+<span class="k">const</span> users = <span class="k">try</span> Users.all(db, arena);              <span class="c">// 1 query</span>
+<span class="k">const</span> loaded = <span class="k">try</span> am.model.preload.hasMany(
+    User, <span class="s">"posts"</span>, users, db, arena);                <span class="c">// 1 IN query</span>
+
+<span class="k">for</span> (loaded) |row| {
+    <span class="c">// row.parent: User</span>
+    <span class="c">// row.related: []Post   ← already loaded</span>
+    std.log.info(<span class="s">"{s} has {d} posts"</span>, .{
+        row.parent.name, row.related.len
+    });
+}</code></pre>
+  <p class="footer">N parents → <strong class="accent">2 queries total</strong>. Children fetched in batch via <code>WHERE user_id IN (?, ?, ?, ...)</code>.</p>
+</section>
+
+<!-- 20: HTML embed -->
+<section class="slide">
+  <h2>Ship the HTML UI in the binary</h2>
+  <pre><code><span class="k">const</span> index_html = <span class="k">@embedFile</span>(<span class="s">"index.html"</span>);
+
+<span class="k">fn</span> index(c: *Ctx) !<span class="k">void</span> {
+    <span class="k">const</span> accept = c.req.header(<span class="s">"accept"</span>) <span class="k">orelse</span> <span class="s">""</span>;
+    <span class="k">if</span> (std.mem.indexOf(u8, accept, <span class="s">"text/html"</span>) != <span class="k">null</span>) {
+        <span class="k">return</span> c.html(index_html);  <span class="c">// browsers → HTML UI</span>
+    }
+    <span class="k">try</span> c.json(.{ .endpoints = .{ ... } }, <span class="n">200</span>);  <span class="c">// curl → JSON</span>
+}</code></pre>
+  <ul>
+    <li><code>@embedFile</code> bakes the file into the binary/wasm at compile time</li>
+    <li>Single artifact serves everything — no extra deploy step</li>
+    <li>Works <strong class="accent">without a separate CDN</strong> on Workers too</li>
+  </ul>
+</section>
+
+<!-- 21: Architecture -->
+<section class="slide">
+  <h2>The shape of it</h2>
+  <pre style="font-size: 13pt; line-height: 1.4;"><code>           ┌────────────────────────────────────┐
+           │       Your Zig application         │
+           │   (handlers, models, middleware)   │
+           └─────────────┬──────────────────────┘
+                         │ am.App(State) + am.Context
+                         ▼
+           ┌────────────────────────────────────┐
+           │  Akamata Framework (src/)          │
+           │  HTTP parser · Router · Middleware │
+           │  am.db.Db (vtable) · am.model.*    │
+           └─────┬────────────────────────────┬─┘
+                 │                            │
+        ┌────────▼─────────┐         ┌────────▼──────────┐
+        │  -Dbackend=      │         │  -Dbackend=       │
+        │     <span class="accent">native</span>       │         │     <span class="accent2">workers</span>      │
+        │                  │         │                   │
+        │ std.Io.Threaded  │         │ wasm32-freestanding│
+        │  ↓               │         │  ↓ via JSPI       │
+        │ sqlite3.c        │         │ env.DB (D1)       │
+        │ OpenSSL (TLS)    │         │ fetch() (Turso)   │
+        └──────────────────┘         └───────────────────┘</code></pre>
+</section>
+
+<!-- 22: Use cases -->
+<section class="slide">
+  <h2>Who's it for</h2>
+  <div class="grid3">
+    <div class="card">
+      <h3>🚀 Serverless APIs</h3>
+      <p class="small">Workers + D1, scales to edge. Cold start ~30ms, wasm ~150KB.</p>
+    </div>
+    <div class="card">
+      <h3>📱 Mobile / SaaS backends</h3>
+      <p class="small">JWT, friends, messaging, push — all batteries included.</p>
+    </div>
+    <div class="card">
+      <h3>💬 Realtime</h3>
+      <p class="small">WS hub, Durable Object integration, room/user broadcast.</p>
+    </div>
+    <div class="card">
+      <h3>🎯 Microservices</h3>
+      <p class="small">1.8 MB static binary, ~10ms start, metrics built in.</p>
+    </div>
+    <div class="card">
+      <h3>🔐 Security-first</h3>
+      <p class="small">Production-audited: HTTP smuggling, JWT spoof, MITM defense.</p>
+    </div>
+    <div class="card">
+      <h3>📝 CRUD / admin UIs</h3>
+      <p class="small">Model + auto-migrate + validation + HTML embed = one file.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 23: Comparison -->
+<section class="slide">
+  <h2>How it compares</h2>
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Akamata</th>
+        <th>Hono (Bun/Node)</th>
+        <th>Go net/http</th>
+        <th>Express</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Language</td><td><strong class="accent">Zig</strong></td><td>TypeScript</td><td>Go</td><td>JavaScript</td></tr>
+      <tr><td>VPS deploy</td><td>✅ static musl</td><td>⚠️ runtime needed</td><td>✅ static</td><td>⚠️ Node needed</td></tr>
+      <tr><td>Workers</td><td>✅ wasm</td><td>✅ native</td><td>❌</td><td>❌</td></tr>
+      <tr><td>Sync D1 calls</td><td>✅ JSPI</td><td>N/A (async)</td><td>—</td><td>—</td></tr>
+      <tr><td>SQLite bundled</td><td>✅</td><td>via bun:sqlite</td><td>external</td><td>external</td></tr>
+      <tr><td>P99 (echo)</td><td><strong class="accent">87 µs</strong></td><td>~250 µs</td><td>~90 µs</td><td>~500 µs</td></tr>
+      <tr><td>Binary size (native)</td><td>1.8 MB</td><td>~80 MB (bun)</td><td>~10 MB</td><td>node + npm</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 24: Roadmap -->
+<section class="slide">
+  <h2>Roadmap</h2>
+  <div class="grid2">
+    <div>
+      <h3>✅ v0.3 (now)</h3>
+      <ul>
+        <li>Model layer + Repo + auto-migration</li>
+        <li>Eager loading / relations / validation</li>
+        <li>Full D1 via JSPI</li>
+        <li>One-shot akamata deploy</li>
+        <li>Production audit (reliability / observability)</li>
+        <li>Detailed tutorial + PDF</li>
+      </ul>
+    </div>
+    <div>
+      <h3>🚧 Planned</h3>
+      <ul>
+        <li>OpenTelemetry export</li>
+        <li>Reactor + io_uring / kqueue for more throughput</li>
+        <li>Enum ↔ TEXT column auto-mapping</li>
+        <li>GraphQL integration (experimental)</li>
+        <li>Hot reload (dev mode)</li>
+        <li>WebTransport / HTTP/3</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 25: Get started -->
+<section class="slide title">
+  <div class="center">
+    <h1 style="font-size: 48pt;">Get started</h1>
+    <pre style="margin-top: 0.4in; font-size: 18pt;"><code>git clone https://github.com/yourorg/Akamata
+cd Akamata &amp;&amp; zig build cli
+akamata init myapp --target=both
+cd myapp &amp;&amp; zig build run</code></pre>
+    <div class="sub" style="margin-top: 0.5in;">
+      📘 <strong class="accent">Detailed tutorial</strong>: <code>docs/tutorial.md</code> (60–90 min, builds a Todo app)<br>
+      📖 Handbook: <code>docs/handbook.md</code> (15-min tour)<br>
+      🛠️ Samples: <code>examples/{guestbook,chat,mobus}</code>
+    </div>
+    <div style="margin-top: 0.8in; color: var(--accent2); font-size: 24pt;">
+      Happy building with Akamata 🚀
+    </div>
+  </div>
+</section>
+
+<script>
+  (function () {
+    const slides = document.querySelectorAll(".slide");
+    const total = slides.length;
+    slides.forEach((s, i) => {
+      if (s.classList.contains("title")) return;
+      const span = document.createElement("div");
+      span.className = "pgnum";
+      span.textContent = (i + 1) + " / " + total;
+      s.appendChild(span);
+    });
+  })();
+</script>
+</body>
+</html>
