@@ -52,7 +52,9 @@ pub fn app(b: *std.Build, opts: AppOptions) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path(opts.root_source_file),
             .target = target,
-            .optimize = if (backend == .workers) .ReleaseSmall else optimize,
+            // Respect -Doptimize. `akamata deploy --workers` defaults to
+            // ReleaseFast (override with --optimize=ReleaseSmall).
+            .optimize = optimize,
             .imports = &.{.{ .name = "akamata", .module = yt_mod }},
         }),
     });

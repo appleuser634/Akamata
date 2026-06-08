@@ -1,0 +1,20 @@
+name = "mobus"
+main = "worker/index.mjs"
+compatibility_date = "2026-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mobus"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[durable_objects.bindings]]
+name = "USER_HUB"
+class_name = "UserHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["UserHub"]
+
+# Secrets (set via `wrangler secret put`):
+#   JWT_SECRET, WEATHER_KEY, FCM_SERVICE_ACCOUNT_JSON

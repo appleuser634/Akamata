@@ -1,37 +1,43 @@
-// Cloudflare Workers entry. Loads the Zig-built wasm and bridges HTTP requests.
+// Cloudflare Workers entry for the guestbook example.
 //
-// D1 support uses JSPI (JavaScript Promise Integration): async imports are
-// wrapped in `new WebAssembly.Suspending(fn)` and `handle_fetch` is wrapped
-// in `WebAssembly.promising(...)` so Zig-side code can call D1 synchronously.
+// Full D1 and Turso support via JSPI:
+//   - D1 calls are wrapped in `new WebAssembly.Suspending(fn)`.
+//   - Outbound HTTP (Turso/libsql, any external API the Zig side calls
+//     through am.http_client) is also wrapped via the same JSPI primitive.
+//   - The wasm entry `handle_fetch` is wrapped with `WebAssembly.promising`.
+//
+// Net effect: the same Zig code that runs against SQLite on a VPS runs
+// against D1 or Turso here, with no source changes.
 
-import wasm from "../../zig-out/bin/{{NAME}}_worker.wasm";
+import wasm from "../../../zig-out/bin/guestbook_worker.wasm";
 
-let instance, memory, exp, handleFetchAsync;
-let jspi = false;
+let instance, memory, exports_ref, handleFetchAsync;
+let jspi_supported = false;
 
 const d1stmts = new Map();
 let nextStmtId = 1;
 
 function readBytes(p, l) { return new Uint8Array(memory.buffer, p, l); }
-function readStr(p, l) { return new TextDecoder().decode(readBytes(p, l)); }
+function readString(p, l) { return new TextDecoder().decode(readBytes(p, l)); }
 function writeBytes(p, b) { new Uint8Array(memory.buffer, p, b.length).set(b); }
 
 function detectJspi() {
-  jspi = typeof WebAssembly.Suspending === "function" &&
-         typeof WebAssembly.promising === "function";
-  return jspi;
+  jspi_supported =
+    typeof WebAssembly.Suspending === "function" &&
+    typeof WebAssembly.promising === "function";
+  return jspi_supported;
 }
 function suspending(fn) {
-  return jspi ? new WebAssembly.Suspending(fn) : () => -2;
+  return jspi_supported ? new WebAssembly.Suspending(fn) : () => -2;
 }
 
-async function init(env) {
+async function instantiate(env) {
   if (instance) return;
   detectJspi();
 
   const envBridge = {
     akamata_env_get(np, nl, op, oc) {
-      const k = readStr(np, nl);
+      const k = readString(np, nl);
       const v = env?.[k];
       if (v == null) return -1;
       const bytes = new TextEncoder().encode(String(v));
@@ -40,7 +46,8 @@ async function init(env) {
       return bytes.length;
     },
     akamata_random_bytes(p, l) {
-      const b = new Uint8Array(l); crypto.getRandomValues(b);
+      const b = new Uint8Array(l);
+      crypto.getRandomValues(b);
       writeBytes(p, b);
     },
     akamata_unix_seconds() { return BigInt(Math.floor(Date.now() / 1000)); },
@@ -48,13 +55,12 @@ async function init(env) {
 
   const d1 = env.DB;
   const d1Bridge = {
-    // Synchronous: D1's .prepare() does no I/O, so wrapping it in Suspending
-    // only buys a wasted wasm stack suspend/resume. The one async step per
+    // Synchronous: D1's .prepare() does no I/O. The one async step per
     // statement happens in d1_run.
     d1_prepare(sp, sl) {
       if (!d1) return -2;
       try {
-        const stmt = d1.prepare(readStr(sp, sl));
+        const stmt = d1.prepare(readString(sp, sl));
         const id = nextStmtId++;
         d1stmts.set(id, { base: stmt, bindArgs: [], rows: null, cursor: 0, currentRow: null, columnNames: null });
         return id;
@@ -62,14 +68,12 @@ async function init(env) {
     },
     d1_bind_int64(h, i, v) { const e = d1stmts.get(h); if (!e) return -1; e.bindArgs[i-1] = Number(v); return 0; },
     d1_bind_double(h, i, v) { const e = d1stmts.get(h); if (!e) return -1; e.bindArgs[i-1] = v; return 0; },
-    d1_bind_text(h, i, p, l) { const e = d1stmts.get(h); if (!e) return -1; e.bindArgs[i-1] = readStr(p, l); return 0; },
+    d1_bind_text(h, i, p, l) { const e = d1stmts.get(h); if (!e) return -1; e.bindArgs[i-1] = readString(p, l); return 0; },
     d1_bind_blob(h, i, p, l) { const e = d1stmts.get(h); if (!e) return -1; e.bindArgs[i-1] = readBytes(p, l).slice(); return 0; },
     d1_bind_null(h, i) { const e = d1stmts.get(h); if (!e) return -1; e.bindArgs[i-1] = null; return 0; },
     // The only async D1 op per statement: bind + run, materialising all rows.
-    // Zig calls this lazily on the first step (binds land between prepare and
-    // step). Returns row count, or -2 (bridge missing) / -4 (query error).
-    // Pulling the await out of the per-row d1_step removes one JSPI suspend per
-    // row (a 20-row SELECT goes from ~21 suspends to 1).
+    // Zig calls this lazily on the first step. Removing the per-row await from
+    // d1_step drops one JSPI suspend per row.
     d1_run: suspending(async (h) => {
       const e = d1stmts.get(h); if (!e) return -1;
       try {
@@ -129,23 +133,21 @@ async function init(env) {
     },
     d1_reset(h) { const e = d1stmts.get(h); if (!e) return; e.rows = null; e.cursor = 0; e.currentRow = null; },
     d1_finalize(h) { d1stmts.delete(h); },
-    // .prepare().run() instead of .exec() — model-generated DDL is one
-    // unterminated statement at a time, and D1's .exec() requires ;-terminated
-    // statements separated by newlines.
+    // Use .prepare().run() rather than .exec(). D1's .exec() requires every
+    // statement to end with `;` and be `\n`-separated; our model migrator
+    // emits single, unterminated DDL statements. .prepare().run() doesn't
+    // care about trailing punctuation, which matches SQLite's behaviour.
     d1_exec: suspending(async (sp, sl) => {
       if (!d1) return -2;
-      try { await d1.prepare(readStr(sp, sl)).run(); return 0; }
+      try { await d1.prepare(readString(sp, sl)).run(); return 0; }
       catch (e) { console.error("d1_exec:", e?.message ?? e); return -3; }
     }),
   };
 
-  // Outbound HTTP via JS fetch (Turso, FCM, any external API the Zig side
-  // calls through am.http_client.send). Wrapped in Suspending so it looks
-  // synchronous to wasm.
   const httpBridge = {
     akamata_fetch: suspending(async (rp, rl, op_addr, ol_addr) => {
       try {
-        const s = readStr(rp, rl);
+        const s = readString(rp, rl);
         const nl = s.indexOf("\n"); if (nl < 0) return -1;
         const method = s.slice(0, nl);
         const r1 = s.slice(nl + 1);
@@ -173,7 +175,7 @@ async function init(env) {
         head += `content-length: ${respBody.length}\r\n\r\n`;
         const headBytes = new TextEncoder().encode(head);
         const total = headBytes.length + respBody.length;
-        const buf = exp.alloc(total);
+        const buf = exports_ref.alloc(total);
         writeBytes(buf, headBytes);
         writeBytes(buf + headBytes.length, respBody);
         const dv = new DataView(memory.buffer);
@@ -184,37 +186,48 @@ async function init(env) {
     }),
   };
 
-  const imports = { akamata_env: envBridge, akamata_d1: d1Bridge, akamata_http: httpBridge };
+  const imports = {
+    akamata_env: envBridge,
+    akamata_d1: d1Bridge,
+    akamata_http: httpBridge,
+  };
+
   instance = await WebAssembly.instantiate(wasm, imports);
-  exp = instance.exports;
-  memory = exp.memory;
+  exports_ref = instance.exports;
+  memory = exports_ref.memory;
 
-  handleFetchAsync = (jspi && typeof exp.handle_fetch === "function")
-    ? WebAssembly.promising(exp.handle_fetch)
-    : (p, l) => exp.handle_fetch(p, l);
+  handleFetchAsync = (jspi_supported && typeof exports_ref.handle_fetch === "function")
+    ? WebAssembly.promising(exports_ref.handle_fetch)
+    : (p, l) => exports_ref.handle_fetch(p, l);
 
-  if (typeof exp.akamata_init === "function") exp.akamata_init();
+  if (typeof exports_ref.akamata_init === "function") exports_ref.akamata_init();
 }
 
 export default {
   async fetch(request, env, ctx) {
-    await init(env);
+    await instantiate(env);
+
     const url = new URL(request.url);
-    const body = new Uint8Array(await request.arrayBuffer());
+    const bodyBuf = new Uint8Array(await request.arrayBuffer());
     const headers = [];
     for (const [k, v] of request.headers) headers.push(`${k}: ${v}`);
-    const head = `${request.method} ${url.pathname}${url.search} HTTP/1.1\r\nhost: ${url.host}\r\n${headers.join("\r\n")}\r\ncontent-length: ${body.length}\r\n\r\n`;
+    const head = `${request.method} ${url.pathname}${url.search} HTTP/1.1\r\nhost: ${url.host}\r\n${headers.join("\r\n")}\r\ncontent-length: ${bodyBuf.length}\r\n\r\n`;
     const headBytes = new TextEncoder().encode(head);
-    const total = headBytes.length + body.length;
-    const ptr = exp.alloc(total);
+    const total = headBytes.length + bodyBuf.length;
+
+    const ptr = exports_ref.alloc(total);
     writeBytes(ptr, headBytes);
-    writeBytes(ptr + headBytes.length, body);
+    writeBytes(ptr + headBytes.length, bodyBuf);
+
     const respPtr = await handleFetchAsync(ptr, total);
-    const respLen = exp.last_response_length();
-    if (respPtr === 0) { exp.dealloc(ptr, total); return new Response("internal error", { status: 500 }); }
+    const respLen = exports_ref.last_response_length();
+    if (respPtr === 0) {
+      exports_ref.dealloc(ptr, total);
+      return new Response("internal error", { status: 500 });
+    }
     const respBytes = new Uint8Array(memory.buffer, respPtr, respLen).slice();
-    exp.dealloc(ptr, total);
-    exp.dealloc(respPtr, respLen);
+    exports_ref.dealloc(ptr, total);
+    exports_ref.dealloc(respPtr, respLen);
 
     const sep = findHeaderEnd(respBytes);
     if (sep < 0) return new Response("invalid wasm response", { status: 502 });
@@ -234,7 +247,7 @@ export default {
 
 function findHeaderEnd(bytes) {
   for (let i = 0; i + 3 < bytes.length; i++) {
-    if (bytes[i] === 13 && bytes[i + 1] === 10 && bytes[i + 2] === 13 && bytes[i + 3] === 10) return i;
+    if (bytes[i] === 13 && bytes[i+1] === 10 && bytes[i+2] === 13 && bytes[i+3] === 10) return i;
   }
   return -1;
 }

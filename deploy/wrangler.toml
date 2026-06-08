@@ -1,0 +1,39 @@
+name = "akamata-chat"
+main = "worker/index.mjs"
+compatibility_date = "2026-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+# === Workers WASM module ===
+# wrangler 4.x は import 文経由で .wasm を自動バンドルする。
+
+# === D1 (Workers バックエンド) ===
+[[d1_databases]]
+binding = "DB"
+database_name = "akamata"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# === Durable Object (WebSocket ハブ + room SQLite) ===
+[[durable_objects.bindings]]
+name = "CHAT_ROOM"
+class_name = "ChatRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChatRoom"]
+
+# === Containers (同一プロジェクトで両形態を宣言) ===
+# 注: Containers を有効にする場合は wrangler 4.x の `[[containers]]` を使う。
+# ローカル `wrangler dev` 時は別個に `wrangler containers build` を要する。
+[[containers]]
+class_name = "ChatContainer"
+image = "../Dockerfile"
+max_instances = 5
+instance_type = "basic"
+
+[[durable_objects.bindings]]
+name = "CHAT_CONTAINER"
+class_name = "ChatContainer"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ChatContainer"]

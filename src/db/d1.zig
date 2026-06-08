@@ -16,6 +16,15 @@ const db_mod = @import("db.zig");
 // `extern` declarations below. The JS host (deploy/.../worker/index.mjs)
 // owns the suspend/resume machinery.
 //
+// **One suspend per statement.** A JSPI suspend/resume tears down and rebuilds
+// the whole wasm call stack, so it is expensive even when the JS function does
+// no I/O. Only `d1_run` (run the query, materialise all rows) and `d1_exec`
+// actually await; everything else — prepare, bind, step, column reads — is a
+// plain synchronous import. `stepStmt` calls `d1_run` lazily on the first
+// `step()` (binds land between prepare and the first step), after which row
+// iteration is suspend-free. This keeps a multi-row SELECT at a single suspend
+// instead of one-per-row.
+//
 // Backwards compatibility: when an older host doesn't have JSPI wired up
 // (or returns the legacy `-2` sentinel from a stub), we still propagate
 // `D1Error.BridgeNotImplemented` so handlers fail closed rather than
@@ -43,7 +52,12 @@ extern "akamata_d1" fn d1_bind_double(stmt: i32, idx: i32, value: f64) i32;
 extern "akamata_d1" fn d1_bind_text(stmt: i32, idx: i32, ptr: [*]const u8, len: usize) i32;
 extern "akamata_d1" fn d1_bind_blob(stmt: i32, idx: i32, ptr: [*]const u8, len: usize) i32;
 extern "akamata_d1" fn d1_bind_null(stmt: i32, idx: i32) i32;
-/// Returns: 0 = done, 1 = row, -2 = bridge not implemented, < -2 = error.
+/// Async (suspending on the JS side): bind + run the statement, materialising
+/// the full result set. Returns row count (>= 0), -2 = bridge not implemented,
+/// < -2 = query error. Called lazily by `stepStmt` on the first step.
+extern "akamata_d1" fn d1_run(stmt: i32) i32;
+/// Synchronous cursor advance over the rows from `d1_run`.
+/// Returns: 0 = done, 1 = row, < 0 = error.
 extern "akamata_d1" fn d1_step(stmt: i32) i32;
 extern "akamata_d1" fn d1_column_int64(stmt: i32, idx: i32) i64;
 extern "akamata_d1" fn d1_column_double(stmt: i32, idx: i32) f64;
@@ -97,6 +111,9 @@ pub const Backend = struct {
 const StmtBackend = struct {
     handle: i32,
     gpa: std.mem.Allocator,
+    /// Whether `d1_run` has executed the query yet. The first `step()` runs it
+    /// (after all binds), subsequent steps just advance the JS-side cursor.
+    ran: bool = false,
 };
 
 fn bindStmt(ptr: *anyopaque, idx: usize, v: db_mod.Value) anyerror!void {
@@ -115,11 +132,18 @@ fn bindStmt(ptr: *anyopaque, idx: usize, v: db_mod.Value) anyerror!void {
 
 fn stepStmt(ptr: *anyopaque) anyerror!db_mod.StepResult {
     const self: *StmtBackend = @ptrCast(@alignCast(ptr));
+    // Lazily run the query on the first step (binds have landed by now). This
+    // is the one suspending call per statement; d1_step itself is synchronous.
+    if (!self.ran) {
+        const rc = d1_run(self.handle);
+        if (rc == -2) return D1Error.BridgeNotImplemented;
+        if (rc < 0) return D1Error.StepFailed;
+        self.ran = true;
+    }
     const rc = d1_step(self.handle);
     return switch (rc) {
         0 => .done,
         1 => .row,
-        -2 => D1Error.BridgeNotImplemented,
         else => D1Error.StepFailed,
     };
 }
@@ -156,6 +180,8 @@ fn columnCountFn(ptr: *anyopaque) usize {
 fn resetStmt(ptr: *anyopaque) anyerror!void {
     const self: *StmtBackend = @ptrCast(@alignCast(ptr));
     d1_reset(self.handle);
+    // Re-stepping after a reset must re-run the query.
+    self.ran = false;
 }
 
 fn deinitStmt(ptr: *anyopaque) void {

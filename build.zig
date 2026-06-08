@@ -101,7 +101,13 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
+    // 0.16 uses `b.args`; 0.17-dev replaced it with `run.addPassthruArgs()`.
+    // Comptime-branch so this builds on both (to A/B the master linker vs 0.16).
+    if (@hasField(std.Build, "args")) {
+        if (b.args) |args| run.addArgs(args);
+    } else {
+        run.addPassthruArgs();
+    }
     b.step("run", "run the selected example (native)").dependOn(&run.step);
 
     // === akamata-cli ===

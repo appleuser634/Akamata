@@ -27,7 +27,10 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path(root),
             .target = target,
-            .optimize = if (backend == .workers) .ReleaseSmall else optimize,
+            // Respect -Doptimize. `akamata deploy --workers` defaults to
+            // ReleaseFast (override with --optimize=ReleaseSmall for the
+            // smallest bundle).
+            .optimize = optimize,
             .imports = &.{.{ .name = "akamata", .module = am.module("akamata") }},
         }),
     });

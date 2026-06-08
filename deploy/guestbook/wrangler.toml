@@ -1,0 +1,15 @@
+name = "guestbook"
+main = "worker/index.mjs"
+compatibility_date = "2026-01-15"
+
+# Pick the backend by editing this variable (no code changes needed):
+#   d1:DB                              -> Cloudflare D1
+#   libsql://<db>.turso.io?authToken=… -> Turso
+[vars]
+DATABASE_URL = "d1:DB"
+
+# Only required when DATABASE_URL starts with "d1:"
+[[d1_databases]]
+binding = "DB"
+database_name = "guestbook"
+database_id = "19c8e27f-d6af-420e-9683-1cfff695c25e"

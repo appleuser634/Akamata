@@ -152,6 +152,27 @@ pub fn Repo(comptime T: type) type {
             return out.toOwnedSlice(arena);
         }
 
+        pub const RowsWithCount = struct { rows: []T, total: i64 };
+
+        /// Like `mapStmt`, but reads a trailing window-aggregate column as a
+        /// total row count, so a paginated SELECT can return its full match
+        /// count in a single query (one D1 round-trip) instead of a separate
+        /// `SELECT COUNT(*)`. The SQL must select the model's columns in
+        /// declaration order followed by exactly one extra column carrying the
+        /// total — e.g. `..., COUNT(*) OVER () FROM ... LIMIT ? OFFSET ?`.
+        /// The total is read from each row (constant across the window); on an
+        /// empty result the total is 0.
+        pub fn mapStmtWithCount(arena: std.mem.Allocator, stmt: db_mod.Stmt) !RowsWithCount {
+            const count_idx = @typeInfo(T).@"struct".fields.len; // 0-based: right after model columns
+            var out: std.ArrayList(T) = .empty;
+            var total: i64 = 0;
+            while ((try stmt.step()) == .row) {
+                try out.append(arena, try readRowDupe(arena, stmt));
+                total = try stmt.columnInt(count_idx);
+            }
+            return .{ .rows = try out.toOwnedSlice(arena), .total = total };
+        }
+
         /// `DELETE ... WHERE <pk> = ?`.
         pub fn delete(database: db_mod.Db, id: i64) !void {
             const sql = "DELETE FROM " ++ table_def.table ++ " WHERE " ++ pk_sql_name ++ " = ?";
