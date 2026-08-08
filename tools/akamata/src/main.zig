@@ -179,7 +179,11 @@ fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
         const a = std.mem.sliceTo(raw, 0);
         if (std.mem.startsWith(u8, a, "--target=")) {
             const v = a[9..];
-            if (std.mem.eql(u8, v, "native")) opts.target = .native else if (std.mem.eql(u8, v, "workers")) opts.target = .workers else if (std.mem.eql(u8, v, "containers")) opts.target = .containers else if (std.mem.eql(u8, v, "both")) opts.target = .both else {
+            if (std.mem.eql(u8, v, "native")) opts.target = .native
+            else if (std.mem.eql(u8, v, "workers")) opts.target = .workers
+            else if (std.mem.eql(u8, v, "containers")) opts.target = .containers
+            else if (std.mem.eql(u8, v, "both")) opts.target = .both
+            else {
                 std.debug.print("unknown --target value: {s}\n", .{v});
                 return error.UsageError;
             }
@@ -556,7 +560,10 @@ fn cmdDeploy(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     var migrate_path: ?[]const u8 = null;
     for (args) |raw| {
         const a = std.mem.sliceTo(raw, 0);
-        if (std.mem.eql(u8, a, "--workers")) target_workers = true else if (std.mem.eql(u8, a, "--containers")) target_containers = true else if (std.mem.startsWith(u8, a, "--config=")) config_path = a[9..] else if (std.mem.startsWith(u8, a, "--migrate=")) migrate_path = a[10..];
+        if (std.mem.eql(u8, a, "--workers")) target_workers = true
+        else if (std.mem.eql(u8, a, "--containers")) target_containers = true
+        else if (std.mem.startsWith(u8, a, "--config=")) config_path = a[9..]
+        else if (std.mem.startsWith(u8, a, "--migrate=")) migrate_path = a[10..];
     }
     if (!target_workers and !target_containers) target_workers = true;
 
@@ -744,7 +751,9 @@ fn readD1FromConfig(alloc: std.mem.Allocator, path: []const u8) !?D1Info {
         if (v.len >= 2 and (v[0] == '"' or v[0] == '\'') and v[v.len - 1] == v[0]) {
             v = v[1 .. v.len - 1];
         }
-        if (std.mem.eql(u8, k, "binding")) binding = v else if (std.mem.eql(u8, k, "database_name")) name = v else if (std.mem.eql(u8, k, "database_id")) id = v;
+        if (std.mem.eql(u8, k, "binding")) binding = v
+        else if (std.mem.eql(u8, k, "database_name")) name = v
+        else if (std.mem.eql(u8, k, "database_id")) id = v;
     }
     if (binding == null or name == null or id == null) return null;
     return .{
@@ -1227,7 +1236,9 @@ fn cmdDb(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     var config_path: ?[]const u8 = null;
     for (args[1..]) |raw| {
         const a = std.mem.sliceTo(raw, 0);
-        if (std.mem.eql(u8, a, "--remote")) mode = "--remote" else if (std.mem.eql(u8, a, "--local")) mode = "--local" else if (std.mem.startsWith(u8, a, "--config=")) config_path = a[9..];
+        if (std.mem.eql(u8, a, "--remote")) mode = "--remote"
+        else if (std.mem.eql(u8, a, "--local")) mode = "--local"
+        else if (std.mem.startsWith(u8, a, "--config=")) config_path = a[9..];
     }
 
     // Pick the D1 name from the wrangler.toml (so we don't hard-code "DB").
