@@ -65,6 +65,8 @@ async function instantiate(env) {
     akamata_unix_seconds() {
       return BigInt(Math.floor(Date.now() / 1000));
     },
+    akamata_unix_micros() { return BigInt(Date.now()) * 1000n; },
+    akamata_monotonic_ns() { return BigInt(Math.floor(performance.now() * 1_000_000)); },
   };
 
   const d1 = env.DB;

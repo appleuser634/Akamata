@@ -74,7 +74,7 @@ pub const Backend = struct {
     pub fn open(gpa: std.mem.Allocator) !db_mod.Db {
         const self = try gpa.create(Backend);
         self.* = .{ .gpa = gpa };
-        return .{ .ptr = self, .vt = &vtable };
+        return .{ .ptr = self, .vt = &vtable, .backend = .d1 };
     }
 
     fn closeBackend(ptr: *anyopaque) void {

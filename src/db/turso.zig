@@ -54,7 +54,7 @@ pub fn open(gpa: std.mem.Allocator, opts: Options) !db_mod.Db {
         .auth_token = token_owned,
         .baton = null,
     };
-    return .{ .ptr = self, .vt = &vtable };
+    return .{ .ptr = self, .vt = &vtable, .backend = .turso };
 }
 
 const ParsedUrl = struct {

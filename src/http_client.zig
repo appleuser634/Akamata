@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
+const trace_mod = @import("observability/trace.zig");
+const clock = @import("observability/clock.zig");
 
 const is_native = build_options.backend == .native;
 
@@ -53,6 +55,21 @@ pub fn send(
     } else {
         return workersSend(arena, request);
     }
+}
+
+/// Request-scoped variant used by `Context.fetch`. It records only fixed
+/// aggregates; URL/host are deliberately not captured as metric labels.
+pub fn sendObserved(trace: *trace_mod.TraceContext, arena: std.mem.Allocator, request: Request) HttpClientError!Response {
+    const t0 = clock.monotonicNs();
+    const response = send(arena, request) catch |err| {
+        trace.outbound_http_ns +|= clock.elapsedNs(t0);
+        trace.outbound_http_requests +|= 1;
+        trace.outbound_http_errors +|= 1;
+        return err;
+    };
+    trace.outbound_http_ns +|= clock.elapsedNs(t0);
+    trace.outbound_http_requests +|= 1;
+    return response;
 }
 
 // =============== URL parsing ===============

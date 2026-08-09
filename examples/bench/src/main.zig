@@ -27,6 +27,23 @@ pub fn main() !void {
     var app = am.App(State).init(alloc, .{ .db = db });
     defer app.deinit();
 
+    // BENCH_OBSERVABILITY=metrics|request|full provides repeatable A/B modes.
+    // Unset is the zero-observability baseline.
+    var metrics_counters: am.mw.MetricsCounters = .{};
+    if (am.env.get(alloc, "BENCH_OBSERVABILITY")) |mode| {
+        defer alloc.free(mode);
+        if (std.mem.eql(u8, mode, "metrics")) {
+            _ = try app.useAll(am.mw.metrics(State, &metrics_counters));
+        } else if (std.mem.eql(u8, mode, "request")) {
+            _ = try app.useAll(am.mw.requestId(State));
+            _ = try app.useAll(am.mw.accessLog(State, .json));
+        } else if (std.mem.eql(u8, mode, "full")) {
+            _ = try app.useAll(am.mw.requestId(State));
+            _ = try app.useAll(am.mw.metrics(State, &metrics_counters));
+            _ = try app.useAll(am.mw.serverTiming(State, .{ .enabled = true }));
+        }
+    }
+
     _ = try app.get("/hello", hello);
     _ = try app.post("/echo", echo);
     _ = try app.get("/db/:id", lookup);
@@ -59,7 +76,7 @@ fn lookup(c: *am.Context(State)) !void {
     const id = c.req.paramAs(i64, "id") catch {
         return c.json(.{ .error_kind = "bad_id" }, 400);
     };
-    var stmt = try c.state().db.prepare("SELECT id, name, weight FROM items WHERE id = ?");
+    var stmt = try c.db().prepare("SELECT id, name, weight FROM items WHERE id = ?");
     defer stmt.deinit();
     try stmt.bindAll(.{id});
     if ((try stmt.step()) != .row) return c.json(.{ .error_kind = "not_found" }, 404);

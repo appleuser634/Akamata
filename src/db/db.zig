@@ -1,5 +1,7 @@
 const std = @import("std");
 pub const Value = @import("value.zig").Value;
+const trace_mod = @import("../observability/trace.zig");
+const clock = @import("../observability/clock.zig");
 
 pub const DbError = error{
     OpenFailed,
@@ -30,6 +32,9 @@ pub const StmtVTable = struct {
 pub const Stmt = struct {
     ptr: *anyopaque,
     vt: *const StmtVTable,
+    trace: ?*trace_mod.TraceContext = null,
+    backend: trace_mod.Backend = .other,
+    operation_recorded: bool = false,
 
     pub fn bind(self: Stmt, idx: usize, v: Value) !void {
         return self.vt.bind(self.ptr, idx, v);
@@ -45,8 +50,17 @@ pub const Stmt = struct {
         }
     }
 
-    pub fn step(self: Stmt) !StepResult {
-        return self.vt.step(self.ptr);
+    pub fn step(self: *Stmt) !StepResult {
+        if (self.operation_recorded or self.trace == null) return self.vt.step(self.ptr);
+        const t0 = clock.monotonicNs();
+        const result = self.vt.step(self.ptr) catch |err| {
+            self.operation_recorded = true;
+            self.trace.?.recordDb(self.backend, .query, clock.elapsedNs(t0), true);
+            return err;
+        };
+        self.operation_recorded = true;
+        self.trace.?.recordDb(self.backend, .query, clock.elapsedNs(t0), false);
+        return result;
     }
 
     pub fn columnInt(self: Stmt, idx: usize) !i64 {
@@ -64,8 +78,9 @@ pub const Stmt = struct {
     pub fn columnCount(self: Stmt) usize {
         return self.vt.column_count(self.ptr);
     }
-    pub fn reset(self: Stmt) !void {
-        return self.vt.reset(self.ptr);
+    pub fn reset(self: *Stmt) !void {
+        try self.vt.reset(self.ptr);
+        self.operation_recorded = false;
     }
     pub fn deinit(self: Stmt) void {
         self.vt.deinit(self.ptr);
@@ -73,10 +88,10 @@ pub const Stmt = struct {
 
     /// Fetch a single row and map columns to the fields of T in declaration order.
     /// Supported field types: i64/u64/i32/u32/bool/f64/[]const u8.
-    pub fn fetchOne(self: Stmt, comptime T: type) !T {
+    pub fn fetchOne(self: *Stmt, comptime T: type) !T {
         const r = try self.step();
         if (r == .done) return DbError.NoRow;
-        return try readRow(self, T);
+        return try readRow(self.*, T);
     }
 
     pub fn readRow(self: Stmt, comptime T: type) !T {
@@ -111,12 +126,29 @@ pub const VTable = struct {
 pub const Db = struct {
     ptr: *anyopaque,
     vt: *const VTable,
+    backend: trace_mod.Backend = .other,
+    trace: ?*trace_mod.TraceContext = null,
+
+    pub fn observed(self: Db, trace: *trace_mod.TraceContext) Db {
+        var copy = self;
+        copy.trace = trace;
+        return copy;
+    }
 
     pub fn prepare(self: Db, sql: []const u8) !Stmt {
-        return self.vt.prepare(self.ptr, sql);
+        var stmt = try self.vt.prepare(self.ptr, sql);
+        stmt.trace = self.trace;
+        stmt.backend = self.backend;
+        return stmt;
     }
     pub fn exec(self: Db, sql: []const u8) !void {
-        return self.vt.exec(self.ptr, sql);
+        if (self.trace == null) return self.vt.exec(self.ptr, sql);
+        const t0 = clock.monotonicNs();
+        self.vt.exec(self.ptr, sql) catch |err| {
+            self.trace.?.recordDb(self.backend, .exec, clock.elapsedNs(t0), true);
+            return err;
+        };
+        self.trace.?.recordDb(self.backend, .exec, clock.elapsedNs(t0), false);
     }
     pub fn execAll(self: Db, script: []const u8) !void {
         // Simple semicolon-split executor for migrations.

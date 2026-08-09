@@ -22,6 +22,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
+const clock = @import("../observability/clock.zig");
+
+pub const LatencyProfile = enum { fast, web };
+pub const Config = struct { latency_profile: LatencyProfile = .web };
+const fast_bounds_us = [_]u64{ 100, 500, 1_000, 5_000, 10_000, 50_000, 100_000 };
+const web_bounds_us = [_]u64{ 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000 };
 
 pub const Method = enum(u8) {
     GET = 0,
@@ -60,14 +66,28 @@ pub const Counters = struct {
     latency_us_total: std.atomic.Value(u64) = .init(0),
     /// Latency histogram (microseconds):
     /// <=100, <=500, <=1000, <=5000, <=10_000, <=50_000, <=100_000, >100_000
-    latency_buckets: [8]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0) },
+    latency_buckets: [10]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0) },
+    latency_profile: LatencyProfile = .web,
+    db_operations: [4]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0) },
+    db_operation_counts: [4][2]std.atomic.Value(u64) = .{
+        .{ .init(0), .init(0) }, .{ .init(0), .init(0) }, .{ .init(0), .init(0) }, .{ .init(0), .init(0) },
+    },
+    db_operation_duration_ns: [4][2]std.atomic.Value(u64) = .{
+        .{ .init(0), .init(0) }, .{ .init(0), .init(0) }, .{ .init(0), .init(0) }, .{ .init(0), .init(0) },
+    },
+    db_errors: [4]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0) },
+    db_duration_ns: [4]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0) },
+    request_errors: std.atomic.Value(u64) = .init(0),
+    outbound_http_requests: std.atomic.Value(u64) = .init(0),
+    outbound_http_errors: std.atomic.Value(u64) = .init(0),
+    outbound_http_duration_ns: std.atomic.Value(u64) = .init(0),
     /// Unix seconds at which the first request landed. `0` until then.
     start_time_unix: std.atomic.Value(i64) = .init(0),
 
     pub fn record(self: *Counters, method: Method, status_code: u16, elapsed_us: u64) void {
         // Stamp the start time lazily on the first observation. CAS so
         // concurrent first-callers don't overwrite each other.
-        _ = self.start_time_unix.cmpxchgStrong(0, unixSeconds(), .monotonic, .monotonic);
+        _ = self.start_time_unix.cmpxchgStrong(0, @divTrunc(clock.unixMicros(), std.time.us_per_s), .monotonic, .monotonic);
         _ = self.requests_total.fetchAdd(1, .monotonic);
         _ = self.latency_us_total.fetchAdd(elapsed_us, .monotonic);
         const cls: usize = switch (status_code / 100) {
@@ -80,42 +100,27 @@ pub const Counters = struct {
         };
         _ = self.by_status_class[cls].fetchAdd(1, .monotonic);
         _ = self.by_method[@intFromEnum(method)].fetchAdd(1, .monotonic);
-        const bucket: usize = if (elapsed_us <= 100) 0
-        else if (elapsed_us <= 500) 1
-        else if (elapsed_us <= 1_000) 2
-        else if (elapsed_us <= 5_000) 3
-        else if (elapsed_us <= 10_000) 4
-        else if (elapsed_us <= 50_000) 5
-        else if (elapsed_us <= 100_000) 6
-        else 7;
+        const bounds = if (self.latency_profile == .fast) fast_bounds_us[0..] else web_bounds_us[0..];
+        var bucket: usize = bounds.len;
+        for (bounds, 0..) |bound, i| if (elapsed_us <= bound) {
+            bucket = i;
+            break;
+        };
         _ = self.latency_buckets[bucket].fetchAdd(1, .monotonic);
     }
+
+    fn recordTrace(self: *Counters, trace: anytype) void {
+        for (0..4) |i| {
+            _ = self.db_operations[i].fetchAdd(trace.db_backend_operations[i], .monotonic);
+            _ = self.db_errors[i].fetchAdd(trace.db_backend_errors[i], .monotonic);
+            _ = self.db_duration_ns[i].fetchAdd(trace.db_backend_ns[i], .monotonic);
+            for (0..2) |op| {
+                _ = self.db_operation_counts[i][op].fetchAdd(trace.db_backend_operation_counts[i][op], .monotonic);
+                _ = self.db_operation_duration_ns[i][op].fetchAdd(trace.db_backend_operation_ns[i][op], .monotonic);
+            }
+        }
+    }
 };
-
-/// Cross-platform monotonic clock helper.
-fn nanoMonotonic() i128 {
-    if (builtin.os.tag == .windows) return 0;
-    const Lib = struct {
-        const Timespec = extern struct { tv_sec: c_long, tv_nsec: c_long };
-        extern "c" fn clock_gettime(clk_id: c_int, tp: *Timespec) c_int;
-    };
-    const CLOCK_MONOTONIC: c_int = 6;
-    var ts: Lib.Timespec = .{ .tv_sec = 0, .tv_nsec = 0 };
-    _ = Lib.clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (@as(i128, ts.tv_sec) * std.time.ns_per_s) + @as(i128, ts.tv_nsec);
-}
-
-fn unixSeconds() i64 {
-    if (builtin.os.tag == .windows) return 0;
-    const Lib = struct {
-        const Timespec = extern struct { tv_sec: c_long, tv_nsec: c_long };
-        extern "c" fn clock_gettime(clk_id: c_int, tp: *Timespec) c_int;
-    };
-    const CLOCK_REALTIME: c_int = 0;
-    var ts: Lib.Timespec = .{ .tv_sec = 0, .tv_nsec = 0 };
-    _ = Lib.clock_gettime(CLOCK_REALTIME, &ts);
-    return @intCast(ts.tv_sec);
-}
 
 /// Best-effort RSS in bytes for the current process. Returns 0 if unavailable.
 /// macOS reports max_resident in `struct rusage.ru_maxrss` in bytes;
@@ -155,20 +160,32 @@ fn residentMemoryBytes() u64 {
 /// Middleware factory. Pass the same `*Counters` to both this and the
 /// optional `metricsHandler` so the data they share lines up.
 pub fn metrics(comptime State: type, c_ptr: *Counters) app_mod.Middleware(State) {
+    return metricsWithConfig(State, c_ptr, .{});
+}
+
+pub fn metricsWithConfig(comptime State: type, c_ptr: *Counters, config: Config) app_mod.Middleware(State) {
     const Impl = struct {
         var counters_ref: *Counters = undefined;
         fn call(c: *app_mod.App(State).Ctx, next: app_mod.Next(State)) anyerror!void {
             _ = counters_ref.requests_in_flight.fetchAdd(1, .monotonic);
             defer _ = counters_ref.requests_in_flight.fetchSub(1, .monotonic);
-            const t0 = nanoMonotonic();
+            const t0 = clock.monotonicNs();
             const result = next.run(c);
-            const elapsed_us: u64 = @intCast(@divTrunc(nanoMonotonic() - t0, std.time.ns_per_us));
+            const elapsed_us = clock.elapsedNs(t0) / std.time.ns_per_us;
             const method = methodFromString(c.req.method());
             counters_ref.record(method, c.res.status_code, elapsed_us);
+            counters_ref.recordTrace(&c.trace);
+            _ = counters_ref.outbound_http_requests.fetchAdd(c.trace.outbound_http_requests, .monotonic);
+            _ = counters_ref.outbound_http_errors.fetchAdd(c.trace.outbound_http_errors, .monotonic);
+            _ = counters_ref.outbound_http_duration_ns.fetchAdd(c.trace.outbound_http_ns, .monotonic);
+            if (result) |_| {} else |_| {
+                _ = counters_ref.request_errors.fetchAdd(1, .monotonic);
+            }
             return result;
         }
     };
     Impl.counters_ref = c_ptr;
+    c_ptr.latency_profile = config.latency_profile;
     return .{ .name = "metrics", .call = Impl.call };
 }
 
@@ -181,7 +198,7 @@ pub fn metricsHandler(comptime State: type, c_ptr: *Counters) app_mod.Handler(St
             const in_flight = counters_ref.requests_in_flight.load(.monotonic);
             const lat_total_us = counters_ref.latency_us_total.load(.monotonic);
             const start_t = counters_ref.start_time_unix.load(.monotonic);
-            const now_t = unixSeconds();
+            const now_t = @divTrunc(clock.unixMicros(), std.time.us_per_s);
             const rss = residentMemoryBytes();
 
             var buf: std.ArrayList(u8) = .empty;
@@ -193,18 +210,15 @@ pub fn metricsHandler(comptime State: type, c_ptr: *Counters) app_mod.Handler(St
             };
 
             // === request counters ===
-            try w.append(c.arena, &buf,
-                "# HELP akamata_requests_total Total HTTP requests served.\n" ++
+            try w.append(c.arena, &buf, "# HELP akamata_requests_total Total HTTP requests served.\n" ++
                 "# TYPE akamata_requests_total counter\n" ++
                 "akamata_requests_total {d}\n", .{total});
-            try w.append(c.arena, &buf,
-                "# HELP akamata_requests_in_flight Requests currently being processed.\n" ++
+            try w.append(c.arena, &buf, "# HELP akamata_requests_in_flight Requests currently being processed.\n" ++
                 "# TYPE akamata_requests_in_flight gauge\n" ++
                 "akamata_requests_in_flight {d}\n", .{in_flight});
 
             // by status class
-            try w.append(c.arena, &buf,
-                "# HELP akamata_requests_by_status Requests broken down by HTTP status class.\n" ++
+            try w.append(c.arena, &buf, "# HELP akamata_requests_by_status Requests broken down by HTTP status class.\n" ++
                 "# TYPE akamata_requests_by_status counter\n", .{});
             const classes = [_][]const u8{ "1xx", "2xx", "3xx", "4xx", "5xx" };
             for (classes, 0..) |name, i| {
@@ -213,8 +227,7 @@ pub fn metricsHandler(comptime State: type, c_ptr: *Counters) app_mod.Handler(St
             }
 
             // by method (fixed cardinality)
-            try w.append(c.arena, &buf,
-                "# HELP akamata_requests_by_method Requests broken down by HTTP method.\n" ++
+            try w.append(c.arena, &buf, "# HELP akamata_requests_by_method Requests broken down by HTTP method.\n" ++
                 "# TYPE akamata_requests_by_method counter\n", .{});
             const method_names = [_][]const u8{ "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "OTHER" };
             for (method_names, 0..) |name, i| {
@@ -223,10 +236,11 @@ pub fn metricsHandler(comptime State: type, c_ptr: *Counters) app_mod.Handler(St
             }
 
             // === latency histogram ===
-            try w.append(c.arena, &buf,
-                "# HELP akamata_request_latency_seconds Request latency in seconds.\n" ++
+            try w.append(c.arena, &buf, "# HELP akamata_request_latency_seconds Request latency in seconds.\n" ++
                 "# TYPE akamata_request_latency_seconds histogram\n", .{});
-            const bucket_le = [_][]const u8{ "0.0001", "0.0005", "0.001", "0.005", "0.01", "0.05", "0.1", "+Inf" };
+            const fast_labels = [_][]const u8{ "0.0001", "0.0005", "0.001", "0.005", "0.01", "0.05", "0.1", "+Inf" };
+            const web_labels = [_][]const u8{ "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "+Inf" };
+            const bucket_le = if (counters_ref.latency_profile == .fast) fast_labels[0..] else web_labels[0..];
             var cumulative: u64 = 0;
             for (bucket_le, 0..) |label, i| {
                 cumulative += counters_ref.latency_buckets[i].load(.monotonic);
@@ -239,18 +253,52 @@ pub fn metricsHandler(comptime State: type, c_ptr: *Counters) app_mod.Handler(St
             const sum_sec_frac = lat_total_us % 1_000_000;
             try w.append(c.arena, &buf, "akamata_request_latency_seconds_sum {d}.{d:0>6}\n", .{ sum_sec_int, sum_sec_frac });
 
+            try w.append(c.arena, &buf, "# HELP akamata_db_operations_total Database operations (SQL is never a label).\n" ++
+                "# TYPE akamata_db_operations_total counter\n" ++
+                "# HELP akamata_db_operation_duration_seconds Database operation duration.\n" ++
+                "# TYPE akamata_db_operation_duration_seconds counter\n" ++
+                "# HELP akamata_db_errors_total Database operation errors.\n" ++
+                "# TYPE akamata_db_errors_total counter\n", .{});
+            const backend_names = [_][]const u8{ "sqlite", "d1", "turso", "other" };
+            const operation_names = [_][]const u8{ "query", "exec" };
+            for (backend_names, 0..) |name, i| {
+                const ops = counters_ref.db_operations[i].load(.monotonic);
+                const errs = counters_ref.db_errors[i].load(.monotonic);
+                const ns = counters_ref.db_duration_ns[i].load(.monotonic);
+                _ = ops;
+                try w.append(c.arena, &buf, "akamata_db_errors_total{{backend=\"{s}\"}} {d}\n", .{ name, errs });
+                _ = ns;
+                for (operation_names, 0..) |operation, oi| {
+                    const op_count = counters_ref.db_operation_counts[i][oi].load(.monotonic);
+                    const op_ns = counters_ref.db_operation_duration_ns[i][oi].load(.monotonic);
+                    try w.append(c.arena, &buf, "akamata_db_operations_total{{backend=\"{s}\",operation=\"{s}\"}} {d}\n", .{ name, operation, op_count });
+                    try w.append(c.arena, &buf, "akamata_db_operation_duration_seconds{{backend=\"{s}\",operation=\"{s}\"}} {d}.{d:0>9}\n", .{ name, operation, op_ns / std.time.ns_per_s, op_ns % std.time.ns_per_s });
+                }
+            }
+            try w.append(c.arena, &buf, "# HELP akamata_request_errors_total Handler/middleware errors.\n" ++
+                "# TYPE akamata_request_errors_total counter\n" ++
+                "akamata_request_errors_total{{class=\"handler\"}} {d}\n" ++
+                "# HELP akamata_outbound_http_requests_total Outbound HTTP requests.\n" ++
+                "# TYPE akamata_outbound_http_requests_total counter\n" ++
+                "akamata_outbound_http_requests_total {d}\n" ++
+                "akamata_outbound_http_errors_total {d}\n" ++
+                "akamata_outbound_http_duration_seconds {d}.{d:0>9}\n", .{
+                counters_ref.request_errors.load(.monotonic),
+                counters_ref.outbound_http_requests.load(.monotonic),
+                counters_ref.outbound_http_errors.load(.monotonic),
+                counters_ref.outbound_http_duration_ns.load(.monotonic) / std.time.ns_per_s,
+                counters_ref.outbound_http_duration_ns.load(.monotonic) % std.time.ns_per_s,
+            });
+
             // === process info ===
-            try w.append(c.arena, &buf,
-                "# HELP akamata_process_resident_memory_bytes Resident memory (max-RSS).\n" ++
+            try w.append(c.arena, &buf, "# HELP akamata_process_resident_memory_bytes Resident memory (max-RSS).\n" ++
                 "# TYPE akamata_process_resident_memory_bytes gauge\n" ++
                 "akamata_process_resident_memory_bytes {d}\n", .{rss});
             if (start_t > 0) {
-                try w.append(c.arena, &buf,
-                    "# HELP akamata_process_start_time_seconds Unix time the metrics middleware first observed a request.\n" ++
+                try w.append(c.arena, &buf, "# HELP akamata_process_start_time_seconds Unix time the metrics middleware first observed a request.\n" ++
                     "# TYPE akamata_process_start_time_seconds gauge\n" ++
                     "akamata_process_start_time_seconds {d}\n", .{start_t});
-                try w.append(c.arena, &buf,
-                    "# HELP akamata_process_uptime_seconds Seconds since the first observed request.\n" ++
+                try w.append(c.arena, &buf, "# HELP akamata_process_uptime_seconds Seconds since the first observed request.\n" ++
                     "# TYPE akamata_process_uptime_seconds gauge\n" ++
                     "akamata_process_uptime_seconds {d}\n", .{now_t - start_t});
             }

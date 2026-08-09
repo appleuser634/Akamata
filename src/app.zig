@@ -174,7 +174,7 @@ pub const ServeOptions = struct {
     parse_limits: parser.Limits = .{},
     /// HTTP runtime selection. `.threaded` is the current production
     /// model; `.reactor` is the new kqueue-based prototype (BSD-family
-    /// kernels only). See `docs/perf-reactor-design.md`.
+    /// kernels only). See `docs/en/perf-reactor-design.md`.
     runtime: Runtime = .threaded,
     /// Number of worker threads when `runtime == .reactor`. `null` =
     /// `std.Thread.getCpuCount()` (default). Has no effect on the
@@ -567,6 +567,9 @@ pub fn App(comptime State: type) type {
                 .io_ptr = io_ptr,
                 .app_ref = @ptrCast(self),
             };
+            ctx.trace.route_pattern = if (matched) |r| r.path else null;
+            ctx.trace.begin();
+            defer ctx.trace.finish();
             ctx.req.params_ref = &ctx.params;
 
             const term: Handler(State) = if (matched) |r|

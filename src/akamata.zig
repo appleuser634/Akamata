@@ -52,6 +52,9 @@ pub const mw = struct {
     pub const serveStatic = @import("mw/static.zig").serveStatic;
     pub const StaticOptions = @import("mw/static.zig").Options;
     pub const metrics = @import("mw/metrics.zig").metrics;
+    pub const metricsWithConfig = @import("mw/metrics.zig").metricsWithConfig;
+    pub const MetricsConfig = @import("mw/metrics.zig").Config;
+    pub const LatencyProfile = @import("mw/metrics.zig").LatencyProfile;
     pub const MetricsCounters = @import("mw/metrics.zig").Counters;
     pub const MetricsMethod = @import("mw/metrics.zig").Method;
     pub const metricsHandler = @import("mw/metrics.zig").metricsHandler;
@@ -74,7 +77,18 @@ pub const mw = struct {
     pub const currentRequestId = @import("mw/requestid.zig").currentRequestId;
 
     pub const accessLog = @import("mw/accesslog.zig").accessLog;
+    pub const accessLogWithOptions = @import("mw/accesslog.zig").accessLogWithOptions;
     pub const AccessLogFormat = @import("mw/accesslog.zig").Format;
+    pub const AccessLogOptions = @import("mw/accesslog.zig").Options;
+    pub const serverTiming = @import("mw/server_timing.zig").serverTiming;
+    pub const ServerTimingOptions = @import("mw/server_timing.zig").Options;
+};
+
+pub const observability = struct {
+    pub const clock = @import("observability/clock.zig");
+    pub const TraceContext = @import("observability/trace.zig").TraceContext;
+    pub const Span = @import("observability/trace.zig").Span;
+    pub const Backend = @import("observability/trace.zig").Backend;
 };
 
 // ===== Legacy (Router(App) + Ctx(App)) compatibility =====

@@ -77,6 +77,8 @@ async function instantiate(env) {
     akamata_unix_seconds() {
       return BigInt(Math.floor(Date.now() / 1000));
     },
+    akamata_unix_micros() { return BigInt(Date.now()) * 1000n; },
+    akamata_monotonic_ns() { return BigInt(Math.floor(performance.now() * 1_000_000)); },
   };
 
   // --- akamata_d1: every Promise-returning call wrapped with Suspending ---

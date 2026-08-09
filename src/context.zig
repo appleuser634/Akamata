@@ -5,6 +5,9 @@ const json_mod = @import("json.zig");
 const multipart_mod = @import("http/multipart.zig");
 const form_mod = @import("http/form.zig");
 const cookie_mod = @import("http/cookie.zig");
+const trace_mod = @import("observability/trace.zig");
+const db_mod = @import("db/db.zig");
+const http_client = @import("http_client.zig");
 
 pub const ParamError = error{
     MissingParam,
@@ -226,6 +229,10 @@ pub fn Context(comptime State: type) type {
         arena: std.mem.Allocator,
         params: Params,
         app_state: *State,
+        /// Request-scoped observability state. It is embedded in Context, so
+        /// it follows the arena/request lifetime and never competes with
+        /// middleware `user_data`.
+        trace: trace_mod.TraceContext = .{},
         /// Reserved for middleware-to-handler data passing (e.g. JWT claims).
         user_data: ?*anyopaque = null,
         /// WS upgrade plumbing — populated by the server.
@@ -261,8 +268,34 @@ pub fn Context(comptime State: type) type {
         // pointing right at the missing field.
 
         /// `c.db()` ≡ `c.state().db`. Compile-time error if State has no `db`.
-        pub fn db(self: *Self) @TypeOf(self.app_state.db) {
+        pub fn db(self: *Self) if (@TypeOf(self.app_state.db) == db_mod.Db) db_mod.Db else @TypeOf(self.app_state.db) {
+            if (comptime @TypeOf(self.app_state.db) == db_mod.Db) {
+                return self.app_state.db.observed(&self.trace);
+            }
             return self.app_state.db;
+        }
+
+        /// Stable request ID installed by `am.mw.requestId`, independent of
+        /// `user_data` used by sessions/JWT middleware.
+        pub fn requestId(self: *const Self) ?[]const u8 {
+            return self.trace.requestId();
+        }
+
+        /// The registered route template, never the raw dynamic URL.
+        pub fn routePattern(self: *const Self) ?[]const u8 {
+            return self.trace.route_pattern;
+        }
+
+        /// Start an allocation-free request span. Prefer static names and
+        /// always pair with `defer span.end()`.
+        pub fn startSpan(self: *Self, name: []const u8) trace_mod.Span {
+            return self.trace.startSpan(name);
+        }
+
+        /// Instrumented outbound HTTP. Full URLs are never retained or used
+        /// as labels; request count/duration/error are request aggregates.
+        pub fn fetch(self: *Self, request: http_client.Request) http_client.HttpClientError!http_client.Response {
+            return http_client.sendObserved(&self.trace, self.arena, request);
         }
 
         /// `c.cfg()` ≡ `c.state().cfg`. Compile-time error if State has no `cfg`.

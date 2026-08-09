@@ -1,4 +1,4 @@
-// Per-request UUIDv4 ID stamped into `c.user_data` and echoed back as an
+// Per-request UUIDv4 ID stored in Context observability state and echoed as an
 // `X-Request-ID` response header. Downstream middlewares (access log,
 // metrics) can grab it via `currentRequestId(c)` so a single line of code
 // links logs across an outage.
@@ -31,19 +31,14 @@ pub fn requestId(comptime State: type) app_mod.Middleware(State) {
             // (within reason — clip to 64 chars to stop log injection).
             if (c.req.header("x-request-id")) |inbound| {
                 if (inbound.len > 0 and inbound.len <= 64 and isPrintable(inbound)) {
-                    const slot = try c.arena.create(RequestIdSlot);
-                    @memset(&slot.id, 0);
-                    const n = @min(inbound.len, slot.id.len);
-                    @memcpy(slot.id[0..n], inbound[0..n]);
-                    c.user_data = @ptrCast(slot);
-                    try c.header("x-request-id", inbound);
+                    c.trace.setRequestId(inbound);
+                    try c.header("x-request-id", try c.arena.dupe(u8, inbound));
                     return next.run(c);
                 }
             }
-            const slot = try c.arena.create(RequestIdSlot);
-            slot.id = mintUuid();
-            c.user_data = @ptrCast(slot);
-            try c.header("x-request-id", &slot.id);
+            const id = mintUuid();
+            c.trace.setRequestId(&id);
+            try c.header("x-request-id", try c.arena.dupe(u8, c.trace.requestId().?));
             return next.run(c);
         }
 
@@ -56,12 +51,7 @@ pub fn requestId(comptime State: type) app_mod.Middleware(State) {
 }
 
 pub fn currentRequestId(comptime State: type, c: *app_mod.App(State).Ctx) ?[]const u8 {
-    const p = c.user_data orelse return null;
-    const slot: *RequestIdSlot = @ptrCast(@alignCast(p));
-    // Strip trailing zeros (in case an upstream ID was shorter than 36 chars).
-    var end: usize = slot.id.len;
-    while (end > 0 and slot.id[end - 1] == 0) end -= 1;
-    return slot.id[0..end];
+    return c.requestId();
 }
 
 fn mintUuid() [36]u8 {

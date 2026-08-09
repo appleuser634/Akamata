@@ -32,7 +32,7 @@ pub const Backend = struct {
         _ = c.sqlite3_busy_timeout(self.handle, 5000);
         // Sensible defaults: WAL + foreign keys
         _ = c.sqlite3_exec(self.handle, "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;", null, null, null);
-        return .{ .ptr = self, .vt = &vtable };
+        return .{ .ptr = self, .vt = &vtable, .backend = .sqlite };
     }
 
     fn closeBackend(ptr: *anyopaque) void {
