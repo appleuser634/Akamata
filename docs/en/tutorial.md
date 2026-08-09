@@ -956,7 +956,7 @@ Your `zig build run` terminal prints one JSON line per request:
 `req_id` is also echoed on `X-Request-ID` so you can correlate front-end
 errors with server logs.
 
-More detail in [docs/observability.md](observability.md).
+More detail in [docs/en/observability.md](observability.md).
 
 ---
 
@@ -1004,7 +1004,7 @@ POST works too. Note: **this writes to a simulated D1, not your SQLite file**.
 > **What's happening**: `src/worker.zig` exports a wasm function called
 > `handle_fetch`. The JS shim in `deploy/worker/index.mjs` calls it via
 > JSPI (JavaScript Promise Integration) so that D1's `env.DB.prepare(sql).run()`
-> looks synchronous from Zig. See [docs/db-backends.md](db-backends.md)
+> looks synchronous from Zig. See [docs/en/db-backends.md](db-backends.md)
 > for the full mechanism.
 
 `Ctrl-C` to stop.
@@ -1128,7 +1128,7 @@ sum(rate(akamata_requests_by_status{class="5xx"}[5m]))
   / sum(rate(akamata_requests_total[5m]))
 ```
 
-More in [docs/observability.md](observability.md).
+More in [docs/en/observability.md](observability.md).
 
 ### 10.3 Persist access logs
 
@@ -1202,11 +1202,11 @@ You've only touched the basics. To go deeper:
 
 ### Individual topics
 
-- [**docs/handbook.md**](handbook.md) — 15-minute overview (this tutorial compressed)
-- [**docs/db-backends.md**](db-backends.md) — SQLite / Turso / D1 internals + JSPI
-- [**docs/observability.md**](observability.md) — production metrics + logs
-- [**docs/benchmarks.md**](benchmarks.md) / [**benchmarks-long-run.md**](benchmarks-long-run.md) — performance characteristics
-- [**docs/architecture.md**](architecture.md) — framework internals + hardening notes
+- [**docs/en/handbook.md**](handbook.md) — 15-minute overview (this tutorial compressed)
+- [**docs/en/db-backends.md**](db-backends.md) — SQLite / Turso / D1 internals + JSPI
+- [**docs/en/observability.md**](observability.md) — production metrics + logs
+- [**docs/en/benchmarks.md**](benchmarks.md) / [**benchmarks-long-run.md**](benchmarks-long-run.md) — performance characteristics
+- [**docs/en/architecture.md**](architecture.md) — framework internals + hardening notes
 
 ### Model layer depth
 

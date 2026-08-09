@@ -112,7 +112,7 @@ LUA
 wrk -t8 -c256 -d10s --latency -s /tmp/wrk_db.lua http://127.0.0.1:8080
 ```
 
-For longer / more adversarial runs see `docs/benchmarks-long-run.md`.
+For longer / more adversarial runs see `docs/en/benchmarks-long-run.md`.
 
 ## Methodology notes (so future numbers stay comparable)
 

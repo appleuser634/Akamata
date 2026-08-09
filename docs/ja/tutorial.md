@@ -969,7 +969,7 @@ akamata_requests_by_status{class="5xx"} 0
 `req_id` は `X-Request-ID` レスポンスヘッダにも入るので、フロントエンドのエラー
 レポートとサーバログを突き合わせるのに使えます。
 
-詳細は [docs/observability.md](observability.md) を参照。
+詳細は [docs/ja/observability.md](observability.md) を参照。
 
 ---
 
@@ -1020,7 +1020,7 @@ Miniflare のシミュレートされた D1** に書き込まれます。
 > **どうやって動いてるか**: `src/worker.zig` がエクスポートする `handle_fetch` という
 > wasm 関数を `deploy/worker/index.mjs` が JSPI (JavaScript Promise Integration)
 > 経由で呼び出しています。D1 binding の `env.DB.prepare(sql).run()` を Zig 側から
-> あたかも同期関数のように呼べる仕組みです。詳しくは [docs/db-backends.md](db-backends.md) 参照。
+> あたかも同期関数のように呼べる仕組みです。詳しくは [docs/ja/db-backends.md](db-backends.md) 参照。
 
 `Ctrl-C` で停止。
 
@@ -1147,7 +1147,7 @@ sum(rate(akamata_requests_by_status{class="5xx"}[5m]))
   / sum(rate(akamata_requests_total[5m]))
 ```
 
-詳しくは [docs/observability.md](observability.md) を参照。
+詳しくは [docs/ja/observability.md](observability.md) を参照。
 
 ### 10.3 アクセスログを別ファイルに
 
@@ -1221,11 +1221,11 @@ ls src/*.zig | entr -r zig build run
 
 ### 個別トピック
 
-- [**docs/handbook.md**](handbook.md) — 15 分で全機能を概観 (このチュートリアルの圧縮版)
-- [**docs/db-backends.md**](db-backends.md) — SQLite / Turso / D1 の挙動差と JSPI 仕組み
-- [**docs/observability.md**](observability.md) — 本番運用のメトリクス・ログ詳細
-- [**docs/benchmarks.md**](benchmarks.md) / [**benchmarks-long-run.md**](benchmarks-long-run.md) — 性能特性
-- [**docs/architecture.md**](architecture.md) — フレームワーク内部設計と本番ハードニング
+- [**docs/ja/handbook.md**](handbook.md) — 15 分で全機能を概観 (このチュートリアルの圧縮版)
+- [**docs/ja/db-backends.md**](db-backends.md) — SQLite / Turso / D1 の挙動差と JSPI 仕組み
+- [**docs/ja/observability.md**](observability.md) — 本番運用のメトリクス・ログ詳細
+- [**docs/ja/benchmarks.md**](benchmarks.md) / [**benchmarks-long-run.md**](benchmarks-long-run.md) — 性能特性
+- [**docs/ja/architecture.md**](architecture.md) — フレームワーク内部設計と本番ハードニング
 
 ### モデル層を深掘り
 

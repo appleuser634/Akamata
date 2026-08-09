@@ -77,7 +77,7 @@ c3. **`deploy/mobus/Dockerfile`** — Containers 用静的バイナリ + `linkSy
 ### Phase D: テスト・ドキュメント
 
 d1. **テスト追加** — JWT/bcrypt unit tests、env loader、http_client mock
-d2. **`docs/mobus-deployment.md`** — D1 マイグレーション手順、`wrangler secret put` 一覧、Containers 起動手順
+d2. **`docs/ja/mobus-deployment.md`** — D1 マイグレーション手順、`wrangler secret put` 一覧、Containers 起動手順
 d3. **CI matrix 拡張** — `examples/mobus` も両ターゲットで build
 
 ## 想定工数
@@ -93,7 +93,7 @@ d3. **CI matrix 拡張** — `examples/mobus` も両ターゲットで build
 ## 主要リスク
 
 1. **D1 同期化のリエントラント設計** — 現状 D1 ブリッジが「事前 fetched データを返すスタブ」で実装が未完成。本気で動かすには WASM ↔ JS の双方向リエントラントが必要 (Phase A10 が肝)
-2. **bcrypt の純 Zig 実装** — リファレンス実装の正しさ検証が必要。互換性テストベクトルが要 (`docs/known-answer-tests.md` を作る)
+2. **bcrypt の純 Zig 実装** — リファレンス実装の正しさ検証が必要。互換性テストベクトルが要 (`docs/ja/known-answer-tests.md` を作る)
 3. **MQTT のリプレース** — 本番運用で MQTT broker を使い続けるなら、Workers 環境向けに **MQTT over WebSocket** ブローカ (HiveMQ Cloud など) への接続コードが必要。あるいは MQTT を諦めて HTTP webhook + Durable Object に置換するアプリ側の決断
 4. **bcrypt の RSA 鍵パース** (FCM 用) — Service Account JSON の PEM 部分を 0.16 の `std.crypto.Certificate.rsa` でパースできるか要確認
 5. **TLS クライアント** — `std.crypto.tls.Client` は 0.16 で書き換え中。HTTP/1.1 + TLS のラッパが Akamata 側で必要

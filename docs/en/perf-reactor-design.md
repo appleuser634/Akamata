@@ -7,7 +7,7 @@ prototype) and a follow-up PERF3 (epoll port).
 
 ## Why now
 
-Current measurements (`docs/benchmarks-long-run.md`):
+Current measurements (`docs/en/benchmarks-long-run.md`):
 
 | Scenario | Akamata | Go `net/http` | Gap |
 |---|---:|---:|---:|
@@ -172,7 +172,7 @@ pub const ServeOptions = struct {
 
 ## A/B benchmark plan
 
-For PERF2, run on the same M2 Pro hardware as `docs/benchmarks-long-run.md`:
+For PERF2, run on the same M2 Pro hardware as `docs/en/benchmarks-long-run.md`:
 
 | Variant | Build flags |
 |---|---|
@@ -299,7 +299,7 @@ else
 We verified the file compiles cleanly under `zig build -Dtarget=x86_64-linux-musl`
 on the macOS dev box (10.6 MB static ELF), but the actual on-Linux
 benchmark hasn't run yet. Bench results will land in
-`docs/benchmarks-long-run.md` once we have access to Linux hardware
+`docs/en/benchmarks-long-run.md` once we have access to Linux hardware
 (typical CI runner is fine — the prototype doesn't need a tuned kernel).
 
 ## PERF5 decision — keep `threaded` as the default
@@ -356,7 +356,7 @@ If we want more throughput, the targets are:
    a comptime-generated emitter per response type would halve `/echo`
    CPU time. Estimated effort: 3 days.
 
-Tracked under PERF7-9 in `docs/perf-followups.md` (to be opened when we
+Tracked under PERF7-9 in `docs/en/perf-followups.md` (to be opened when we
 have a concrete user complaint or production data showing a gap that
 needs to close).
 

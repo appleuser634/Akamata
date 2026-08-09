@@ -2,7 +2,7 @@
 
 Akamata の代表的な機能を 1 アプリにまとめたタスク管理 REST API です。新しいアプリを書き始めるときの叩き台、または「あの機能、どう書くんだっけ?」を探すためのリファレンスとして使ってください。
 
-詳しい解説は [`docs/example-tasks.md`](../../docs/example-tasks.md) を参照してください。
+詳しい解説は [`docs/ja/example-tasks.md`](../../docs/ja/example-tasks.md) を参照してください。
 
 ## クイックスタート
 

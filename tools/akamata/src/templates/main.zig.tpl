@@ -9,7 +9,7 @@ const am = @import("akamata");
 // ===== Model =====================================================
 //
 // Define a struct with a `__schema` block to get a typed table + a Repo with
-// `.find / .all / .where / .create / .save / .delete`. See docs/handbook.md
+// `.find / .all / .where / .create / .save / .delete`. See docs/en/handbook.md
 // for indexes, defaults, validators, and relations.
 
 pub const Note = struct {

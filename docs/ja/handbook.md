@@ -368,6 +368,6 @@ am.model.relations.hasMany / belongsTo  (遅延ロード)
 - `examples/guestbook/` — 必要最小限の完動アプリ。HTML UI、バリデーション、3 つの DB バックエンドすべてに対応
 - `examples/mobus/` — 規模のある実用アプリ (認証、フレンド、メッセージ、WebSocket ハブ、FCM push)
 - `examples/chat/` — Durable Object SQLite + WebSocket
-- `docs/db-backends.md` — バックエンド実装メモ (JSPI、Hrana プロトコル詳細)
-- `docs/benchmarks.md` — 性能計測結果 (ホットパスで 167k req/s)
-- `docs/architecture.md` — フレームワーク内部構造 + 本番運用向けハードニングのまとめ
+- `docs/ja/db-backends.md` — バックエンド実装メモ (JSPI、Hrana プロトコル詳細)
+- `docs/ja/benchmarks.md` — 性能計測結果 (ホットパスで 167k req/s)
+- `docs/ja/architecture.md` — フレームワーク内部構造 + 本番運用向けハードニングのまとめ

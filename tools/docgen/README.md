@@ -11,9 +11,9 @@ npm install                  # one-time: pulls `marked`
 npm run build                # regenerates everything (handbook + tutorial + slides)
 
 # Or just one set:
-npm run build:handbook       # docs/handbook(.ja).pdf
-npm run build:tutorial       # docs/tutorial(.ja).pdf
-npm run build:slides         # docs/slides(.ja).pdf
+npm run build:handbook       # docs/{en,ja}/handbook.pdf
+npm run build:tutorial       # docs/{en,ja}/tutorial.pdf
+npm run build:slides         # docs/{en,ja}/slides.pdf
 ```
 
 Or render any markdown file manually:
@@ -27,12 +27,12 @@ node html_to_pdf.mjs <input.html> <output.pdf> [--chrome=PATH]
 
 | Source | Output |
 |---|---|
-| `../../docs/handbook.md` | `../../docs/handbook.pdf` |
-| `../../docs/handbook.ja.md` | `../../docs/handbook.ja.pdf` |
-| `../../docs/tutorial.md` | `../../docs/tutorial.pdf` |
-| `../../docs/tutorial.ja.md` | `../../docs/tutorial.ja.pdf` |
-| `slides.html` (here) | `../../docs/slides.pdf` |
-| `slides.ja.html` (here) | `../../docs/slides.ja.pdf` |
+| `../../docs/en/handbook.md` | `../../docs/en/handbook.pdf` |
+| `../../docs/ja/handbook.md` | `../../docs/ja/handbook.pdf` |
+| `../../docs/en/tutorial.md` | `../../docs/en/tutorial.pdf` |
+| `../../docs/ja/tutorial.md` | `../../docs/ja/tutorial.pdf` |
+| `slides.html` (here) | `../../docs/en/slides.pdf` |
+| `slides.ja.html` (here) | `../../docs/ja/slides.pdf` |
 
 Slide decks live in `tools/docgen/` because they're hand-authored HTML (the
 16:9 layout + page breaks aren't a good fit for Markdown). Markdown sources

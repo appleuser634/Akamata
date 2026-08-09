@@ -27,9 +27,9 @@ wrk -t8 -c256 -d10s --latency
 | **db**    | `GET /db/:id` | SQLite (in-memory) で 1 行 SELECT |
 
 実装:
-- Akamata: [`examples/bench/src/main.zig`](../examples/bench/src/main.zig) (`am.App` + `am.db.openSqlite`)
-- Go: [`examples/bench/go/main.go`](../examples/bench/go/main.go) (`net/http` + `modernc.org/sqlite`)
-- Hono on Bun: [`examples/bench/hono/index.ts`](../examples/bench/hono/index.ts) (`hono@4` + `bun:sqlite`)
+- Akamata: [`examples/bench/src/main.zig`](../../examples/bench/src/main.zig) (`am.App` + `am.db.openSqlite`)
+- Go: [`examples/bench/go/main.go`](../../examples/bench/go/main.go) (`net/http` + `modernc.org/sqlite`)
+- Hono on Bun: [`examples/bench/hono/index.ts`](../../examples/bench/hono/index.ts) (`hono@4` + `bun:sqlite`)
 
 ---
 
@@ -304,7 +304,7 @@ t=60s   2,560 KB    (settled, FLAT for the rest)
 end     2,448 KB
 ```
 
-→ **メモリリーク無し**、5 分連続で 2.5 MB に収束。`docs/benchmarks-long-run.md` 参照。
+→ **メモリリーク無し**、5 分連続で 2.5 MB に収束。`docs/ja/benchmarks-long-run.md` 参照。
 
 ---
 
@@ -416,4 +416,4 @@ P99 では他 3 フレームワーク全てに対し 10× 以上の優位を得�
 
 と使い分けることで、各シナリオで最適な性能特性を引き出せる。
 
-設計と実装の詳細は [`docs/perf-reactor-design.md`](perf-reactor-design.md) を参照。
+設計と実装の詳細は [`docs/ja/perf-reactor-design.md`](perf-reactor-design.md) を参照。

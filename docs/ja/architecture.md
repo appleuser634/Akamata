@@ -74,4 +74,4 @@ Production リリースに向けて確認すべき項目:
 ### Workers 環境での D1
 - **JSPI** (JavaScript Promise Integration) で実装済み。`new WebAssembly.Suspending(fn)` + `WebAssembly.promising(handle_fetch)` により、Zig ハンドラは SQLite/Turso と同じ同期 API で D1 を呼べる
 - 旧 Miniflare など JSPI 未対応ランタイムでは fail-closed (`D1Error.BridgeNotImplemented`) になるので silent failure はしない
-- 詳細は `docs/db-backends.md`
+- 詳細は `docs/ja/db-backends.md`

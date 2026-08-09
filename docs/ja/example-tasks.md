@@ -2,7 +2,7 @@
 
 `examples/tasks/` は Akamata の代表的な機能をひとつのアプリにまとめたタスク管理 REST API です。新しいアプリを書き始めるときの叩き台として、また「この機能はどう使うんだろう?」というリファレンスとして使えるよう、コードはコメント多めで書かれています。
 
-このドキュメントは Example の全体像と、各機能が **なぜ** その形で組まれているかを解説します。Akamata 本体の API リファレンスは `docs/handler-api.md` を参照してください。
+このドキュメントは Example の全体像と、各機能が **なぜ** その形で組まれているかを解説します。Akamata 本体の API リファレンスは `docs/ja/handler-api.md` を参照してください。
 
 ## このサンプルが扱う機能
 
@@ -332,7 +332,7 @@ zig build tasks-test
 
 ## 参考
 
-- 機能ごとの API リファレンス: `docs/handler-api.md`
-- ベンチマーク: `docs/benchmarks.md`
-- アーキテクチャ概観: `docs/architecture.md`
+- 機能ごとの API リファレンス: `docs/ja/handler-api.md`
+- ベンチマーク: `docs/ja/benchmarks.md`
+- アーキテクチャ概観: `docs/ja/architecture.md`
 - フレームワーク CLI: `tools/akamata/` (`akamata init <name>` で新規プロジェクトのスケルトンを生成)

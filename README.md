@@ -59,11 +59,11 @@ akamata deploy --containers
 
 | 目的 | ドキュメント | 所要時間 |
 |---|---|---|
-| **まず動かしたい** | [クイックスタート](docs/quickstart.md) | 5 分 |
-| **15 分で全機能を概観** | [ハンドブック](docs/handbook.md) ([日本語](docs/handbook.ja.md) · [PDF](docs/handbook.pdf) · [日本語 PDF](docs/handbook.ja.pdf)) | 15 分 |
-| **初心者向けに丁寧に学ぶ** | **[詳細チュートリアル (日本語)](docs/tutorial.ja.md)** · [English](docs/tutorial.md) · [日本語 PDF](docs/tutorial.ja.pdf) · [English PDF](docs/tutorial.pdf) | **60–90 分** |
+| **まず動かしたい** | [クイックスタート](docs/ja/quickstart.md) | 5 分 |
+| **15 分で全機能を概観** | [ハンドブック](docs/en/handbook.md) ([日本語](docs/ja/handbook.md) · [PDF](docs/en/handbook.pdf) · [日本語 PDF](docs/ja/handbook.pdf)) | 15 分 |
+| **初心者向けに丁寧に学ぶ** | **[詳細チュートリアル (日本語)](docs/ja/tutorial.md)** · [English](docs/en/tutorial.md) · [日本語 PDF](docs/ja/tutorial.pdf) · [English PDF](docs/en/tutorial.pdf) | **60–90 分** |
 | **個別トピックを深掘り** | [リファレンス](#リファレンスドキュメント) | — |
-| **プレゼン用** | [紹介スライド (日本語 PDF)](docs/slides.ja.pdf) · [English PDF](docs/slides.pdf) | 25 枚 |
+| **プレゼン用** | [紹介スライド (日本語 PDF)](docs/ja/slides.pdf) · [English PDF](docs/en/slides.pdf) | 25 枚 |
 
 > 詳細チュートリアルでは、ゼロから **Todo リスト API + HTML UI** を作成し、SQLite から Cloudflare D1 への本番デプロイまで一貫して学べます。Zig を触ったことが無い方も対象です。
 
@@ -129,27 +129,27 @@ akamata init myapp --target=both
 
 ### 学ぶ・始める
 
-- [📘 詳細チュートリアル (日本語)](docs/tutorial.ja.md) / [English](docs/tutorial.md) — Todo アプリをゼロから作る (60–90 分)
-- [ハンドブック](docs/handbook.md) / [日本語](docs/handbook.ja.md) — 15 分で全機能を概観
-- [クイックスタート](docs/quickstart.md) — 5 分で起動まで
-- [🎤 紹介スライド (日本語 PDF)](docs/slides.ja.pdf) / [English PDF](docs/slides.pdf) — 25 枚、勉強会・社内紹介向け
+- [📘 詳細チュートリアル (日本語)](docs/ja/tutorial.md) / [English](docs/en/tutorial.md) — Todo アプリをゼロから作る (60–90 分)
+- [ハンドブック](docs/en/handbook.md) / [日本語](docs/ja/handbook.md) — 15 分で全機能を概観
+- [クイックスタート](docs/ja/quickstart.md) — 5 分で起動まで
+- [🎤 紹介スライド (日本語 PDF)](docs/ja/slides.pdf) / [English PDF](docs/en/slides.pdf) — 25 枚、勉強会・社内紹介向け
 
 ### リファレンス
 
-- [Architecture](docs/architecture.md) — フレームワーク内部設計
-- [Handler API](docs/handler-api.md) — Context / Request / Response の全関数
-- [WebSocket](docs/websocket.md) — WS upgrade とハンドラ
-- [DB backends](docs/db-backends.md) — SQLite / Turso / D1 と JSPI 仕組み
-- [Cloudflare](docs/cloudflare.md) — Workers / Containers デプロイ詳細
-- [Hono 風 DX 設計書](docs/hono-style-redesign.md) — API 設計の意図
+- [Architecture](docs/ja/architecture.md) — フレームワーク内部設計
+- [Handler API](docs/ja/handler-api.md) — Context / Request / Response の全関数
+- [WebSocket](docs/ja/websocket.md) — WS upgrade とハンドラ
+- [DB backends](docs/ja/db-backends.md) — SQLite / Turso / D1 と JSPI 仕組み
+- [Cloudflare](docs/ja/cloudflare.md) — Workers / Containers デプロイ詳細
+- [Hono 風 DX 設計書](docs/ja/hono-style-redesign.md) — API 設計の意図
 
 ### 本番運用
 
-- [Observability](docs/observability.md) — Prometheus メトリクスとログ
-- [Benchmarks](docs/benchmarks.md) — 短期ベンチ結果
-- [Benchmarks (長時間)](docs/benchmarks-long-run.md) — 5 分間 / churn / 低並列の結果
-- [Perf follow-ups](docs/perf-followups.md) — 試行と未着手の改善案
-- [mobus 移植計画](docs/mobus-portability.md) / [mobus デプロイ](docs/mobus-deployment.md) — 実アプリの移植例
+- [Observability](docs/ja/observability.md) — Prometheus メトリクスとログ
+- [Benchmarks](docs/ja/benchmarks.md) — 短期ベンチ結果
+- [Benchmarks (長時間)](docs/ja/benchmarks-long-run.md) — 5 分間 / churn / 低並列の結果
+- [Perf follow-ups](docs/ja/perf-followups.md) — 試行と未着手の改善案
+- [mobus 移植計画](docs/ja/mobus-portability.md) / [mobus デプロイ](docs/ja/mobus-deployment.md) — 実アプリの移植例
 
 ## ライセンス
 

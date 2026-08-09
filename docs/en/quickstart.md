@@ -1,14 +1,14 @@
-# クイックスタート
+# Quick start
 
-5 分で Akamata の Web アプリを起動する。
+Launch an Akamata web app in 5 minutes.
 
-## 0. 前提
+## 0. Assumptions
 
-- Zig 0.16.0
-- (任意) `npx wrangler` (Cloudflare Workers デプロイ用)
-- (任意) Docker (Cloudflare Containers デプロイ用)
+-Zig 0.16.0
+- (Optional) `npx wrangler` (for Cloudflare Workers deployments)
+- (Optional) Docker (for Cloudflare Containers deployments)
 
-## 1. CLI を入手
+## 1. Get the CLI
 
 ```bash
 git clone <akamata-repo>
@@ -17,20 +17,20 @@ zig build cli
 # zig-out/bin/akamata が生成される
 ```
 
-PATH に通すなら:
+If you put it in your PATH:
 
 ```bash
 ln -s "$(pwd)/zig-out/bin/akamata" /usr/local/bin/akamata
 ```
 
-## 2. プロジェクト生成
+## 2. Project generation
 
 ```bash
 akamata init myapp --target=both
 cd myapp
 ```
 
-ディレクトリ構成:
+Directory structure:
 
 ```
 myapp/
@@ -47,23 +47,23 @@ myapp/
     └── Dockerfile            # Cloudflare Containers 用
 ```
 
-## 3. ネイティブで起動
+## 3. Launch natively
 
 ```bash
 zig build run
 # akamata listening on http://0.0.0.0:8080/
 ```
 
-別ターミナルから:
+From another terminal:
 
 ```bash
 curl localhost:8080/                  # Hello, Akamata!
 curl localhost:8080/users/42          # {"id":"42"}
 ```
 
-## 4. ルートを追加
+## 4. Add route
 
-`src/main.zig` を編集:
+Edit `src/main.zig`:
 
 ```zig
 _ = try app.post("/users", createUser);
@@ -75,16 +75,16 @@ fn createUser(c: *am.Context(State)) !void {
 }
 ```
 
-`zig build run` で即反映。
+Immediately reflected with `zig build run`.
 
-## 5. ミドルウェアを足す
+## 5. Add middleware
 
 ```zig
 _ = try app.useAll(am.mw.cors(State, .{ .origin = "*" }));
 _ = try app.use("/api/*", am.mw.bearerAuth(State, .{ .token = "secret" }));
 ```
 
-## 6. Cloudflare Workers にデプロイ
+## 6. Deploy to Cloudflare Workers
 
 ```bash
 # (初回のみ) Cloudflare アカウントにログイン
@@ -94,14 +94,14 @@ npx wrangler login
 akamata deploy --workers
 ```
 
-ローカルで Workers を試す場合:
+If you want to try Workers locally:
 
 ```bash
 zig build -Dbackend=workers -Doptimize=ReleaseSmall
 cd deploy && npx wrangler dev --local
 ```
 
-## 7. Cloudflare Containers にデプロイ
+## 7. Deploy to Cloudflare Containers
 
 ```bash
 # 静的バイナリ + Docker image
@@ -111,15 +111,15 @@ akamata deploy --containers
 docker run --rm -p 8080:8080 akamata-app
 ```
 
-## 8. D1 マイグレーション
+## 8. D1 Migration
 
 ```bash
 akamata db migrations/001_init.sql --remote
 ```
 
-## 次のステップ
+## Next steps
 
-- ハンドラ API の詳細: [`docs/handler-api.md`](handler-api.md)
-- WebSocket: [`docs/websocket.md`](websocket.md)
-- SQLite / D1: [`docs/db-backends.md`](db-backends.md)
-- `examples/chat/` (シンプル) と `examples/mobus/` (フル機能) を読む
+- Handler API details: [`docs/en/handler-api.md`](handler-api.md)
+- WebSocket: [`docs/en/websocket.md`](websocket.md)
+- SQLite/D1: [`docs/en/db-backends.md`](db-backends.md)
+- Read `examples/chat/` (Simple) and `examples/mobus/` (Full Featured)

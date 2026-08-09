@@ -138,4 +138,4 @@ wraps every async import (D1 and `fetch`), and `WebAssembly.promising(handle_fet
 wraps the wasm entry. The Zig side just calls them as ordinary synchronous
 functions.
 
-See `docs/db-backends.md` for the full picture.
+See `docs/en/db-backends.md` for the full picture.

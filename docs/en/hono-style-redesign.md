@@ -1,8 +1,8 @@
-# Hono風 DX へのリデザイン
+# Redesign to Hono style DX
 
-Akamata を、Hono と同じ感覚で書ける Web フレームワークに進化させる。
+Evolving Akamata into a web framework that can be written in the same way as Hono.
 
-## 目標
+## the goal
 
 ```zig
 // src/main.zig — これだけで Cloudflare Workers にも Containers にもデプロイ可能
@@ -39,7 +39,7 @@ fn createUser(c: *am.Context) !void {
 }
 ```
 
-Workers モードでも同じ `main.zig` を共有し、ビルドターゲットだけ切り替える:
+Share the same `main.zig` in Workers mode and switch only the build target:
 
 ```bash
 # Containers
@@ -49,7 +49,7 @@ akamata deploy containers
 akamata deploy workers
 ```
 
-## アーキテクチャ
+## Architecture
 
 ```
 ┌──────────────────────────────────────────┐
@@ -70,9 +70,9 @@ akamata deploy workers
 └──────────────────────────────────────────┘
 ```
 
-## API 詳細
+## API details
 
-### App (型パラメータで state を持つ)
+### App (with state as type parameter)
 
 ```zig
 pub fn App(comptime State: type) type {
@@ -112,9 +112,9 @@ pub fn App(comptime State: type) type {
 }
 ```
 
-`Handler` は型イレーズして `*const fn(*Context) anyerror!void` に統一。state へのアクセスは `c.app.state()`。
+`Handler` is type erased and unified to `*const fn(*Context) anyerror!void`. Access to state is `c.app.state()`.
 
-### Context (Hono の `c` 相当)
+### Context (equivalent to Hono's `c`)
 
 ```zig
 pub const Context = struct {
@@ -159,7 +159,7 @@ pub const Request = struct {
 };
 ```
 
-state へのアクセス用ヘルパ:
+Helper for accessing state:
 
 ```zig
 pub fn State(c: *Context, comptime T: type) *T {
@@ -168,23 +168,23 @@ pub fn State(c: *Context, comptime T: type) *T {
 // 使い方: const app = am.State(c, MyApp);
 ```
 
-### ビルトインミドルウェア (`am.mw.*`)
+### Built-in middleware (`am.mw.*`)
 
-最小セット 6 個:
+Minimum set of 6 pieces:
 
-| Middleware | 説明 | スコープ |
+| Middleware | Description | Scope |
 |---|---|---|
-| `am.mw.logger()` | リクエストログ (既存) | both |
-| `am.mw.recover()` | panic / error を500に変換 (既存) | both |
-| `am.mw.cors(.{...})` | CORS ヘッダ付与 | both |
-| `am.mw.bearerAuth(.{ .token = ... })` | 固定トークン | both |
-| `am.mw.jwt(.{ .secret = ..., .verify = ... })` | JWT 検証 + sub を c に注入 | both |
-| `am.mw.serveStatic(.{ .root = "public/" })` | 静的ファイル | native のみ |
-| `am.mw.compress()` | gzip (後回し) | native のみ |
+| `am.mw.logger()` | Request log (existing) | both |
+| `am.mw.recover()` | Convert panic / error to 500 (existing) | both |
+| `am.mw.cors(.{...})` | CORS header addition | both |
+| `am.mw.bearerAuth(.{ .token = ... })` | Fixed token | both |
+| `am.mw.jwt(.{ .secret = ..., .verify = ... })` | JWT validation + inject sub into c | both |
+| `am.mw.serveStatic(.{ .root = "public/" })` | Static file | native only |
+| `am.mw.compress()` | gzip (deferred) | native only |
 
-Hono に倣って "メソッド名がそのままミドルウェア" のスタイル。
+A style of "middleware with method names as they are" following Hono.
 
-### ルーター (パス単位ミドルウェアとグループ)
+### Routers (per-path middleware and groups)
 
 ```zig
 // パス単位 use
@@ -203,11 +203,11 @@ _ = try users_app.get("/:id", showUser);
 try app.route("/users", &users_app);
 ```
 
-実装は Trie ルータか線形検索の選択。MVP は線形検索でいく (ルート数 < 200 想定で十分速い)。
+Choice of implementation: Trie router or linear search. MVP uses linear search (fast enough assuming number of routes < 200).
 
-### エラーハンドリング
+### Error handling
 
-Hono の `HTTPException` 風に:
+Like Hono's `HTTPException`:
 
 ```zig
 pub const HTTPException = error{
@@ -219,9 +219,9 @@ pub const HTTPException = error{
 return HTTPException.NotFound; // → 自動で404 + JSON {"error":"not_found"}
 ```
 
-`app.onError(handler)` で全エラーをcatch可能。
+All errors can be caught with `app.onError(handler)`.
 
-### 起動 / デプロイ
+### Launch/Deploy
 
 ```zig
 // 同じソースで両方動く: app.serve がコンパイル時に backend で分岐
@@ -230,13 +230,13 @@ try app.serve(.{ .port = 8080 });
 // workers → setDispatch + export を自動的に行う
 ```
 
-Workers モードで `serve` を呼ぶと、内部で `am.runtime.workers.setDispatch(dispatchBytes)` を仕込んで`akamata_init`をexportする。
+When you call `serve` in Workers mode, `am.runtime.workers.setDispatch(dispatchBytes)` is internally loaded and `akamata_init` is exported.
 
 ## akamata-cli
 
-`tools/akamata/` 配下に Zig で書く別バイナリ。`zig build cli` で `zig-out/bin/akamata` を生成。
+Another binary written in Zig under `tools/akamata/`. Generate `zig-out/bin/akamata` from `zig build cli`.
 
-### コマンド
+### Command
 
 ```bash
 akamata init my-app --target=workers|containers|both
@@ -264,7 +264,7 @@ akamata db [--local|--remote] <sql-file>
   # = wrangler d1 execute <name> --file=... 相当
 ```
 
-### init テンプレート構成
+### init template configuration
 
 ```
 my-app/
@@ -281,7 +281,7 @@ my-app/
     └── Dockerfile
 ```
 
-`build.zig` 雛形は akamata の build helper を呼ぶだけにする:
+The `build.zig` template just calls akamata's build helper:
 
 ```zig
 const std = @import("std");
@@ -295,57 +295,57 @@ pub fn build(b: *std.Build) void {
 }
 ```
 
-これで`-Dbackend`/`-Dtarget`/`-Doptimize` フラグが自動で揃う。
+Now the `-Dbackend`/`-Dtarget`/`-Doptimize` flags will be automatically aligned.
 
-## 移行計画 (フルコース)
+## Migration Planning (Full Course)
 
-### Phase α: フレームワーク新API (3 日)
+### Phase α: Framework new API (3 days)
 
-α1. `src/app.zig` — Hono風 `App(State)` 実装。runtime Router、basePath、route、use(path_pattern)、onError
-α2. `src/context.zig` リライト — `c.req.param/json/query`, `c.json/text/html/redirect`, state ヘルパ
-α3. `src/request.zig` 拡張 — query パーサ、`json(comptime T)` メソッド
-α4. `src/mw/cors.zig`, `bearer.zig`, `jwt.zig`, `static.zig` — ビルトインミドルウェア
-α5. `src/runtime.zig` — `app.serve()` が backend で自動分岐
-α6. `src/build_helpers/akamata_build.zig` — `akamata_build.app(b, opts)` テンプレート
+α1. `src/app.zig` — Hono style `App(State)` implementation. runtime Router, basePath, route, use(path_pattern), onError
+α2. `src/context.zig` rewrite — `c.req.param/json/query`, `c.json/text/html/redirect`, state helper
+α3. `src/request.zig` extension — query parser, `json(comptime T)` method
+α4. `src/mw/cors.zig`, `bearer.zig`, `jwt.zig`, `static.zig` — Built-in middleware
+α5. `src/runtime.zig` — `app.serve()` automatically branches in backend
+α6. `src/build_helpers/akamata_build.zig` — `akamata_build.app(b, opts)` template
 
-### Phase β: akamata-cli (2 日)
+### Phase β: akamata-cli (2 days)
 
-β1. `tools/akamata/src/main.zig` — CLI エントリ
-β2. `init` サブコマンド + テンプレート (embedFile)
-β3. `dev` / `build` / `deploy` / `db` サブコマンド
-β4. `build.zig` で `b.step("cli", ...)` 追加
+β1. `tools/akamata/src/main.zig` — CLI entry
+β2. `init` subcommand + template (embedFile)
+β3. `dev` / `build` / `deploy` / `db` subcommands
+β4. `b.step("cli", ...)` added with `build.zig`
 
-### Phase γ: 既存 examples の新API移行 (2 日)
+### Phase γ: Migration of existing examples to new API (2 days)
 
-γ1. `examples/chat/src/main.zig` を新API に書き換え
-γ2. `examples/mobus/src/main.zig` 同上 (26 endpoints)
-γ3. `docs/` を全面リライト
-γ4. 旧 `Router(App)` / `Server(App)` は **非推奨マークだけ残して当面は残置** (互換性のため)
+γ1. Rewrite `examples/chat/src/main.zig` to new API
+γ2. `examples/mobus/src/main.zig` Same as above (26 endpoints)
+γ3. Fully rewritten `docs/en/`
+γ4. Old `Router(App)` / `Server(App)` will remain for the time being with only the deprecation mark left** (for compatibility)
 
-### Phase δ: テスト + CI (1 日)
+### Phase δ: Test + CI (1 day)
 
-δ1. `tests/app_test.zig` (新 API テスト)
-δ2. CI に cli ビルド + init テンプレートの動作確認を追加
-δ3. README / quickstart を新 API で書き直し
+δ1. `tests/app_test.zig` (New API test)
+δ2. Add cli build + init template operation check to CI
+δ3. Rewritten README/quickstart with new API
 
-合計 8 日。
+Total 8 days.
 
-## 互換性
+## Compatibility
 
-- 旧 `Router(App).build(&.{...})` API は当面残し、`@deprecated` コメントで誘導
-- `Server(App)` は内部実装として残し、`App` は内部で `Server` を呼ぶ薄い層に
-- 既存テストはそのまま通る (`tests/router_test.zig` 等)
+- The old `Router(App).build(&.{...})` API will remain for the time being and will be guided by the `@deprecated` comment.
+- `Server(App)` is left as an internal implementation, and `App` is a thin layer that calls `Server` internally.
+- Existing tests pass as is (`tests/router_test.zig`, etc.)
 
-## 主要リスク
+## Main risks
 
-1. **state 型イレーズ vs `App(comptime State: type)`** — Hono は state ジェネリック型だが、middleware を異なる State 間で混ぜると面倒。`App` 自体は型パラメータ、Handler は `*const fn(*Context) anyerror!void` で State なし、Context 経由で `State(c, MyT)` 取得、という ergonomics と型安全のバランスを取る
-2. **Runtime Router のパフォーマンス** — 線形検索で 200 ルート × 100k qps = 20M ops/sec ≒ 50ns/match で問題なし。Trie は v2 で
-3. **WASM での `App.serve`** — `serve` が backend で分岐するため、native コードと workers コードが同じソースから出る。これは現在の handler 抽象では既に達成済みなので継承
-4. **CLI バイナリサイズ** — embedFile でテンプレートを埋め込むと数MBになるが許容範囲
+1. **state type erase vs `App(comptime State: type)`** — Hono is a state generic type, but it is troublesome to mix middleware between different states. `App` itself is a type parameter, Handler is `*const fn(*Context) anyerror!void` without State, and `State(c, MyT)` is obtained via Context, which balances ergonomics and type safety.
+2. **Runtime Router Performance** — 200 routes × 100k qps = 20M ops/sec ≒ 50ns/match with linear search, no problem. Trie is v2
+3. **`App.serve` in WASM** — `serve` branches at the backend, so native code and workers code come from the same source. This is already achieved with the current handler abstraction, so it can be inherited.
+4. **CLI binary size** — Embedding the template with embedFile takes a few MB, but it is acceptable.
 
-## 確定方針 (2026-05-22 合意済み)
+## Final policy (agreed on 2026-05-22)
 
-1. **state 型**: `App(MyState)` ジェネリック (Zig らしい型安全)。Handler は `*const fn(*Context(State)) anyerror!void`、Context も State パラメータ付き
-2. **Group 型**: `app.basePath("/api/v1")` も同じ `*App(State)` 型を返す。Hono と同じく内部に prefix を持つだけ
-3. **CLI 外部依存**: `wrangler` / `docker` は CLI に同梱せず、子プロセスで呼ぶ (`std.process.Child` 相当)。未インストールなら案内メッセージ
-4. **スコープ**: フルコース (Phase α+β+γ+δ)。examples/chat と mobus も新APIへ移行
+1. **state type**: `App(MyState)` generic (Zig-like type safety). Handler is `*const fn(*Context(State)) anyerror!void`, Context also has State parameter
+2. **Group type**: `app.basePath("/api/v1")` also returns the same `*App(State)` type. Just has a prefix inside like Hono
+3. **CLI external dependency**: `wrangler` / `docker` is not included in the CLI and is called in a child process (equivalent to `std.process.Child`). Information message if not installed
+4. **Scope**: Full course (Phase α+β+γ+δ). examples/chat and mobus have also been migrated to the new API

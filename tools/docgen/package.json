@@ -9,12 +9,12 @@
     "build:handbook": "npm run build:handbook:en && npm run build:handbook:ja",
     "build:tutorial": "npm run build:tutorial:en && npm run build:tutorial:ja",
     "build:slides": "npm run build:slides:en && npm run build:slides:ja",
-    "build:handbook:en": "node md_to_pdf.mjs ../../docs/handbook.md ../../docs/handbook.pdf --title='Akamata Handbook'",
-    "build:handbook:ja": "node md_to_pdf.mjs ../../docs/handbook.ja.md ../../docs/handbook.ja.pdf --title='Akamata ハンドブック'",
-    "build:tutorial:en": "node md_to_pdf.mjs ../../docs/tutorial.md ../../docs/tutorial.pdf --title='Akamata Tutorial'",
-    "build:tutorial:ja": "node md_to_pdf.mjs ../../docs/tutorial.ja.md ../../docs/tutorial.ja.pdf --title='Akamata 詳細チュートリアル'",
-    "build:slides:en": "node html_to_pdf.mjs slides.html ../../docs/slides.pdf",
-    "build:slides:ja": "node html_to_pdf.mjs slides.ja.html ../../docs/slides.ja.pdf"
+    "build:handbook:en": "node md_to_pdf.mjs ../../docs/en/handbook.md ../../docs/en/handbook.pdf --title='Akamata Handbook'",
+    "build:handbook:ja": "node md_to_pdf.mjs ../../docs/ja/handbook.md ../../docs/ja/handbook.pdf --title='Akamata ハンドブック'",
+    "build:tutorial:en": "node md_to_pdf.mjs ../../docs/en/tutorial.md ../../docs/en/tutorial.pdf --title='Akamata Tutorial'",
+    "build:tutorial:ja": "node md_to_pdf.mjs ../../docs/ja/tutorial.md ../../docs/ja/tutorial.pdf --title='Akamata 詳細チュートリアル'",
+    "build:slides:en": "node html_to_pdf.mjs slides.html ../../docs/en/slides.pdf",
+    "build:slides:ja": "node html_to_pdf.mjs slides.ja.html ../../docs/ja/slides.pdf"
   },
   "dependencies": {
     "marked": "^11.0.0"

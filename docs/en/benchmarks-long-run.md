@@ -144,7 +144,7 @@ node tools/fuzz/http_fuzz.mjs http://127.0.0.1:8080 --duration=30s --workers=8
 ## Known issues / future work
 
 - **Histogram bucket boundaries** are fixed at compile time. Tracked under
-  `docs/observability.md` "future work".
+  `docs/en/observability.md` "future work".
 - **macOS Max = 1.19 s outlier** in the `/db` long-run is a kernel/scheduler
   artefact rather than a framework bug; we observed it once in 15.7 M
   requests. Worth re-checking on Linux to confirm.
