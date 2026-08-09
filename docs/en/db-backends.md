@@ -8,15 +8,15 @@
 pub const Db = struct {
     pub fn prepare(self: Db, sql: []const u8) !Stmt
     pub fn exec(self: Db, sql: []const u8) !void
-    pub fn execAll(self: Db, script: []const u8) !void   // ; 区切りで複数実行
+    pub fn execAll(self: Db, script: []const u8) !void   // Execute semicolon-separated statements
     pub fn close(self: Db) void
 };
 
 pub const Stmt = struct {
     pub fn bind(self: Stmt, idx: usize, v: Value) !void
-    pub fn bindAll(self: Stmt, args: anytype) !void       // タプルを 1-origin で
+    pub fn bindAll(self: Stmt, args: anytype) !void       // Bind tuple values from index 1
     pub fn step(self: Stmt) !StepResult                   // .row | .done
-    pub fn fetchOne(self: Stmt, comptime T: type) !T      // 1 行を struct にマップ
+    pub fn fetchOne(self: Stmt, comptime T: type) !T      // Map one row to a struct
     pub fn readRow(self: Stmt, comptime T: type) !T
     pub fn columnInt/Float/Text/Blob(self: Stmt, idx) !...
     pub fn reset(self: Stmt) !void
@@ -76,7 +76,7 @@ Benefits:
 ## D1 (Workers) — JSPI implementation
 
 ```zig
-// am.db.open("d1:DB") もしくは直接:
+// am.db.open("d1:DB"), or directly:
 var db = try am.db.openD1(alloc);
 ```
 
@@ -91,8 +91,8 @@ D1's JS API is async (each `prepare/bind/all` is a Promise), so it is fundamenta
 **Important — 1 statement, 1 suspend**: JSPI suspend/resume parks/resume the entire wasm call stack, which is costly even if the JS side does not do any I/O. Therefore, **actually await only `d1_run` (query execution + all row materialization)**, and make `d1_step` / `d1_column_*` synchronous import. The Zig side executes `d1_run` in a delayed manner at the first `step()`, and thereafter advances the line cursor synchronously. Now a SELECT of N rows can be done with "1 suspend" (naively wrapping `d1_step` with Suspending would result in **1 row and 1 suspend**, which would cause ~20 unnecessary stack switches on a 20-line timeline).
 
 ```js
-// 抜粋: deploy/mobus/worker/index.mjs
-// 唯一の async D1 op: bind + run で全行をマテリアライズ。
+// Excerpt: deploy/mobus/worker/index.mjs
+// The only async D1 operation: bind + run materializes all rows.
 d1_run: new WebAssembly.Suspending(async (h) => {
   const e = d1stmts.get(h);
   const bound = e.bindArgs.length > 0 ? e.base.bind(...e.bindArgs) : e.base;
@@ -102,7 +102,7 @@ d1_run: new WebAssembly.Suspending(async (h) => {
   e.cursor = 0;
   return e.rows.length;
 }),
-// 同期: マテリアライズ済みの行カーソルを進めるだけ（サスペンドしない）。
+// Synchronous: advance the materialized row cursor (no suspend).
 d1_step(h) {
   const e = d1stmts.get(h);
   if (!e || e.rows == null) return -1;
@@ -115,7 +115,7 @@ handleFetchAsync = WebAssembly.promising(exports_ref.handle_fetch);
 ```
 
 ```zig
-// src/db/d1.zig — Zig 側はただの extern fn
+// src/db/d1.zig — Zig side is a plain extern function
 extern "akamata_d1" fn d1_step(stmt: i32) i32;
 ```
 
@@ -156,25 +156,53 @@ JSPI's wasm stack switch once is on the order of **µs**, but resume goes throug
 ### Measurement procedure (out-of-band)
 
 ```bash
-# wrangler でローカル D1 を立てる
+# Start a local D1 with wrangler
 cd examples/mobus
 wrangler d1 execute mobus --local --file=schema.sql
 wrangler dev --local --port 8787
 
-# 別ターミナルから wrk
+# Run wrk from another terminal
 wrk -t4 -c100 -d15s --latency http://127.0.0.1:8787/api/messages
 
-# Turso 同等
+# Turso comparison
 TURSO_URL=libsql://your-db.turso.io TURSO_TOKEN=... ./zig-out/bin/mobus
 wrk -t4 -c100 -d15s --latency http://127.0.0.1:8080/api/messages
 ```
 
 The actual value depends on the environment (for Workers, the location of CF edge, for Turso, the DB region), so as a general rule, benchmarks should be taken at your actual deployment location.
 
-## Migration
+## Recommended migration workflow
 
-| Backend | At startup |
-|---|---|
-| native SQLite | `db.execAll(@embedFile("schema.sql"))` with `main()` |
-| Turso | `db.execAll(...)` Same as above (published to HTTP) |
-| D1 (Workers) | Run `wrangler d1 execute <DB> --file=schema.sql` manually before deployment (`db.execAll()` is OK if you want to hot reload the Workers startup time, but out-of-band is recommended for production) |
+Use the scaffold migration path first so schema changes remain reviewable:
+
+1. `akamata migrate generate add_notes` creates a versioned SQL file in
+   `migrations/`.
+2. Edit and review the SQL, then run `akamata migrate up` in the project
+   directory. The native runner applies pending files in order and records
+   them in `schema_migrations`.
+3. For Workers, apply the reviewed file during deployment with
+   `akamata deploy --migrate=migrations/001_add_notes.sql` (or the equivalent
+   `wrangler d1 migrations apply` workflow).
+
+Fresh native scaffolds also run `am.model.migrate.diff/apply` at startup for
+local development. Workers scaffolds run `migrate_once.run` on the first
+request. Prefer reviewed, versioned files for production deployments.
+
+## Advanced / low-level migration
+
+Applications that deliberately manage their own schema can use `Db.execAll`
+with native SQLite or Turso:
+
+```zig
+try db.execAll(@embedFile("schema.sql"));
+```
+
+Direct Wrangler execution is an operational escape hatch for D1, not the
+default scaffold workflow:
+
+```bash
+wrangler d1 execute my_database --remote --file=migrations/001_add_notes.sql
+```
+
+Do not mix ad-hoc DDL with the versioned runner unless it is recorded in
+`schema_migrations`.

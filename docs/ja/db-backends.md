@@ -171,10 +171,40 @@ wrk -t4 -c100 -d15s --latency http://127.0.0.1:8080/api/messages
 
 実値は環境依存 (Workers なら CF edge の場所、Turso なら DB のリージョン) なので、ベンチマークは「自分の本番デプロイ先で取る」のが原則。
 
-## マイグレーション
+## 推奨する migration workflow
 
-| バックエンド | 起動時 |
-|---|---|
-| native SQLite | `db.execAll(@embedFile("schema.sql"))` を `main()` で |
-| Turso         | `db.execAll(...)` 同上 (HTTP に発行) |
-| D1 (Workers)  | `wrangler d1 execute <DB> --file=schema.sql` をデプロイ前に手動実行 (Workers の起動時刻はホットリロードしたい場合 `db.execAll()` でも OK だが、本番では out-of-band 推奨) |
+まず scaffold の migration path を使い、schema 変更をレビュー可能な形で
+管理します。
+
+1. `akamata migrate generate add_notes` で `migrations/` に versioned SQL
+   file を作成します。
+2. SQL を編集・レビューしてから project directory で
+   `akamata migrate up` を実行します。native runner は pending file を順に
+   適用し、`schema_migrations` に記録します。
+3. Workers では deploy 時にレビュー済み file を
+   `akamata deploy --migrate=migrations/001_add_notes.sql` で適用します
+   （既存の Wrangler workflow では `wrangler d1 migrations apply` 相当）。
+
+native scaffold は local development のため起動時に
+`am.model.migrate.diff/apply` も実行します。Workers scaffold は最初の
+request で `migrate_once.run` を実行します。本番ではレビュー済みの
+versioned file を優先してください。
+
+## Advanced / low-level migration
+
+独自に schema を管理する場合は、native SQLite または Turso で
+`Db.execAll` を使えます。
+
+```zig
+try db.execAll(@embedFile("schema.sql"));
+```
+
+D1 の直接 Wrangler 実行は、通常の scaffold workflow ではなく運用上の
+escape hatch です。
+
+```bash
+wrangler d1 execute my_database --remote --file=migrations/001_add_notes.sql
+```
+
+versioned runner と ad-hoc DDL を併用する場合は、必ず
+`schema_migrations` に記録してください。

@@ -29,7 +29,7 @@ Of the functions that mobus_server_zig currently has, Akamata supports:
 The original design of mobus was "single binary + libmosquitto + libssl + local SQLite", but we abstract this into three levels so that the same handler code works in both environments:
 
 ```
-ハンドラ (am.Ctx(App)) ───┬─── am.db.Db (SQLite | D1)
+Handler (am.Context(App)) ──┬─── am.db.Db (SQLite | D1)
                           ├─── am.http_client.Client (Zig TLS | fetch bridge)
                           ├─── am.push.Sender (FCM)
                           ├─── am.mq.Publisher (MQTT direct | webhook bridge)

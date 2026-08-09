@@ -5,13 +5,15 @@ HTTP ルートから upgrade する httpz スタイル。WS 専用リスナを�
 ## ハンドラ
 
 ```zig
-fn wsRoom(ctx: *am.Ctx(App)) !void {
-    var conn = try am.ws.upgrade(App, ctx, .{ .max_message_bytes = 64 * 1024 });
+const Ctx = am.Context(App);
+
+fn wsRoom(ctx: *Ctx) !void {
+    var conn = try am.ws.upgrade(Ctx, ctx, .{ .max_message_bytes = 64 * 1024 });
     defer conn.deinit();
 
     while (true) {
         const msg = conn.readMessage(ctx.arena) catch |e| switch (e) {
-            am.ws.Conn.ReadError.ClosedByPeer => return,
+            error.ClosedByPeer => return,
             else => return e,
         };
         if (msg.opcode == .text) try conn.sendText(msg.payload);
@@ -19,7 +21,7 @@ fn wsRoom(ctx: *am.Ctx(App)) !void {
 }
 ```
 
-ルートは `R.ws("/path", handler)` で宣言する。内部的には `GET` メソッド + `RouteKind.ws` だが、ハンドラ側は `am.ws.upgrade()` を呼ぶことで明示的にアップグレードする。
+ルートは `app.ws("/path", handler)` で宣言する。内部的には `GET` メソッドの `RouteKind.ws` だが、ハンドラ側で `am.ws.upgrade()` を呼び、明示的に接続をアップグレードする。
 
 ## ブロードキャスト (例: チャット)
 

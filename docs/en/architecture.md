@@ -20,7 +20,7 @@ var server = try am.Server(App).init(alloc, &app, .{ ... });
 There is only one handler signature:
 
 ```zig
-fn handler(ctx: *am.Ctx(App)) !void
+fn handler(ctx: *am.Context(App)) !void
 ```
 
 ## Request processing flow (native)

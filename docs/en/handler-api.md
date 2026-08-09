@@ -12,6 +12,15 @@ return Zig error unions; application errors can be handled with `app.onError`
 or `am.mw.recover`. Native and Workers share the handler signature, but APIs
 that require sockets or a filesystem are marked explicitly.
 
+## Quick index
+
+- [App Builder](#app-builder)
+- [Context](#context)
+- [Errors](#errors)
+- [How to use State](#how-to-use-state)
+- [Built-in middleware](#built-in-middleware)
+- [Reference map](#reference-map)
+
 ## Reference map
 
 | Area | Primary signature / entry point | Return, errors, lifetime, and backend |
@@ -36,7 +45,7 @@ See [Database backends](db-backends.md), [WebSocket](websocket.md), and
 var app = am.App(State).init(alloc, initial_state);
 defer app.deinit();
 
-// HTTP メソッド
+// HTTP methods
 _ = try app.get(path, handler);
 _ = try app.post(path, handler);
 _ = try app.put(path, handler);
@@ -44,25 +53,25 @@ _ = try app.delete(path, handler);
 _ = try app.patch(path, handler);
 _ = try app.options(path, handler);
 
-// すべてのメソッドにマッチ
+// Match all HTTP methods
 _ = try app.all(path, handler);
 
-// WebSocket (内部的には GET + RouteKind.ws)
+// WebSocket (internally GET + RouteKind.ws)
 _ = try app.ws(path, handler);
 
-// ミドルウェア
-_ = try app.useAll(am.mw.logger(State));            // 全ルートに適用
-_ = try app.use("/api/*", am.mw.bearerAuth(State, .{ .token = "x" }));  // パスマッチ
+// Middleware
+_ = try app.useAll(am.mw.logger(State));            // Apply to every route
+_ = try app.use("/api/*", am.mw.bearerAuth(State, .{ .token = "x" }));  // Path match
 
-// グループ (basePath の戻り値は *App(State)、prefix が積まれる)
+// Groups (basePath returns *App(State) with a prefix)
 var api = try app.basePath("/api/v1");
 _ = try api.get("/users", listUsers);
 
-// エラー / Not Found ハンドラ
+// Error / Not Found handlers
 app.notFound(myNotFound);
 app.onError(myErrorHandler);
 
-// 起動 (backend で自動分岐)
+// Start (automatically selects the backend)
 try app.serve(.{ .port = 8080 });
 ```
 
@@ -70,22 +79,22 @@ try app.serve(.{ .port = 8080 });
 
 ```zig
 fn handler(c: *am.Context(State)) !void {
-    // === Request 側 ===
+    // === Request ===
     const m = c.req.method();                  // "GET"
     const p = c.req.path();                    // "/users/42"
     const auth = c.req.header("authorization");// ?[]const u8
 
-    const id = try c.req.param("id");          // []const u8 (404 ではなく error.MissingParam を投げる)
-    const num = try c.req.paramAs(u64, "id");  // 型変換
+    const id = try c.req.param("id");          // []const u8 (error.MissingParam, not 404)
+    const num = try c.req.paramAs(u64, "id");  // Type conversion
 
     const limit = c.req.query("limit") orelse "10";
-    const all_q = try c.req.queries("tag");    // 同名の複数 query を集約
+    const all_q = try c.req.queries("tag");    // Collect repeated query values
 
     const Body = struct { name: []const u8 };
-    const body = try c.req.json(Body);         // arena に parse
+    const body = try c.req.json(Body);         // Parse in the arena
     const raw = c.req.body();                  // []const u8
 
-    // === Response 側 ===
+    // === Response ===
     c.status(201);
     try c.header("x-trace", "abc");
     try c.json(.{ .ok = true }, 200);
@@ -95,7 +104,7 @@ fn handler(c: *am.Context(State)) !void {
     try c.notFound();
 
     // === State ===
-    const s: *State = c.state();               // ジェネリック型の State にアクセス
+    const s: *State = c.state();               // Access the generic State
     _ = s.db;
 
     // === Per-request arena ===

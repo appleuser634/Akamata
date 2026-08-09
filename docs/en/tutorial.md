@@ -1,7 +1,7 @@
 # Akamata Tutorial — Build a Todo List API from scratch
 
 This tutorial is for readers **new to both Zig and Akamata**. You'll go from
-an empty directory to a **production-ready Todo list API + web UI** in one
+an empty directory to a complete Todo list API + web UI in one
 sitting.
 
 Reading time: **60–90 minutes**. Skip sections you already know — each one
@@ -884,7 +884,7 @@ curl -sS -H 'Accept: text/html' http://127.0.0.1:8080/ | head -3
 ### Goal
 
 - Understand the role of `recover` and `logger`
-- Add `accessLog` and `metrics` for production-ready observability
+- Add `accessLog` and `metrics` for production-oriented observability
 - (Optional) group routes with `basePath`
 
 ### Order matters
@@ -1194,6 +1194,26 @@ on file changes, use `entr`:
 ```bash
 ls src/*.zig | entr -r zig build run
 ```
+
+---
+
+## Production checklist
+
+Before exposing an application to the public internet:
+
+- Terminate TLS at a trusted reverse proxy and configure proxy headers only
+  when the proxy is trusted.
+- Set strong session/JWT secrets, keep cookies `Secure`, and require JWT
+  expiration. Do not log tokens, cookies, request bodies, or SQL text.
+- Use a persistent session store and a distributed rate limiter when running
+  more than one native process or Workers isolate.
+- Review and back up migrations before deployment; prefer versioned migration
+  files over ad-hoc DDL.
+- Configure request, header, body, and WebSocket limits and monitor structured
+  logs, request metrics, and database timings.
+
+See [Security](security.md) and [Observability](observability.md) for the
+defaults and deployment-specific caveats.
 
 ---
 

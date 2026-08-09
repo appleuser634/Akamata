@@ -23,12 +23,12 @@ The resource is `tasks` It is a simple CRUD with only one table, but all the abo
 ```
 examples/tasks/
 └── src/
-    ├── app.zig              # State 型 + EventChannel (SSE pub/sub)
-    ├── models.zig           # `Task` モデル + 自動マイグレーション manifest
-    ├── handlers.zig         # ルートごとのハンドラ実装
-    ├── setup.zig            # App ビルド + ミドルウェアチェーン + ルート登録
-    ├── main.zig             # native エントリ
-    └── integration_test.zig # am.testing.Client でのテスト
+    ├── app.zig              # State type + EventChannel (SSE pub/sub)
+    ├── models.zig           # `Task` model + automatic migration manifest
+    ├── handlers.zig         # Per-route handlers
+    ├── setup.zig            # App build, middleware chain, and route registration
+    ├── main.zig             # Native entry point
+    └── integration_test.zig # Tests with am.testing.Client
 ```
 
 ## Build & Run

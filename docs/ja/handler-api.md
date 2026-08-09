@@ -8,6 +8,15 @@ fn handler(c: *am.Context(State)) !void
 
 特記がない限り、返されるsliceとparse済みの値はrequest arena上にあり、handler return後に保持できません。operationはZigのerror unionを返し、application errorは`app.onError`または`am.mw.recover`で処理できます。nativeとWorkersのhandler signatureは共通ですが、socketやfilesystemを必要とするAPIは各節で明記します。
 
+## クイックインデックス
+
+- [App ビルダ](#app-ビルダ)
+- [Context](#context)
+- [エラー](#エラー)
+- [State の使い方](#state-の使い方)
+- [Built-in middleware](#built-in-middleware)
+- [Reference map](#reference-map)
+
 ## Reference map
 
 | 分野 | 主なsignature／entry point | return value、error、lifetime、backend |

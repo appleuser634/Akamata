@@ -1214,6 +1214,26 @@ ls src/*.zig | entr -r zig build run
 
 ---
 
+## 本番運用チェックリスト
+
+アプリケーションをインターネットへ公開する前に、次を確認します。
+
+- 信頼できる reverse proxy で TLS を終端し、proxy header は信頼する proxy
+  からのものだけを利用する。
+- 強力な session/JWT secret を設定し、cookie の `Secure` を有効にする。
+  JWT には有効期限を必須とし、token・cookie・request body・SQL本文をログへ出さない。
+- native を複数 process で動かす場合や Workers isolate をまたぐ場合は、
+  永続 session store と分散 rate limiter を用意する。
+- deploy 前に migration をレビュー・バックアップし、ad-hoc DDL より
+  versioned migration file を優先する。
+- request、header、body、WebSocket の上限を設定し、structured log・request
+  metrics・DB timing を監視する。
+
+既定値と環境ごとの注意点は [Security](security.md) と
+[Observability](observability.md) を参照してください。
+
+---
+
 ## 12. 次のステップ
 
 このチュートリアルで触ったのは Akamata の基本機能だけです。さらに踏み込むなら:

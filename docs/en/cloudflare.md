@@ -24,7 +24,7 @@ JS thin wrapper loads `chat_worker.wasm` and sends the request.
 
 ```bash
 zig build -Dbackend=workers -Doptimize=ReleaseSmall
-wrangler d1 execute akamata --file=deploy/worker/d1_schema.sql --local   # 初回
+wrangler d1 execute akamata --file=deploy/worker/d1_schema.sql --local   # First run
 wrangler dev --local
 ```
 

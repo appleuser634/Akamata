@@ -62,7 +62,7 @@ akamata deploy workers
 ┌──────────────────────────────────────────┐
 │  am.App / am.Context (新)                 │
 │   ├─ ランタイムビルダのRouter (新)         │
-│   ├─ パス単位ミドルウェアチェーン (新)     │
+│   ├─ Path-level middleware chain (new)     │
 │   └─ ビルトインmw: cors/jwt/bearer/static  │
 └──────────────────┬──────────────────────┘
                    │
@@ -94,7 +94,7 @@ pub fn App(comptime State: type) type {
         pub fn all(self: *App, path: []const u8, h: Handler) !*App
         pub fn ws(self: *App, path: []const u8, h: Handler) !*App
 
-        // ミドルウェア
+        // Middleware
         pub fn use(self: *App, path_pattern: []const u8, mw: Middleware) !*App
         pub fn useAll(self: *App, mw: Middleware) !*App
 
@@ -263,7 +263,7 @@ akamata deploy [--workers|--containers]
 
 akamata db [--local|--remote] <sql-file>
   # D1 マイグレーション ショートカット
-  # = wrangler d1 execute <name> --file=... 相当
+  # Equivalent to wrangler d1 execute <name> --file=...
 ```
 
 ### init template configuration

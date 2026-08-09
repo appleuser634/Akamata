@@ -5,13 +5,15 @@ httpz style to upgrade from HTTP route. Do not build a WS-specific listener.
 ## Handler
 
 ```zig
-fn wsRoom(ctx: *am.Ctx(App)) !void {
-    var conn = try am.ws.upgrade(App, ctx, .{ .max_message_bytes = 64 * 1024 });
+const Ctx = am.Context(App);
+
+fn wsRoom(ctx: *Ctx) !void {
+    var conn = try am.ws.upgrade(Ctx, ctx, .{ .max_message_bytes = 64 * 1024 });
     defer conn.deinit();
 
     while (true) {
         const msg = conn.readMessage(ctx.arena) catch |e| switch (e) {
-            am.ws.Conn.ReadError.ClosedByPeer => return,
+            error.ClosedByPeer => return,
             else => return e,
         };
         if (msg.opcode == .text) try conn.sendText(msg.payload);
@@ -19,7 +21,7 @@ fn wsRoom(ctx: *am.Ctx(App)) !void {
 }
 ```
 
-The route is declared with `R.ws("/path", handler)`. Internally, it is `GET` method + `RouteKind.ws`, but the handler side is explicitly upgraded by calling `am.ws.upgrade()`.
+The route is declared with `app.ws("/path", handler)`. Internally, it is a `GET` route with `RouteKind.ws`, and the handler explicitly upgrades the connection with `am.ws.upgrade()`.
 
 ## Broadcast (e.g. chat)
 
