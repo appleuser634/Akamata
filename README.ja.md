@@ -6,6 +6,8 @@ Zig 0.16向けのミニマルWebフレームワークです。Zigと標準ライ
 HTTP/WebSocket層を構成し、SQLite、D1、TursoのDBバックエンドと、native server、
 Cloudflare Workers、Cloudflare Containersへのデプロイをサポートします。
 
+最新release: **v0.0.1** · 必須Zig: **0.16.x** · [Release notes](CHANGELOG.md)
+
 ```zig
 const std = @import("std");
 const am = @import("akamata");

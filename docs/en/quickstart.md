@@ -31,7 +31,7 @@ zig build cli
 
 ## 2. Generate a project
 
-The generated `build.zig.zon` uses a commit-pinned GitHub archive with a Zig content hash, so the project can be created independently of the Akamata checkout:
+The generated `build.zig.zon` uses a release-compatible, revision-pinned GitHub archive with a Zig content hash, so the project can be created independently of the Akamata checkout. The first v0.0.1 scaffold uses an immutable release-preparation revision; subsequent releases update this pin to the previous stable release to avoid a self-referential archive:
 
 ```bash
 cd ~/projects

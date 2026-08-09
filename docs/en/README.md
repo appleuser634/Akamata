@@ -1,6 +1,6 @@
 # Akamata Documentation
 
-This is the documentation home for Akamata 0.3 and Zig 0.16.x. Start with the Quick Start if you are evaluating the framework, then use the Handbook or Tutorial for a deeper walkthrough.
+This is the documentation home for Akamata v0.0.1 and Zig 0.16.x. Start with the Quick Start if you are evaluating the framework, then use the Handbook or Tutorial for a deeper walkthrough.
 
 [日本語](../ja/README.md) · [Project README](../../README.md)
 
@@ -18,6 +18,7 @@ This is the documentation home for Akamata 0.3 and Zig 0.16.x. Start with the Qu
 - [WebSocket](websocket.md)
 - [Observability](observability.md)
 - [Security](security.md)
+- [Release process](releasing.md)
 - [Mobus deployment](mobus-deployment.md) and [portability notes](mobus-portability.md)
 
 ## API reference

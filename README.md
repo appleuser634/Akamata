@@ -7,6 +7,8 @@ layers around Zig and its standard library, provides SQLite, D1, and Turso
 database backends, and targets native servers, Cloudflare Workers, and
 Cloudflare Containers.
 
+Latest release: **v0.0.1** · Requires **Zig 0.16.x** · [Release notes](CHANGELOG.md)
+
 ```zig
 const std = @import("std");
 const am = @import("akamata");

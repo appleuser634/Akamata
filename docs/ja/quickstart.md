@@ -31,7 +31,7 @@ zig build cli
 
 ## 2. プロジェクトを生成する
 
-生成される`build.zig.zon`は、commitを固定したGitHub archiveとZig content hashを使用します。Akamata checkoutの場所に依存せず、任意のdirectoryへprojectを作成できます。
+生成される`build.zig.zon`は、release互換のrevisionを固定したGitHub archiveとZig content hashを使用します。Akamata checkoutの場所に依存せず、任意のdirectoryへprojectを作成できます。v0.0.1の初回scaffoldでは、自己参照archiveを避けるためimmutableなrelease準備revisionを参照します。次回以降は直前のstable releaseへpinを更新します。
 
 ```bash
 cd ~/projects

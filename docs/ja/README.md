@@ -1,6 +1,6 @@
 # Akamataドキュメント
 
-このページはAkamata 0.3／Zig 0.16.x向けドキュメントの入口です。フレームワークを初めて試す場合はクイックスタートから始め、HandbookまたはTutorialで理解を深めてください。
+このページはAkamata v0.0.1／Zig 0.16.x向けドキュメントの入口です。フレームワークを初めて試す場合はクイックスタートから始め、HandbookまたはTutorialで理解を深めてください。
 
 [English](../en/README.md) · [プロジェクトREADME](../../README.ja.md)
 
@@ -18,6 +18,7 @@
 - [WebSocket](websocket.md)
 - [Observability](observability.md)
 - [Security](security.md)
+- [Release process](releasing.md)
 - [Mobus deployment](mobus-deployment.md)と[portability notes](mobus-portability.md)
 
 ## API reference

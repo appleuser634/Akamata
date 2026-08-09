@@ -26,5 +26,6 @@ akamata deploy --workers       # requires npx wrangler login
 akamata deploy --containers    # requires docker
 ```
 
-`build.zig.zon` pins Akamata by commit and content hash. To develop against a
-local Akamata checkout temporarily, run `zig build --fork=/path/to/Akamata`.
+`build.zig.zon` pins a release-compatible Akamata revision and Zig content
+hash. To develop against a local Akamata checkout temporarily, run
+`zig build --fork=/path/to/Akamata`.
