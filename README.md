@@ -1,5 +1,7 @@
 # Akamata
 
+[English](README.en.md) | 日本語
+
 Hono に着想を得た、Zig 0.16 系のミニマル Web フレームワーク。
 標準ライブラリのみで HTTP / WebSocket / SQLite を提供し、Cloudflare Workers と Cloudflare Containers の両方にデプロイできる。
 
