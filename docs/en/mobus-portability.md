@@ -1,5 +1,7 @@
 # mobus_server_zig porting plan (compatible with both Workers + Containers)
 
+> Historical porting plan. Its phase status and descriptions of bridge stubs are superseded by the current `examples/mobus/` and `deploy/mobus/` implementations. Use the [deployment guide](mobus-deployment.md) for current instructions.
+
 Phased plan for fully porting `../mobus_server_zig` to Akamata and hosting it in both Cloudflare Workers and Cloudflare Containers.
 
 ## Porting scope
@@ -85,7 +87,7 @@ d3. **CI matrix extension** — `examples/mobus` is also built on both targets
 | Phase | Contents | Man-hours (assuming one person) |
 |---|---|---|
 | A | Framework extension (env/jwt/bcrypt/http_client/push/mq + WASM bridge) | 4-6 days |
-| B | mobus app layer 26 endpoints + WS + notifications | 5-7 days |
+| B | mobus application layer, WebSocket, and notifications | 5-7 days |
 | C | Cloudflare integration (wrangler.toml + Worker JS + Dockerfile) | 2-3 days |
 | D | Test + Documentation + CI | 2 days |
 | **Total** | | **13-18 days** |

@@ -3,6 +3,8 @@
 Production-oriented stress: longer than the 15-second smoke tests in
 `benchmarks.md`, with RSS sampling and adverse traffic patterns.
 
+These May 2026 results are snapshots, not guarantees. The exact Git commit was not recorded with the original run.
+
 ## Environment
 
 - macOS 26.0.1, Apple Silicon (10 cores)

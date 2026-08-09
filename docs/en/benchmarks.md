@@ -1,14 +1,16 @@
 # Benchmarks
 
-Effects of improvements for Production- and comparison with other equivalent frameworks.
+These measurements compare Akamata with several server implementations under specific local workloads. They are historical snapshots, not performance guarantees.
+
+The recorded runs date from May 2026. Their exact Git commit was not captured in the original results; use the commands and sources linked below to reproduce them on the current revision.
 
 ## Execution environment
 
 - macOS 26.0.1, Apple Silicon (M2 Pro, 10 cores)
 - Zig 0.16.0 ReleaseFast
--Go 1.24.5
+- Go 1.24.5
 - Bun 1.3.0 / Hono 4.12.x
--wrk 4.2.0
+- wrk 4.2.0
 - Loopback (127.0.0.1), wrk and server are the same host
 
 ## Bench parameters
@@ -111,7 +113,7 @@ Only Bun raw is a little slow due to Bun.serve's lazy initialise.
 ### Resource consumption (sampling under load, 1Hz)
 
 Actual measurement values ​​sampled every second with `ps` + `lsof` while running `wrk` for 10s.
-For details, see [`/tmp/bench_resources.json`](/tmp/bench_resources.json) (for playback, use `bash examples/bench/resources_all.sh`).
+The raw file was written to `/tmp/bench_resources.json` during the run and is not part of the repository. Reproduce it with `bash examples/bench/resources_all.sh`.
 
 #### Idle (1 second after startup, before request)
 
@@ -207,7 +209,7 @@ Winners in each category:
 7. **Akamata threaded memory consumption is 1/10 ~ 1/34 of contention** — idle 3.3 MB, /hello load 3.5 MB. Cloud run-cost drops dramatically
 8. **JS CPU efficiency (rps/core) is surprisingly high** — Bun raw ranks first with 230k rps/core. However, due to the single thread limit, **absolute throughput cannot reach Akamata reactor/Rust**
 
-Verbose output: [`/tmp/bench_results.json`](/tmp/bench_results.json) (played after execution)
+The verbose output was written to `/tmp/bench_results.json` during the run and is not part of the repository.
 
 ---
 

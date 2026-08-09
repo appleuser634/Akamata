@@ -1,5 +1,7 @@
 # mobus_server_zig 移植計画 (Workers + Containers 両対応)
 
+> 過去のporting planです。phase statusとbridge stubの記述は、現在の`examples/mobus/`／`deploy/mobus/`実装へ置き換えられています。現在の手順は[deployment guide](mobus-deployment.md)を参照してください。
+
 `../mobus_server_zig` を Akamata に完全移植し、Cloudflare Workers と Cloudflare Containers の両形態でホストするためのフェーズ別計画。
 
 ## 移植スコープ
@@ -85,7 +87,7 @@ d3. **CI matrix 拡張** — `examples/mobus` も両ターゲットで build
 | Phase | 内容 | 工数 (一人想定) |
 |---|---|---|
 | A | フレームワーク拡張 (env/jwt/bcrypt/http_client/push/mq + WASM bridge) | 4-6 日 |
-| B | mobus アプリ層 26 endpoints + WS + 通知 | 5-7 日 |
+| B | mobus application層、WebSocket、通知 | 5〜7日 |
 | C | Cloudflare 統合 (wrangler.toml + Worker JS + Dockerfile) | 2-3 日 |
 | D | テスト + ドキュメント + CI | 2 日 |
 | **合計** | | **13-18 日** |

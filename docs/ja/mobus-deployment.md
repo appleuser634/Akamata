@@ -73,15 +73,16 @@ zig build -Dbackend=workers -Dexample=mobus -Doptimize=ReleaseSmall
 cd deploy/mobus && wrangler deploy
 ```
 
-Workers の制約 (Phase A10 で完全解消予定):
-- **D1 同期化 (リエントラント)** が MVP では未完成。`d1_*` extern は -1 を返しスタブ状態。D1 を実際に使うハンドラは現状 502 を返す
-- **外部 HTTP (`http_client.send`)** も同様に未配線。`/api/weather/forecast` は 502 になる
-- **MQTT は使えない** (TCP直接アクセス不可)。`/api/messages/send` の MQTT publish はスキップされる
-- WebSocket は `UserHub` Durable Object 経由で配信
+Workers固有の挙動:
+
+- D1は`deploy/mobus/worker/index.mjs`のJSPI bridgeへ接続されています。
+- outbound HTTPは同じbridgeの`akamata_fetch`実装を使用します。
+- Workersは任意のTCP socketを提供しないためMQTTは利用できず、`/api/messages/send`のMQTT publishはskipされます。
+- WebSocket sessionは`UserHub` Durable Object経由で配信されます。
 
 ## エンドポイント一覧
 
-`mobus_server_zig` 互換 26 endpoints。詳細は `examples/mobus/src/routes.zig`。
+現在のroute登録は`examples/mobus/src/setup.zig`にあり、handlerは`examples/mobus/src/handlers/`以下へ分割されています。正確なendpoint集合はsource codeを確認してください。以下はroute追加時に陳腐化しにくいよう、機能単位でまとめています。
 
 | メソッド | パス | 認証 |
 |---|---|---|

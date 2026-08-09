@@ -1,6 +1,8 @@
 # Benchmarks
 
-Production-向け改善の効果と、同等の他フレームワークとの比較。
+特定のlocal workloadでAkamataと複数のserver実装を比較した測定記録です。過去のsnapshotであり、他の環境における性能を保証するものではありません。
+
+記録された測定は2026年5月に実施されました。元の結果には正確なGit commitが残っていないため、現在のrevisionでは後述するcommandとsource codeから再測定してください。
 
 ## 実行環境
 
@@ -111,7 +113,7 @@ Bun raw のみ Bun.serve の lazy initialise でやや遅い。
 ### リソース消費 (負荷中サンプリング, 1Hz)
 
 `wrk` を 10s 走らせる間に `ps` + `lsof` で 1 秒ごとにサンプルした実測値。
-詳細は [`/tmp/bench_resources.json`](/tmp/bench_resources.json) (再生は `bash examples/bench/resources_all.sh`)。
+実測値は実行時の`/tmp/bench_resources.json`へ保存され、repositoryには含まれません。`bash examples/bench/resources_all.sh`で再測定できます。
 
 #### Idle (起動 1 秒後、リクエスト前)
 
@@ -207,7 +209,7 @@ Akamata threaded は **マルチコアを使いつつ、その範囲で最も効
 7. **Akamata threaded のメモリ消費は競合の 1/10 ~ 1/34** — idle 3.3 MB, /hello 負荷時 3.5 MB。クラウド run-cost が劇的に下がる
 8. **JS 系の CPU efficiency (rps/core) は驚くほど高い** — Bun raw が 230k rps/core で 1 位。ただしシングルスレッド上限ゆえに **絶対 throughput では Akamata reactor/Rust に届かない**
 
-詳細出力: [`/tmp/bench_results.json`](/tmp/bench_results.json) (実行後に再生される)
+詳細出力は実行時の`/tmp/bench_results.json`へ保存され、repositoryには含まれません。
 
 ---
 

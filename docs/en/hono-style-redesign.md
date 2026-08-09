@@ -1,4 +1,6 @@
-# Redesign to Hono style DX
+# Historical API redesign record
+
+> This is a historical design record, not the current API reference. Some signatures and examples were superseded. See [Handler API](handler-api.md) and the current source for supported interfaces.
 
 Evolving Akamata into a web framework that can be written in the same way as Hono.
 
@@ -318,7 +320,7 @@ Now the `-Dbackend`/`-Dtarget`/`-Doptimize` flags will be automatically aligned.
 ### Phase γ: Migration of existing examples to new API (2 days)
 
 γ1. Rewrite `examples/chat/src/main.zig` to new API
-γ2. `examples/mobus/src/main.zig` Same as above (26 endpoints)
+γ2. `examples/mobus/src/main.zig` Same as above (the larger application route set)
 γ3. Fully rewritten `docs/en/`
 γ4. Old `Router(App)` / `Server(App)` will remain for the time being with only the deprecation mark left** (for compatibility)
 

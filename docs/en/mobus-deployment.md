@@ -73,15 +73,16 @@ zig build -Dbackend=workers -Dexample=mobus -Doptimize=ReleaseSmall
 cd deploy/mobus && wrangler deploy
 ```
 
-Workers limitations (to be completely resolved in Phase A10):
-- **D1 synchronization (reentrancy)** is incomplete in MVP. `d1_*` extern returns -1 and is in stub state. The handler that actually uses D1 currently returns 502.
-- **External HTTP (`http_client.send`)** is also unwired. `/api/weather/forecast` becomes 502
-- **MQTT cannot be used** (TCP direct access is not possible). MQTT publish for `/api/messages/send` is skipped
-- WebSocket delivered via `UserHub` Durable Object
+Workers-specific behavior:
+
+- D1 is connected through the JSPI bridge in `deploy/mobus/worker/index.mjs`.
+- Outbound HTTP uses the same bridge's `akamata_fetch` implementation.
+- MQTT is unavailable because Workers do not provide arbitrary TCP sockets; the MQTT publish in `/api/messages/send` is skipped.
+- WebSocket sessions are delivered through the `UserHub` Durable Object.
 
 ## Endpoint list
 
-`mobus_server_zig` compatible 26 endpoints. Details are `examples/mobus/src/routes.zig`.
+The current route registrations are in `examples/mobus/src/setup.zig`, with handlers split across `examples/mobus/src/handlers/`. Consult those files for the authoritative endpoint set; the summary below is grouped so it does not become stale when individual routes change.
 
 | Method | Path | Authentication |
 |---|---|---|

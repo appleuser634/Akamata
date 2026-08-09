@@ -1,4 +1,6 @@
-# Hono風 DX へのリデザイン
+# 過去のAPI redesign記録
+
+> この文書は設計過程の記録であり、現在のAPI referenceではありません。一部のsignatureとexampleは置き換えられています。対応中のinterfaceは[Handler API](handler-api.md)と現在のsource codeを確認してください。
 
 Akamata を、Hono と同じ感覚で書ける Web フレームワークに進化させる。
 
@@ -318,7 +320,7 @@ pub fn build(b: *std.Build) void {
 ### Phase γ: 既存 examples の新API移行 (2 日)
 
 γ1. `examples/chat/src/main.zig` を新API に書き換え
-γ2. `examples/mobus/src/main.zig` 同上 (26 endpoints)
+γ2. `examples/mobus/src/main.zig` 同上（大規模applicationのroute集合）
 γ3. `docs/ja/` を全面リライト
 γ4. 旧 `Router(App)` / `Server(App)` は **非推奨マークだけ残して当面は残置** (互換性のため)
 
