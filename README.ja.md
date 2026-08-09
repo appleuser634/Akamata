@@ -46,8 +46,8 @@ git clone https://github.com/appleuser634/Akamata.git
 cd Akamata
 ./scripts/install.sh
 
-# $HOME/.local/binへPATHを通した後、cloneしたAkamataと同じ階層に生成します。
-cd ..
+# $HOME/.local/binへPATHを通した後、任意のdirectoryで生成できます。
+cd ~/projects
 akamata init myapp --target=both
 cd myapp
 zig build run
@@ -61,7 +61,7 @@ curl -sS http://127.0.0.1:8080/notes
 ```
 
 生成projectには、validation付き`Note` model、SQLite自動migration、`/notes` CRUD、
-health route、Workers entry point、Wrangler設定、Workers JS glue、Container用Dockerfileが
+health route、空のversion付きmigration directory、Workers entry point、Wrangler設定、Workers JS glue、Container用Dockerfileが
 含まれます。正確なtreeとresponseは[クイックスタート](docs/ja/quickstart.md)を参照してください。
 
 CLI自体を開発する場合は、installせず直接buildできます。

@@ -47,8 +47,8 @@ git clone https://github.com/appleuser634/Akamata.git
 cd Akamata
 ./scripts/install.sh
 
-# Ensure $HOME/.local/bin is on PATH, then create an app next to this clone.
-cd ..
+# Ensure $HOME/.local/bin is on PATH, then create an app anywhere.
+cd ~/projects
 akamata init myapp --target=both
 cd myapp
 zig build run
@@ -63,7 +63,7 @@ curl -sS http://127.0.0.1:8080/notes
 
 The generated project includes a validated `Note` model, SQLite auto-migration,
 CRUD routes under `/notes`, a health route, a Workers entry point, Wrangler
-configuration, Workers JS glue, and a Container Dockerfile. See the
+configuration, an empty versioned-migration directory, Workers JS glue, and a Container Dockerfile. See the
 [Quick Start](docs/en/quickstart.md) for the exact tree and responses.
 
 Developing the CLI itself? Build without installing:

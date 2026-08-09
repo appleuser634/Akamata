@@ -130,11 +130,11 @@ Commands:
 
 ### Command
 
-The generated package currently refers to `../Akamata`, so create it next to
-the Akamata checkout:
+The generated package uses a commit-pinned remote dependency, so create it in
+any project directory:
 
 ```bash
-cd ..                # from the Akamata checkout
+cd ~/projects
 akamata init mytodo --target=both
 ```
 
@@ -164,6 +164,8 @@ mytodo/
 ├── README.md
 ├── build.zig                  # build configuration
 ├── build.zig.zon              # package manifest (depends on Akamata)
+├── migrations/
+│   └── .gitkeep               # versioned SQL migrations
 ├── deploy/
 │   ├── Dockerfile             # Cloudflare Containers image
 │   ├── wrangler.toml          # Cloudflare Workers config
@@ -180,6 +182,7 @@ mytodo/
 |---|---|
 | **`build.zig`** | Zig build configuration. Flags like `-Dbackend=workers` are parsed here |
 | **`build.zig.zon`** | Package manifest including the Akamata dependency |
+| **`migrations/`** | Versioned SQL files consumed by `akamata migrate up` |
 | **`src/main.zig`** | Native entry point. You'll spend 90% of your time here |
 | **`src/worker.zig`** | Workers entry point — just calls into `main.zig` |
 | **`deploy/Dockerfile`** | Multi-stage native build with a scratch runtime image |

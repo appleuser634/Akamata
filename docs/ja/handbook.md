@@ -31,7 +31,6 @@ cd Akamata
 ## 1. プロジェクトの雛形生成 (30 秒)
 
 ```bash
-# Akamata checkoutと同じ階層で実行します。build.zig.zonは../Akamataを参照します。
 akamata init mynotes --target=both
 cd mynotes
 zig build run
@@ -262,7 +261,7 @@ akamata migrate generate add_users        # migrations/<ts>_add_users.sql を生
 # ...SQL を編集...
 ```
 
-生成されるscaffoldにはversion付きmigration runnerは含まれません。確認済みのSQL fileをD1へ適用する場合は`akamata db migrations/<file>.sql --remote`を使うか、アプリケーションのdeploy workflowへ`am.model.migrate.Migrator`を組み込んでください。本番環境で未確認のmodel diffを自動適用しないでください。
+生成applicationには`akamata migrate up`が使用するrunnerが含まれます。`DATABASE_URL`を読み、`am.model.migrate.Migrator`で未適用fileを実行し、versionを`schema_migrations`へ記録します。空の`migrations/` directoryは何も適用せず成功し、再実行時は記録済みversionをskipします。D1には引き続き`akamata db <file> --remote`またはdeploy commandの`--migrate=<file>`を使用します。
 
 ---
 

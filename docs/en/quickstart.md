@@ -31,10 +31,10 @@ zig build cli
 
 ## 2. Generate a project
 
-The generated `build.zig.zon` uses `../Akamata` as its local dependency, so create the project next to this checkout:
+The generated `build.zig.zon` uses a commit-pinned GitHub archive with a Zig content hash, so the project can be created independently of the Akamata checkout:
 
 ```bash
-cd ..
+cd ~/projects
 akamata init myapp --target=both
 cd myapp
 ```
@@ -47,6 +47,8 @@ myapp/
 ├── README.md
 ├── build.zig
 ├── build.zig.zon
+├── migrations/
+│   └── .gitkeep
 ├── src/
 │   ├── main.zig
 │   └── worker.zig
@@ -70,6 +72,12 @@ The scaffold is a working SQLite-backed Note API, not a Hello World placeholder.
 
 The native entry point computes and applies the model schema diff at startup. The Workers entry point uses `migrate.Once` so initialization runs once per isolate.
 
+The first build downloads the pinned Akamata source. To test a local Akamata checkout without editing `build.zig.zon`, use Zig 0.16's package override:
+
+```bash
+zig build --fork=/path/to/Akamata
+```
+
 ## 3. Run the native server
 
 ```bash
@@ -88,6 +96,16 @@ curl -sS -X POST -H 'content-type: application/json' \
 ```
 
 The local database is `myapp.db` unless `DATABASE_URL` overrides it.
+
+Versioned migrations are also available. A fresh scaffold contains an empty `migrations/` directory, and applying it is a successful no-op:
+
+```bash
+akamata migrate generate add_widgets
+# Edit the generated SQL file.
+akamata migrate up
+```
+
+Applied versions are recorded in `schema_migrations`; running `migrate up` again skips them. Use `--dir=PATH` for another directory or `--target=VERSION` to stop at a version.
 
 ## 4. Build other targets
 

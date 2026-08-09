@@ -31,10 +31,10 @@ zig build cli
 
 ## 2. プロジェクトを生成する
 
-生成される`build.zig.zon`は`../Akamata`をローカル依存として参照するため、Akamataのcheckoutと同じ階層にプロジェクトを作成します。
+生成される`build.zig.zon`は、commitを固定したGitHub archiveとZig content hashを使用します。Akamata checkoutの場所に依存せず、任意のdirectoryへprojectを作成できます。
 
 ```bash
-cd ..
+cd ~/projects
 akamata init myapp --target=both
 cd myapp
 ```
@@ -47,6 +47,8 @@ myapp/
 ├── README.md
 ├── build.zig
 ├── build.zig.zon
+├── migrations/
+│   └── .gitkeep
 ├── src/
 │   ├── main.zig
 │   └── worker.zig
@@ -70,6 +72,12 @@ scaffoldはHello Worldではなく、SQLiteで動作するNote APIです。valid
 
 native entrypointは起動時にmodel schemaとの差分を計算して適用します。Workers entrypointは`migrate.Once`を使用し、isolateごとに初期化を1回実行します。
 
+初回buildでは固定済みAkamata sourceをdownloadします。`build.zig.zon`を編集せずlocal checkoutを試すには、Zig 0.16のpackage overrideを使用します。
+
+```bash
+zig build --fork=/path/to/Akamata
+```
+
 ## 3. native serverを起動する
 
 ```bash
@@ -88,6 +96,16 @@ curl -sS -X POST -H 'content-type: application/json' \
 ```
 
 `DATABASE_URL`を指定しない場合、local databaseは`myapp.db`です。
+
+version付きmigrationも利用できます。fresh scaffoldには空の`migrations/` directoryがあり、そのまま適用した場合は成功するno-opです。
+
+```bash
+akamata migrate generate add_widgets
+# 生成されたSQL fileを編集します。
+akamata migrate up
+```
+
+適用済みversionは`schema_migrations`へ記録され、同じ`migrate up`を再実行してもskipされます。別directoryには`--dir=PATH`、特定versionまでの適用には`--target=VERSION`を指定します。
 
 ## 4. その他のtargetをビルドする
 

@@ -30,7 +30,6 @@ You'll also want:
 ## 1. Scaffold a project (30 seconds)
 
 ```bash
-# Run next to the Akamata checkout; build.zig.zon refers to ../Akamata.
 akamata init mynotes --target=both
 cd mynotes
 zig build run
@@ -262,10 +261,12 @@ akamata migrate generate add_users        # creates migrations/<ts>_add_users.sq
 # ...edit the file with your SQL...
 ```
 
-The generated scaffold does not include a versioned migration runner. Apply a
-reviewed SQL file to D1 with `akamata db migrations/<file>.sql --remote`, or
-integrate `am.model.migrate.Migrator` into your application's own deployment
-workflow. Do not run unreviewed model diffs automatically in production.
+The generated application includes the runner used by `akamata migrate up`.
+It reads `DATABASE_URL`, applies pending files with `am.model.migrate.Migrator`,
+and records each version in `schema_migrations`. An empty `migrations/`
+directory succeeds without applying anything; repeated runs skip recorded
+versions. For D1, continue to use `akamata db <file> --remote` or the deploy
+command's `--migrate=<file>` option.
 
 ---
 

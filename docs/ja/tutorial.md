@@ -128,10 +128,10 @@ Commands:
 
 ### コマンド
 
-生成されるpackageは現在`../Akamata`を参照するため、Akamata checkoutと同じ階層に作成します。
+生成されるpackageはcommit固定のremote dependencyを使うため、任意のproject directoryへ作成できます。
 
 ```bash
-cd ..                # Akamata checkoutから実行
+cd ~/projects
 akamata init mytodo --target=both
 ```
 
@@ -160,6 +160,8 @@ mytodo/
 ├── README.md
 ├── build.zig                  # ビルド設定
 ├── build.zig.zon              # 依存ライブラリ宣言 (今は Akamata 本体だけ)
+├── migrations/
+│   └── .gitkeep               # version付きSQL migration
 ├── deploy/
 │   ├── Dockerfile             # Cloudflare Containers image
 │   ├── wrangler.toml          # Cloudflare Workers の設定
@@ -176,6 +178,7 @@ mytodo/
 |---|---|
 | **`build.zig`** | Zig のビルド設定。コマンドラインの `-Dbackend=workers` などはここが解釈する |
 | **`build.zig.zon`** | パッケージ依存。Akamata 本体への参照を含む |
+| **`migrations/`** | `akamata migrate up`が読み込むversion付きSQL file |
 | **`src/main.zig`** | ネイティブ起動時のエントリーポイント。今回はここに 9 割書く |
 | **`src/worker.zig`** | Workers 起動時のエントリーポイント。`main.zig` の関数を呼び出すだけ |
 | **`deploy/Dockerfile`** | nativeをbuildし、scratch runtime imageへ格納するmulti-stage build |
