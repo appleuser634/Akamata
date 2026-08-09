@@ -19,7 +19,7 @@ fn handler(c: *am.Context(State)) !void
 | Database | `c.db()`の後に`Db.prepare`／`exec`、`Stmt.bind`／`step`／`column*` | `c.db()`でrequest instrumentationが有効になります。statementは`deinit()`までbackend resourceを所有します。SQLite、D1、Tursoでfacadeは共通です。 |
 | Model／repository | `am.model.repo(Model)`と`Model.__schema` | comptime生成のCRUDです。read結果と文字列fieldは指定したarena上にあります。DB／validation errorを伝播します。 |
 | HTTP client | `c.fetch(am.http_client.Request)`または`am.http_client.send(allocator, request)` | responseまたはerrorを返し、response sliceは指定allocator（`c.fetch`では`c.arena`）上にあります。`c.fetch`はtimingを記録し、native／Workersで利用できます。URL全体をmetrics labelには使いません。 |
-| 認証 | `am.mw.bearerAuth`、`am.mw.jwt`、`am.auth.jwt`、`am.auth.password` | 認証失敗時はmiddlewareが401を返します。JWT middlewareはHS256で、expirationを自動検証しません。password helperはallocation／verification errorを返す場合があります。 |
+| 認証 | `am.mw.bearerAuth`、`am.mw.jwt`、`am.auth.jwt`、`am.auth.password` | 認証失敗時はmiddlewareが401を返します。JWT middlewareはHS256だけを受け付け、差し替え可能なwall clockで`exp`／`nbf`を検証します。 |
 | WebSocket | `app.ws(path, handler)`と`am.ws.upgrade(...)` | native socketはZigで処理します。WorkersではWebSocket guideに記載したJavaScript／Durable Object integrationを使います。 |
 | SSE／streaming | `am.sse.open(c)`と`c.startStream(options)` | native専用です。writerはrequest-scopedでheaderをcommitし、write／flushはI/O errorを返す場合があります。 |
 
@@ -158,9 +158,9 @@ fn protected(c: *am.Context(State)) !void {
 | `serverTiming(State, options)` | defaultは無効、`include_named_spans = true`です。component名を公開してよい場合だけ有効にします。 |
 | `cors(State, options)` | origin `*`、一般的なmethod、`content-type,authorization`、credentials無効がdefaultです。credential付きbrowser requestでwildcard originを使わないでください。 |
 | `bearerAuth(State, options)` | 固定`token`が必須で、realmは`Restricted`です。secretをsource codeへ直接書かないでください。 |
-| `jwt(State, options)` | HS256 `secret`が必須で、defaultではclaimsを`user_data`へ保存します。このmiddlewareはexpirationを自動検証しません。 |
-| `session(State, options)` | HMAC secretが必須です。cookie名`AKID`、1週間、`HttpOnly`、`SameSite=Lax`で、`Secure`は無効です。本番HTTPSでは有効にしてください。default storeはprocess-local memoryです。 |
-| `csrf(State, options)` | double-submit cookie方式で、safe methodはGET／HEAD／OPTIONSです。本番HTTPSでは`cookie_secure`を有効にします。 |
+| `jwt(State, options)` | HS256 `secret`が必須で、defaultではclaimsを`user_data`へ保存します。defaultで`exp`を必須とし、`exp`／`nbf`を検証します。policyは`require_exp`、`leeway_seconds`、`reject_future_iat`、`now_fn`で設定します。 |
+| `session(State, options)` | 32 bytes以上のHMAC secretが必須です。署名cookieにserver-sideで検証する期限を含めます。defaultは1週間、`HttpOnly`、`Secure`、`SameSite=Lax`です。平文HTTPのlocal開発では`cookie_secure=false`を明示してください。default storeはprocess-local memoryです。login時や権限変更時は`Session.rotate(c)`を呼びます。 |
+| `csrf(State, options)` | double-submit cookie方式で、safe methodはGET／HEAD／OPTIONSです。cookieは設計上JavaScriptから読み取れ、defaultで`Secure`です。 |
 | `rateLimit(State, options)` | `key_fn`が必須です。defaultは60秒あたり60 requestでheaderを出力します。process／isolate localであり、distributed quotaではありません。 |
 | `secureHeaders(State, options)` | API向けのHSTS／CSP／frame／MIME／referrer／permissions headerを設定します。HTML applicationではCSPを調整します。 |
 | `compress(State, options)` | 1024 byte以上でgzip、deflateの順に選択します。nativeのbuffered response向けで、Workersとstreaming responseではno-opです。 |

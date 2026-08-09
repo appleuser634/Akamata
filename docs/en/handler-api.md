@@ -23,7 +23,7 @@ that require sockets or a filesystem are marked explicitly.
 | Database | `c.db()`, then `Db.prepare`/`exec` and `Stmt.bind`/`step`/`column*` | `c.db()` enables request instrumentation. Statements own backend resources until `deinit()`. SQLite, D1, and Turso share the facade. |
 | Model/repository | `am.model.repo(Model)` and `Model.__schema` | Comptime-generated CRUD; read results and text fields use the supplied arena. Database and validation errors are propagated. |
 | HTTP client | `c.fetch(am.http_client.Request)` or `am.http_client.send(allocator, request)` | Returns a response/error; response slices use the supplied allocator (`c.arena` for `c.fetch`). `c.fetch` records timing and is available on native and Workers. Full URLs are not metric labels. |
-| Authentication | `am.mw.bearerAuth`, `am.mw.jwt`, `am.auth.jwt`, `am.auth.password` | Middleware returns 401 on failed authentication. JWT middleware is HS256 and does not automatically check expiration; bcrypt/password helpers may fail allocation or verification. |
+| Authentication | `am.mw.bearerAuth`, `am.mw.jwt`, `am.auth.jwt`, `am.auth.password` | Middleware returns 401 on failed authentication. JWT middleware accepts HS256 only and validates `exp`/`nbf` against an injectable wall clock. |
 | WebSocket | `app.ws(path, handler)` and `am.ws.upgrade(...)` | Native sockets are handled by Zig. Workers use the JavaScript/Durable Object integration described in the WebSocket guide. |
 | SSE/streaming | `am.sse.open(c)` and `c.startStream(options)` | Native only. The writer is request-scoped and commits headers; write/flush operations can return I/O errors. |
 
@@ -165,9 +165,9 @@ strings must remain valid for the application's lifetime.
 | `serverTiming(State, options)` | Disabled by default; `include_named_spans = true`. Opt in only when exposing component names is acceptable. |
 | `cors(State, options)` | Origin `*`; common methods and `content-type,authorization`; credentials off. Do not combine wildcard origin with credentials for credentialed browser traffic. |
 | `bearerAuth(State, options)` | Requires a fixed `token`; realm defaults to `Restricted`. Compare and store secrets outside source code. |
-| `jwt(State, options)` | Requires an HS256 `secret`; claims are placed in `user_data` by default. Expiration is not checked automatically by this middleware. |
-| `session(State, options)` | Requires an HMAC secret; cookie `AKID`, one-week lifetime, `HttpOnly`, `SameSite=Lax`; `Secure` is off and must be enabled for HTTPS production. The default store is process-local memory. |
-| `csrf(State, options)` | Double-submit cookie; safe methods are GET/HEAD/OPTIONS. Set `cookie_secure` for HTTPS production. |
+| `jwt(State, options)` | Requires an HS256 `secret`; claims are placed in `user_data` by default. `exp` is required and `exp`/`nbf` are checked by default. `require_exp`, `leeway_seconds`, `reject_future_iat`, and `now_fn` configure policy. |
+| `session(State, options)` | Requires an HMAC secret of at least 32 bytes. The signed cookie contains a server-enforced expiry; defaults are one week, `HttpOnly`, `Secure`, `SameSite=Lax`. Set `cookie_secure=false` explicitly for plain-HTTP local development. The default store is process-local memory. Call `Session.rotate(c)` after login or a privilege change. |
+| `csrf(State, options)` | Double-submit cookie; safe methods are GET/HEAD/OPTIONS. The cookie is JS-readable by design and `Secure` by default. |
 | `rateLimit(State, options)` | Requires `key_fn`; defaults to 60 requests per 60 seconds and emits headers. State is process/isolate local, not a distributed quota. |
 | `secureHeaders(State, options)` | API-oriented HSTS/CSP/frame/MIME/referrer/permissions defaults; customize CSP for HTML applications. |
 | `compress(State, options)` | Minimum 1024 bytes; prefers gzip then deflate. Buffered native responses only; no-op on Workers and streaming responses. |

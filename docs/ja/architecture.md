@@ -51,13 +51,13 @@ Production リリースに向けて確認すべき項目:
 
 ### ネットワーク
 - **TLS 終端**: フレームワーク自体は HTTP のみ。HTTPS は前段 (Cloudflare の WAF / nginx / Caddy) に任せるのが標準。`http_client` の outbound TLS は SAN/CN 検証 + `SSL_VERIFY_PEER` 済み
-- **タイムアウト**: `read_timeout_ms` / `write_timeout_ms` のデフォルトは 30 秒。長時間 streaming する用途 (SSE 等) では明示的に 0 を渡す
+- **deadline**: defaultはheader 10秒、body 30秒、keep-alive idle 5秒、request全体60秒。`max_requests_per_connection`と`max_connections`にも上限があります。これらはHTTP request parsingに適用され、upgrade後のWebSocketはconnection lifecycleを引き継ぎます。
 - **TCP_NODELAY**: accept 直後に有効化済み (latency 改善)
 - **accept backoff**: EMFILE 等の transient failure で 100us→5s 指数バックオフ
 
 ### セキュリティ
-- **HTTP smuggling**: CL + TE 同居・複数 CL を拒否
-- **JWT alg=none 攻撃**: HS256 以外を拒否
+- **HTTP smuggling**: 曖昧なframing、重複CL／Host、obs-fold、colon前BWS、不正chunk、未対応HTTP versionを拒否
+- **JWT**: HS256以外を拒否し、middlewareは`exp`を必須として検証し、`nbf`も検証
 - **CRLF injection**: `res.header()` で name は HTTP token、value は CR/LF/NUL 拒否
 - **JSON mass assignment**: 認証 payload など信頼境界では `am.json.parseLeakyStrict` を使う (unknown field 拒否)
 

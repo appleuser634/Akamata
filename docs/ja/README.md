@@ -17,6 +17,7 @@
 - [SQLite／D1／Turso](db-backends.md)
 - [WebSocket](websocket.md)
 - [Observability](observability.md)
+- [Security](security.md)
 - [Mobus deployment](mobus-deployment.md)と[portability notes](mobus-portability.md)
 
 ## API reference

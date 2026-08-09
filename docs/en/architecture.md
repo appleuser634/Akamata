@@ -51,13 +51,13 @@ Things to check for production release:
 
 ### Network
 - **TLS termination**: The framework itself is HTTP only. The standard is to leave HTTPS to the front stage (Cloudflare's WAF / nginx / Caddy). `http_client` outbound TLS is SAN/CN validated + `SSL_VERIFY_PEER`
-- **Timeout**: Default for `read_timeout_ms` / `write_timeout_ms` is 30 seconds. For long-term streaming purposes (SSE, etc.), explicitly pass 0.
+- **Deadlines**: defaults are 10 seconds for headers, 30 seconds for bodies, 5 seconds for keep-alive idle, and 60 seconds total. `max_requests_per_connection` and `max_connections` are also bounded. These deadlines cover HTTP request parsing; an upgraded WebSocket owns its connection lifecycle.
 - **TCP_NODELAY**: Enabled immediately after accept (latency improvement)
 - **accept backoff**: 100us→5s exponential backoff in case of transient failure such as EMFILE
 
 ### Security
-- **HTTP smuggling**: Reject CL + TE coexistence/multiple CLs
-- **JWT alg=none attack**: reject anything other than HS256
+- **HTTP smuggling**: Reject ambiguous framing, duplicate CL/Host, obs-fold, BWS-before-colon, malformed chunks, and unsupported HTTP versions
+- **JWT**: reject anything other than HS256; middleware requires and validates `exp`, and validates `nbf`
 - **CRLF injection**: `res.header()`, name is HTTP token, value is CR/LF/NUL Reject
 - **JSON mass assignment**: Use `am.json.parseLeakyStrict` in trust boundaries such as authentication payload (unknown field rejected)
 

@@ -17,6 +17,7 @@ This is the documentation home for Akamata 0.3 and Zig 0.16.x. Start with the Qu
 - [SQLite, D1, and Turso](db-backends.md)
 - [WebSocket](websocket.md)
 - [Observability](observability.md)
+- [Security](security.md)
 - [Mobus deployment](mobus-deployment.md) and [portability notes](mobus-portability.md)
 
 ## API reference
