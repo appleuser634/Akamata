@@ -1,125 +1,125 @@
-# Quick start
+# Quick Start
 
-Launch an Akamata web app in 5 minutes.
+Create and run Akamata's generated Note API in about five minutes.
 
-## 0. Assumptions
+## Requirements
 
--Zig 0.16.0
-- (Optional) `npx wrangler` (for Cloudflare Workers deployments)
-- (Optional) Docker (for Cloudflare Containers deployments)
+- Zig 0.16.x
+- Git and a POSIX shell
+- Node.js and Wrangler only for Cloudflare Workers
+- Docker only for Cloudflare Containers
 
-## 1. Get the CLI
+The native build includes the SQLite amalgamation and links libc. OpenSSL is optional and is only required when enabling FCM RS256 support with `-Dopenssl=true`.
+
+## 1. Install the CLI
+
+Clone Akamata and run the installer:
 
 ```bash
-git clone <akamata-repo>
+git clone https://github.com/appleuser634/Akamata.git
 cd Akamata
+./scripts/install.sh
+akamata help
+```
+
+The installer builds the CLI and installs it to `$HOME/.local/bin` by default. Ensure that directory is on `PATH`. To work directly from a source checkout instead:
+
+```bash
 zig build cli
-# zig-out/bin/akamata が生成される
+./zig-out/bin/akamata help
 ```
 
-If you put it in your PATH:
+## 2. Generate a project
+
+The generated `build.zig.zon` uses `../Akamata` as its local dependency, so create the project next to this checkout:
 
 ```bash
-ln -s "$(pwd)/zig-out/bin/akamata" /usr/local/bin/akamata
-```
-
-## 2. Project generation
-
-```bash
+cd ..
 akamata init myapp --target=both
 cd myapp
 ```
 
-Directory structure:
+`--target` accepts `native`, `workers`, `containers`, or `both`; its default is `native`. `both` generates:
 
-```
+```text
 myapp/
+├── .gitignore
+├── README.md
 ├── build.zig
 ├── build.zig.zon
-├── README.md
-├── .gitignore
 ├── src/
-│   └── main.zig              # Hello World アプリ
+│   ├── main.zig
+│   └── worker.zig
 └── deploy/
-    ├── wrangler.toml         # Cloudflare Workers 設定
-    ├── worker/
-    │   └── index.mjs         # WASM ロード + HTTP ブリッジ
-    └── Dockerfile            # Cloudflare Containers 用
+    ├── Dockerfile
+    ├── wrangler.toml
+    └── worker/
+        └── index.mjs
 ```
 
-## 3. Launch natively
+The scaffold is a working SQLite-backed Note API, not a Hello World placeholder. It defines a validated `Note` model and these routes:
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/` | Describe the generated API |
+| `GET` | `/health` | Health check |
+| `GET` | `/notes` | List notes |
+| `POST` | `/notes` | Create a note from `{ "title", "body" }` |
+| `GET` | `/notes/:id` | Fetch one note |
+| `DELETE` | `/notes/:id` | Delete one note |
+
+The native entry point computes and applies the model schema diff at startup. The Workers entry point uses `migrate.Once` so initialization runs once per isolate.
+
+## 3. Run the native server
 
 ```bash
 zig build run
-# akamata listening on http://0.0.0.0:8080/
 ```
 
-From another terminal:
+The server reports that it is listening on port 8080. From another terminal:
 
 ```bash
-curl localhost:8080/                  # Hello, Akamata!
-curl localhost:8080/users/42          # {"id":"42"}
+curl -sS http://127.0.0.1:8080/
+curl -sS http://127.0.0.1:8080/health
+curl -sS http://127.0.0.1:8080/notes
+curl -sS -X POST -H 'content-type: application/json' \
+  -d '{"title":"hello","body":"first note"}' \
+  http://127.0.0.1:8080/notes
 ```
 
-## 4. Add route
+The local database is `myapp.db` unless `DATABASE_URL` overrides it.
 
-Edit `src/main.zig`:
+## 4. Build other targets
 
-```zig
-_ = try app.post("/users", createUser);
-
-fn createUser(c: *am.Context(State)) !void {
-    const Body = struct { name: []const u8 };
-    const body = try c.req.json(Body);
-    try c.json(.{ .name = body.name, .created = true }, 201);
-}
-```
-
-Immediately reflected with `zig build run`.
-
-## 5. Add middleware
-
-```zig
-_ = try app.useAll(am.mw.cors(State, .{ .origin = "*" }));
-_ = try app.use("/api/*", am.mw.bearerAuth(State, .{ .token = "secret" }));
-```
-
-## 6. Deploy to Cloudflare Workers
-
-```bash
-# (初回のみ) Cloudflare アカウントにログイン
-npx wrangler login
-
-# WASM ビルド + wrangler deploy
-akamata deploy --workers
-```
-
-If you want to try Workers locally:
+Workers:
 
 ```bash
 zig build -Dbackend=workers -Doptimize=ReleaseSmall
-cd deploy && npx wrangler dev --local
+cd deploy
+npx wrangler dev --local
 ```
 
-## 7. Deploy to Cloudflare Containers
+Before using the generated app with D1, create a D1 database and enable/update the commented `[[d1_databases]]` binding in `deploy/wrangler.toml`. The binding name must remain `DB` unless you also change the application.
+
+Containers:
 
 ```bash
-# 静的バイナリ + Docker image
 akamata deploy --containers
-
-# ローカルで Docker 起動
 docker run --rm -p 8080:8080 akamata-app
 ```
 
-## 8. D1 Migration
+For a Workers deployment after configuring Wrangler:
 
 ```bash
-akamata db migrations/001_init.sql --remote
+npx wrangler login
+akamata deploy --workers
 ```
 
 ## Next steps
 
-- Handler API details: [`docs/en/handler-api.md`](handler-api.md)
-- WebSocket: [`docs/en/websocket.md`](websocket.md)
-- SQLite/D1: [`docs/en/db-backends.md`](db-backends.md)
-- Read `examples/chat/` (Simple) and `examples/mobus/` (Full Featured)
+- [Tutorial](tutorial.md): build a complete application step by step
+- [Handbook](handbook.md): a compact tour of models, repositories, migrations, and deployment
+- [Handler API reference](handler-api.md): current public APIs and lifetimes
+- [Database backends](db-backends.md): SQLite, D1, and Turso
+- [WebSocket guide](websocket.md)
+- [Documentation home](README.md)

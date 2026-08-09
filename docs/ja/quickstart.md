@@ -1,125 +1,125 @@
 # クイックスタート
 
-5 分で Akamata の Web アプリを起動する。
+約5分で、Akamataが生成するNote APIを起動します。
 
-## 0. 前提
+## 必要な環境
 
-- Zig 0.16.0
-- (任意) `npx wrangler` (Cloudflare Workers デプロイ用)
-- (任意) Docker (Cloudflare Containers デプロイ用)
+- Zig 0.16.x
+- GitとPOSIX互換shell
+- Cloudflare Workersを利用する場合のみNode.jsとWrangler
+- Cloudflare Containersを利用する場合のみDocker
 
-## 1. CLI を入手
+nativeビルドにはSQLite amalgamationが含まれ、libcへリンクします。OpenSSLは任意で、FCMのRS256対応を`-Dopenssl=true`で有効にする場合に限り必要です。
+
+## 1. CLIをインストールする
+
+Akamataをcloneし、インストールスクリプトを実行します。
 
 ```bash
-git clone <akamata-repo>
+git clone https://github.com/appleuser634/Akamata.git
 cd Akamata
+./scripts/install.sh
+akamata help
+```
+
+スクリプトはCLIをビルドし、デフォルトでは`$HOME/.local/bin`へインストールします。このディレクトリを`PATH`へ追加してください。source checkout内のCLIを直接使う場合は、次のようにビルドできます。
+
+```bash
 zig build cli
-# zig-out/bin/akamata が生成される
+./zig-out/bin/akamata help
 ```
 
-PATH に通すなら:
+## 2. プロジェクトを生成する
+
+生成される`build.zig.zon`は`../Akamata`をローカル依存として参照するため、Akamataのcheckoutと同じ階層にプロジェクトを作成します。
 
 ```bash
-ln -s "$(pwd)/zig-out/bin/akamata" /usr/local/bin/akamata
-```
-
-## 2. プロジェクト生成
-
-```bash
+cd ..
 akamata init myapp --target=both
 cd myapp
 ```
 
-ディレクトリ構成:
+`--target`には`native`、`workers`、`containers`、`both`を指定でき、デフォルトは`native`です。`both`では次のファイルが生成されます。
 
-```
+```text
 myapp/
+├── .gitignore
+├── README.md
 ├── build.zig
 ├── build.zig.zon
-├── README.md
-├── .gitignore
 ├── src/
-│   └── main.zig              # Hello World アプリ
+│   ├── main.zig
+│   └── worker.zig
 └── deploy/
-    ├── wrangler.toml         # Cloudflare Workers 設定
-    ├── worker/
-    │   └── index.mjs         # WASM ロード + HTTP ブリッジ
-    └── Dockerfile            # Cloudflare Containers 用
+    ├── Dockerfile
+    ├── wrangler.toml
+    └── worker/
+        └── index.mjs
 ```
 
-## 3. ネイティブで起動
+scaffoldはHello Worldではなく、SQLiteで動作するNote APIです。validation付きの`Note` modelと、次のrouteを含みます。
+
+| Method | Route | 用途 |
+|---|---|---|
+| `GET` | `/` | 生成されたAPIの説明 |
+| `GET` | `/health` | health check |
+| `GET` | `/notes` | Note一覧 |
+| `POST` | `/notes` | `{ "title", "body" }`からNoteを作成 |
+| `GET` | `/notes/:id` | 1件取得 |
+| `DELETE` | `/notes/:id` | 1件削除 |
+
+native entrypointは起動時にmodel schemaとの差分を計算して適用します。Workers entrypointは`migrate.Once`を使用し、isolateごとに初期化を1回実行します。
+
+## 3. native serverを起動する
 
 ```bash
 zig build run
-# akamata listening on http://0.0.0.0:8080/
 ```
 
-別ターミナルから:
+port 8080でlistenしていることが表示されます。別のterminalから確認します。
 
 ```bash
-curl localhost:8080/                  # Hello, Akamata!
-curl localhost:8080/users/42          # {"id":"42"}
+curl -sS http://127.0.0.1:8080/
+curl -sS http://127.0.0.1:8080/health
+curl -sS http://127.0.0.1:8080/notes
+curl -sS -X POST -H 'content-type: application/json' \
+  -d '{"title":"hello","body":"first note"}' \
+  http://127.0.0.1:8080/notes
 ```
 
-## 4. ルートを追加
+`DATABASE_URL`を指定しない場合、local databaseは`myapp.db`です。
 
-`src/main.zig` を編集:
+## 4. その他のtargetをビルドする
 
-```zig
-_ = try app.post("/users", createUser);
-
-fn createUser(c: *am.Context(State)) !void {
-    const Body = struct { name: []const u8 };
-    const body = try c.req.json(Body);
-    try c.json(.{ .name = body.name, .created = true }, 201);
-}
-```
-
-`zig build run` で即反映。
-
-## 5. ミドルウェアを足す
-
-```zig
-_ = try app.useAll(am.mw.cors(State, .{ .origin = "*" }));
-_ = try app.use("/api/*", am.mw.bearerAuth(State, .{ .token = "secret" }));
-```
-
-## 6. Cloudflare Workers にデプロイ
-
-```bash
-# (初回のみ) Cloudflare アカウントにログイン
-npx wrangler login
-
-# WASM ビルド + wrangler deploy
-akamata deploy --workers
-```
-
-ローカルで Workers を試す場合:
+Workers:
 
 ```bash
 zig build -Dbackend=workers -Doptimize=ReleaseSmall
-cd deploy && npx wrangler dev --local
+cd deploy
+npx wrangler dev --local
 ```
 
-## 7. Cloudflare Containers にデプロイ
+生成されたアプリをD1で動かす前にD1 databaseを作成し、`deploy/wrangler.toml`内でcomment outされている`[[d1_databases]]` bindingを有効にして値を更新してください。アプリ側も変更する場合を除き、binding名は`DB`のままにします。
+
+Containers:
 
 ```bash
-# 静的バイナリ + Docker image
 akamata deploy --containers
-
-# ローカルで Docker 起動
 docker run --rm -p 8080:8080 akamata-app
 ```
 
-## 8. D1 マイグレーション
+Wranglerを設定した後、Workersへdeployするには次を実行します。
 
 ```bash
-akamata db migrations/001_init.sql --remote
+npx wrangler login
+akamata deploy --workers
 ```
 
-## 次のステップ
+## 次に読む文書
 
-- ハンドラ API の詳細: [`docs/ja/handler-api.md`](handler-api.md)
-- WebSocket: [`docs/ja/websocket.md`](websocket.md)
-- SQLite / D1: [`docs/ja/db-backends.md`](db-backends.md)
-- `examples/chat/` (シンプル) と `examples/mobus/` (フル機能) を読む
+- [Tutorial](tutorial.md): 完成したアプリを段階的に構築します
+- [Handbook](handbook.md): model、repository、migration、deployを短時間で確認します
+- [Handler API reference](handler-api.md): 現在のpublic APIとlifetimeを確認します
+- [Database backends](db-backends.md): SQLite、D1、Tursoを設定します
+- [WebSocket guide](websocket.md)
+- [Documentation home](README.md)

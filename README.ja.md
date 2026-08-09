@@ -2,8 +2,9 @@
 
 [English](README.md) | 日本語
 
-Zig 0.16 系のミニマル Web フレームワーク。
-標準ライブラリのみで HTTP / WebSocket / SQLite を提供し、Cloudflare Workers と Cloudflare Containers の両方にデプロイできる。
+Zig 0.16向けのミニマルWebフレームワークです。Zigと標準ライブラリを中心に
+HTTP/WebSocket層を構成し、SQLite、D1、TursoのDBバックエンドと、native server、
+Cloudflare Workers、Cloudflare Containersへのデプロイをサポートします。
 
 ```zig
 const std = @import("std");
@@ -11,147 +12,112 @@ const am = @import("akamata");
 
 const State = struct {};
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-
-    var app = am.App(State).init(gpa.allocator(), .{});
-    defer app.deinit();
-
-    _ = try app.useAll(am.mw.recover(State));
-    _ = try app.useAll(am.mw.logger(State));
-
-    _ = try app.get("/", hello);
-    _ = try app.get("/users/:id", showUser);
-
-    try app.serve(.{ .port = 8080 });
-}
-
 fn hello(c: *am.Context(State)) !void {
     try c.text("Hello, Akamata!");
 }
 
-fn showUser(c: *am.Context(State)) !void {
-    const id = try c.req.param("id");
-    try c.json(.{ .id = id }, 200);
+pub fn main() !void {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    var app = am.App(State).init(gpa.allocator(), .{});
+    defer app.deinit();
+    _ = try app.get("/", hello);
+    try app.serve(.{ .port = 8080 });
 }
 ```
 
+## Why Akamata?
+
+- **1つのコードベース、複数のruntime** — handlerをnative server、Workers、
+  Containersで共有できます。runtime固有のentry pointは明示的に分離されます。
+- **統一DB API** — ローカルSQLite、Cloudflare D1、Tursoで同じ`Db`/`Stmt`と
+  model repository APIを利用できます。
+- **Zigらしい開発体験** — 型付きの`App(State)`、`Context(State)`、入力検証、
+  middleware、model schema、repositoryを提供します。
+- **本番向けobservability** — request、DB、outbound HTTP、独自spanの時間を、
+  Prometheus metrics、structured log、`Server-Timing`から確認できます。
+
 ## クイックスタート
 
-```bash
-# 1. CLI をビルド
-zig build cli
-
-# 2. 新規プロジェクトを生成
-./zig-out/bin/akamata init myapp --target=both
-cd myapp
-
-# 3. ネイティブで起動
-zig build run
-
-# Cloudflare Workers にデプロイ (要 npx wrangler)
-akamata deploy --workers
-
-# Cloudflare Containers にデプロイ (要 docker)
-akamata deploy --containers
-```
-
-## 📖 ドキュメントから始める
-
-| 目的 | ドキュメント | 所要時間 |
-|---|---|---|
-| **まず動かしたい** | [クイックスタート](docs/ja/quickstart.md) | 5 分 |
-| **15 分で全機能を概観** | [ハンドブック](docs/en/handbook.md) ([日本語](docs/ja/handbook.md) · [PDF](docs/en/handbook.pdf) · [日本語 PDF](docs/ja/handbook.pdf)) | 15 分 |
-| **初心者向けに丁寧に学ぶ** | **[詳細チュートリアル (日本語)](docs/ja/tutorial.md)** · [English](docs/en/tutorial.md) · [日本語 PDF](docs/ja/tutorial.pdf) · [English PDF](docs/en/tutorial.pdf) | **60–90 分** |
-| **個別トピックを深掘り** | [リファレンス](#リファレンスドキュメント) | — |
-| **プレゼン用** | [紹介スライド (日本語 PDF)](docs/ja/slides.pdf) · [English PDF](docs/en/slides.pdf) | 25 枚 |
-
-> 詳細チュートリアルでは、ゼロから **Todo リスト API + HTML UI** を作成し、SQLite から Cloudflare D1 への本番デプロイまで一貫して学べます。Zig を触ったことが無い方も対象です。
-
-## akamata CLI のインストール
-
-`scripts/install.sh` がビルドと `PATH` 配置をまとめて行う。
+CLI installerはリポジトリに含まれるため、最初にcloneします。
 
 ```bash
-# 既定の $HOME/.local/bin にインストール
+git clone https://github.com/appleuser634/Akamata.git
+cd Akamata
 ./scripts/install.sh
 
-# 任意のプレフィックスへ
-./scripts/install.sh --prefix=/usr/local
-PREFIX=/opt/akamata ./scripts/install.sh
-
-# 最適化レベルの切り替え (既定: ReleaseSafe)
-./scripts/install.sh --fast        # ReleaseFast
-./scripts/install.sh --small       # ReleaseSmall
-./scripts/install.sh --debug       # Debug
-
-# アンインストール
-./scripts/install.sh --uninstall
-
-# ヘルプ
-./scripts/install.sh --help
+# $HOME/.local/binへPATHを通した後、cloneしたAkamataと同じ階層に生成します。
+cd ..
+akamata init myapp --target=both
+cd myapp
+zig build run
 ```
 
-要件: `zig` 0.16 以降が PATH 上にあること。
-インストール後にプレフィックスの `bin` が PATH 上に無い場合はスクリプトが追加方法を案内する。
+別のterminalから確認します。
 
 ```bash
-# 動作確認
-akamata help
-akamata init myapp --target=both
+curl -sS http://127.0.0.1:8080/
+curl -sS http://127.0.0.1:8080/notes
 ```
+
+生成projectには、validation付き`Note` model、SQLite自動migration、`/notes` CRUD、
+health route、Workers entry point、Wrangler設定、Workers JS glue、Container用Dockerfileが
+含まれます。正確なtreeとresponseは[クイックスタート](docs/ja/quickstart.md)を参照してください。
+
+CLI自体を開発する場合は、installせず直接buildできます。
+
+```bash
+zig build cli
+./zig-out/bin/akamata help
+```
+
+## 要件と対応環境
+
+| 対象 | 要件 |
+|---|---|
+| 基本開発環境 | Zig 0.16.x、macOSまたはLinux、libc |
+| native DB | 同梱SQLite amalgamation。system SQLiteのinstallは不要 |
+| Workers | Node.js、Wrangler、Cloudflare account。D1は任意 |
+| Containers | Docker。Cloudflare Containersには対応planが必要 |
+| Turso / HTTPS client | Zig標準ライブラリのTLSとOS trust store |
+| FCM RS256署名のみ | OpenSSL build flag (`-Dopenssl=true`)が任意で必要 |
+
+Windows nativeはdocument/test対象外です。対応済みのLinux workflowにはWSL2を使用してください。
+SSEとnative WebSocket connectionは現在nativeのみです。WorkersのWebSocketは、提供される
+Workers/Durable Object integration patternを使用します。
+
+## ドキュメント
+
+| 目的 | 日本語 | English |
+|---|---|---|
+| まず動かす | [クイックスタート](docs/ja/quickstart.md) | [Quick Start](docs/en/quickstart.md) |
+| 順番に学ぶ | [チュートリアル](docs/ja/tutorial.md) | [Tutorial](docs/en/tutorial.md) |
+| 全体を把握する | [ハンドブック](docs/ja/handbook.md) | [Handbook](docs/en/handbook.md) |
+| 目的別に探す | [ドキュメントホーム](docs/ja/README.md) | [Documentation home](docs/en/README.md) |
+| Akamataを紹介する | [スライド (PDF)](docs/ja/slides.pdf) | [Slides (PDF)](docs/en/slides.pdf) |
 
 ## 主な機能
 
-| | 説明 |
-|---|---|
-| **App(State)** | ジェネリック App ビルダー。`app.get("/", h).post(...).use(...)` のチェーン式 |
-| **Context(State)** | `c.req.param/query/json(T)`, `c.json/text/html/redirect` |
-| **Router** | `/users/:id`, `/files/*rest` などのパスパラメータ |
-| **Middleware** | パス単位 (`app.use("/api/*", mw)`) と全体 (`app.useAll`) |
-| **basePath** | `app.basePath("/api/v1")` で prefix 付きグループ |
-| **ビルトインmw** | `cors`, `bearerAuth`, `jwt`, `logger`, `recover`, `serveStatic` |
-| **WebSocket** | HTTP ルートからの upgrade (`am.ws.upgrade(Ctx, c, opts)`) |
-| **SQLite / D1** | `am.db` で抽象化、native は sqlite3、Workers は D1 |
-| **JWT / bcrypt** | `am.auth.jwt`, `am.auth.bcrypt` (純Zig、$2a$/$2b$ 互換) |
-| **HTTPS クライアント** | `am.http_client.send(...)` (OpenSSL リンク) |
-| **MQTT QoS0 / FCM Push** | `am.mq.Publisher`, `am.push.Sender` |
-| **akamata-cli** | `init / dev / build / deploy / db` の一通り |
+- runtime route builder、path parameter、route group、middleware
+- JSON、form、multipart、cookie、validation、型付きmodel repository
+- SQLite、JSPI経由のD1、Turso/libsql Hrana
+- native WebSocket、SSE、static file、compression、security middleware
+- JWT、bcrypt、session、CSRF、rate limit、bearer authentication
+- native/Workers outbound HTTP、MQTT QoS 0、任意のFCM support
+- request ID、access log、Prometheus metrics、軽量span、`Server-Timing`
+- OpenAPI生成、typed client生成、testing client、job、cron
 
-## サンプル
+backend対応状況とAPI詳細は、[Handler API](docs/ja/handler-api.md)、
+[DBバックエンド](docs/ja/db-backends.md)、[WebSocketガイド](docs/ja/websocket.md)を参照してください。
 
-| ディレクトリ | 内容 |
-|---|---|
-| `examples/chat/` | 多人数チャット (REST + WebSocket + SQLite) |
-| `examples/turso/` | Turso (libsql Hrana) で動く guestbook API (native 専用) |
-| `examples/mobus/` | mobus_server_zig の完全移植 (26 endpoints, JWT, friends, messages, rtchat, devices, weather) |
+## Examples
 
-## リファレンスドキュメント
-
-### 学ぶ・始める
-
-- [📘 詳細チュートリアル (日本語)](docs/ja/tutorial.md) / [English](docs/en/tutorial.md) — Todo アプリをゼロから作る (60–90 分)
-- [ハンドブック](docs/en/handbook.md) / [日本語](docs/ja/handbook.md) — 15 分で全機能を概観
-- [クイックスタート](docs/ja/quickstart.md) — 5 分で起動まで
-- [🎤 紹介スライド (日本語 PDF)](docs/ja/slides.pdf) / [English PDF](docs/en/slides.pdf) — 25 枚、勉強会・社内紹介向け
-
-### リファレンス
-
-- [Architecture](docs/ja/architecture.md) — フレームワーク内部設計
-- [Handler API](docs/ja/handler-api.md) — Context / Request / Response の全関数
-- [WebSocket](docs/ja/websocket.md) — WS upgrade とハンドラ
-- [DB backends](docs/ja/db-backends.md) — SQLite / Turso / D1 と JSPI 仕組み
-- [Cloudflare](docs/ja/cloudflare.md) — Workers / Containers デプロイ詳細
-- [Hono 風 DX 設計書](docs/ja/hono-style-redesign.md) — API 設計の意図
-
-### 本番運用
-
-- [Observability](docs/ja/observability.md) — Prometheus メトリクスとログ
-- [Benchmarks](docs/ja/benchmarks.md) — 短期ベンチ結果
-- [Benchmarks (長時間)](docs/ja/benchmarks-long-run.md) — 5 分間 / churn / 低並列の結果
-- [Perf follow-ups](docs/ja/perf-followups.md) — 試行と未着手の改善案
-- [mobus 移植計画](docs/ja/mobus-portability.md) / [mobus デプロイ](docs/ja/mobus-deployment.md) — 実アプリの移植例
+- [`examples/chat/`](examples/chat/) — SQLiteを使うREST + native WebSocket chat
+- [`examples/guestbook/`](examples/guestbook/) — SQLite、D1、Turso向けmodel/repository guestbook
+- [`examples/tasks/`](examples/tasks/) — validation、OpenAPI、SSE、session、security middleware、
+  job、testを扱うreference REST API
+- [`examples/mobus/`](examples/mobus/) — 大規模な実アプリの移植例
+- [`examples/bench/`](examples/bench/) — 再現可能なframework benchmark
 
 ## ライセンス
 

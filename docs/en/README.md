@@ -1,6 +1,41 @@
-# Akamata documentation
+# Akamata Documentation
 
-The English documentation lives in this directory. See the repository
-[README](../../README.md) for the recommended reading order.
+This is the documentation home for Akamata 0.3 and Zig 0.16.x. Start with the Quick Start if you are evaluating the framework, then use the Handbook or Tutorial for a deeper walkthrough.
 
-[日本語版](../ja/README.md)
+[日本語](../ja/README.md) · [Project README](../../README.md)
+
+## Getting started
+
+- [Quick Start](quickstart.md) — install the CLI, generate the current scaffold, and run it
+- [Tutorial](tutorial.md) — build an application step by step
+- [Handbook](handbook.md) — concise tour of models, repositories, migrations, and deployment
+- [Tasks example](example-tasks.md) — guided example application
+
+## Guides
+
+- [Cloudflare Workers and Containers](cloudflare.md)
+- [SQLite, D1, and Turso](db-backends.md)
+- [WebSocket](websocket.md)
+- [Observability](observability.md)
+- [Mobus deployment](mobus-deployment.md) and [portability notes](mobus-portability.md)
+
+## API reference
+
+- [Handler API](handler-api.md) — `App`, `Context`, request/response helpers, middleware, database, model/repository, HTTP client, authentication, WebSocket, and SSE
+
+## Production and performance
+
+- [Benchmarks](benchmarks.md)
+- [Long-run benchmarks](benchmarks-long-run.md)
+- [Performance follow-ups](perf-followups.md)
+- [Reactor design](perf-reactor-design.md)
+
+Benchmark numbers are snapshots of the recorded environment, commands, and Akamata revision; they are not performance guarantees for another machine or workload.
+
+## Architecture and design history
+
+- [Architecture](architecture.md)
+- [v0.2 design record](v0.2-design.md)
+- [Historical API redesign record](hono-style-redesign.md)
+
+Design records describe the reasoning at a point in time and may contain superseded examples. Use the [Handler API](handler-api.md) and current source for the supported interface.

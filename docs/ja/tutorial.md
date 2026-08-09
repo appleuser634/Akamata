@@ -81,20 +81,20 @@ zig version
 Akamata はフレームワーク本体と `akamata` CLI を同じリポジトリに含んでいます。
 
 ```bash
-git clone https://github.com/yourorg/Akamata
+git clone https://github.com/appleuser634/Akamata.git
 cd Akamata
-zig build cli
+./scripts/install.sh
+# source開発では代わりに zig build cli
 ```
 
-ビルドが成功すると `zig-out/bin/akamata` ができます。`PATH` に追加しておくと
-このあとが楽です:
+installerはdefaultでCLIを`$HOME/.local/bin`へcopyします。必要に応じてこのdirectoryを`PATH`へ追加します。
 
 ```bash
 # 一時的に通す場合
-export PATH="$PWD/zig-out/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 
 # 永続化 (zsh の場合)
-echo 'export PATH="'"$PWD"'/zig-out/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
 確認:
@@ -115,7 +115,7 @@ Commands:
 ```
 
 > **ハマりどころ**: `command not found: akamata` が出る場合、`PATH` の追加を `.zshrc` に書いた後に新しいターミナルウィンドウを開く必要があります。
-> または `./zig-out/bin/akamata help` のようにフルパスで呼んでも構いません。
+> source buildを使う場合は`./zig-out/bin/akamata help`でも確認できます。
 
 ---
 
@@ -128,10 +128,10 @@ Commands:
 
 ### コマンド
 
-Akamata リポジトリの **外側** の作業ディレクトリに移動してから:
+生成されるpackageは現在`../Akamata`を参照するため、Akamata checkoutと同じ階層に作成します。
 
 ```bash
-cd ~/projects        # 適当な作業ディレクトリ
+cd ..                # Akamata checkoutから実行
 akamata init mytodo --target=both
 ```
 
@@ -161,6 +161,7 @@ mytodo/
 ├── build.zig                  # ビルド設定
 ├── build.zig.zon              # 依存ライブラリ宣言 (今は Akamata 本体だけ)
 ├── deploy/
+│   ├── Dockerfile             # Cloudflare Containers image
 │   ├── wrangler.toml          # Cloudflare Workers の設定
 │   └── worker/
 │       └── index.mjs          # Workers の JS ホスト (wasm をロードする)
@@ -177,6 +178,7 @@ mytodo/
 | **`build.zig.zon`** | パッケージ依存。Akamata 本体への参照を含む |
 | **`src/main.zig`** | ネイティブ起動時のエントリーポイント。今回はここに 9 割書く |
 | **`src/worker.zig`** | Workers 起動時のエントリーポイント。`main.zig` の関数を呼び出すだけ |
+| **`deploy/Dockerfile`** | nativeをbuildし、scratch runtime imageへ格納するmulti-stage build |
 | **`deploy/wrangler.toml`** | D1 binding や環境変数の定義 |
 | **`deploy/worker/index.mjs`** | Workers の JavaScript シム。wasm をロードして D1 をブリッジする |
 
@@ -912,7 +914,7 @@ _ = try app.useAll(am.mw.logger(State));    // 2. ログ
 `registerRoutes` の冒頭を次のように拡張します:
 
 ```zig
-var metrics_counters: am.MetricsCounters = .{};
+var metrics_counters: am.mw.MetricsCounters = .{};
 
 pub fn registerRoutes(app: *am.App(State)) !void {
     _ = try app.useAll(am.mw.recover(State));
@@ -963,10 +965,10 @@ akamata_requests_by_status{class="5xx"} 0
 アクセスログは `zig build run` のターミナルに JSON 1 行ずつ出ます:
 
 ```json
-{"ts_unix_us":1779999999000000,"req_id":"a64d6f73-2b0e-4ad1-9aa3-8c0f4f2c5d6e","ip":"-","method":"GET","path":"/api/todos","status":200,"latency_us":412}
+{"ts_unix_us":1779999999000000,"request_id":"a64d6f73-2b0e-4ad1-9aa3-8c0f4f2c5d6e","method":"GET","path":"/api/todos","route":"/api/todos","status":200,"duration_ms":0.412,"db":{"queries":1,"execs":0,"errors":0,"duration_ms":0.100},"outbound_http":{"requests":0,"duration_ms":0.000},"storage":{"operations":0,"duration_ms":0.000}}
 ```
 
-`req_id` は `X-Request-ID` レスポンスヘッダにも入るので、フロントエンドのエラー
+`request_id`は`X-Request-ID` response headerにも入るので、frontendのerror
 レポートとサーバログを突き合わせるのに使えます。
 
 詳細は [docs/ja/observability.md](observability.md) を参照。
@@ -1033,15 +1035,14 @@ cd ..
 # 一発デプロイ (D1 作成 + マイグレーション + デプロイ)
 akamata deploy --workers \
   --config=deploy/wrangler.toml \
-  --migrate=<(./zig-out/bin/mytodo --print-schema)
+  --migrate=migrations/20260810000000_initial.sql
 ```
 
 このコマンドの裏で起こること:
 
 1. `wrangler.toml` の `[[d1_databases]]` ブロックを読む
 2. `database_id` がプレースホルダなら `wrangler d1 create` を実行、UUID を書き戻す
-3. `mytodo --print-schema` を実行 (現在のモデルから DDL SQL を生成)
-4. その SQL を `wrangler d1 execute --remote` で D1 に流す
+3. 確認済みのSQL fileを`wrangler d1 execute --remote`でD1へ適用する
 5. `zig build -Dbackend=workers -Doptimize=ReleaseSmall`
 6. `wrangler deploy`
 
@@ -1216,7 +1217,7 @@ ls src/*.zig | entr -r zig build run
 
 ### より大きなアプリ
 
-- **`examples/mobus/`** — 26 エンドポイント、JWT 認証、フレンド機能、WS チャット、FCM push の本格アプリ
+- **`examples/mobus/`** — JWT認証、friend機能、WebSocket chat、FCM pushを備えた大規模なexample
 - **`examples/chat/`** — Durable Object SQLite + WebSocket の組み合わせ
 
 ### 個別トピック

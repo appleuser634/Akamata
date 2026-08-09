@@ -2,9 +2,10 @@
 
 [日本語](README.ja.md) | English
 
-A minimal web framework for Zig 0.16.
-It provides HTTP, WebSocket, and SQLite support using only the standard library,
-and deploys to both Cloudflare Workers and Cloudflare Containers.
+A minimal web framework for Zig 0.16. Akamata builds its HTTP and WebSocket
+layers around Zig and its standard library, provides SQLite, D1, and Turso
+database backends, and targets native servers, Cloudflare Workers, and
+Cloudflare Containers.
 
 ```zig
 const std = @import("std");
@@ -12,149 +13,116 @@ const am = @import("akamata");
 
 const State = struct {};
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-
-    var app = am.App(State).init(gpa.allocator(), .{});
-    defer app.deinit();
-
-    _ = try app.useAll(am.mw.recover(State));
-    _ = try app.useAll(am.mw.logger(State));
-
-    _ = try app.get("/", hello);
-    _ = try app.get("/users/:id", showUser);
-
-    try app.serve(.{ .port = 8080 });
-}
-
 fn hello(c: *am.Context(State)) !void {
     try c.text("Hello, Akamata!");
 }
 
-fn showUser(c: *am.Context(State)) !void {
-    const id = try c.req.param("id");
-    try c.json(.{ .id = id }, 200);
+pub fn main() !void {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    var app = am.App(State).init(gpa.allocator(), .{});
+    defer app.deinit();
+    _ = try app.get("/", hello);
+    try app.serve(.{ .port = 8080 });
 }
 ```
 
+## Why Akamata?
+
+- **One codebase, multiple runtimes** — share handlers between native servers,
+  Workers, and Containers; runtime entry points remain explicit.
+- **Unified database API** — use the same `Db`/`Stmt` and model repository APIs
+  with local SQLite, Cloudflare D1, or Turso.
+- **Zig-native developer experience** — typed `App(State)`, `Context(State)`,
+  input validation, middleware, model schemas, and repositories.
+- **Production observability** — request, DB, outbound HTTP, and custom span
+  timing through Prometheus metrics, structured logs, and `Server-Timing`.
+
 ## Quick start
 
-```bash
-# 1. Build the CLI
-zig build cli
-
-# 2. Create a project
-./zig-out/bin/akamata init myapp --target=both
-cd myapp
-
-# 3. Run natively
-zig build run
-
-# Deploy to Cloudflare Workers (requires npx wrangler)
-akamata deploy --workers
-
-# Deploy to Cloudflare Containers (requires Docker)
-akamata deploy --containers
-```
-
-## 📖 Start with the documentation
-
-| Goal | Document | Time |
-|---|---|---|
-| **Get running quickly** | [Quick start](docs/en/quickstart.md) | 5 min |
-| **Tour all features** | [Handbook](docs/en/handbook.md) ([日本語](docs/ja/handbook.md) · [PDF](docs/en/handbook.pdf) · [日本語 PDF](docs/ja/handbook.pdf)) | 15 min |
-| **Learn step by step** | **[Detailed tutorial](docs/en/tutorial.md)** · [日本語](docs/ja/tutorial.md) · [English PDF](docs/en/tutorial.pdf) · [日本語 PDF](docs/ja/tutorial.pdf) | **60–90 min** |
-| **Explore a specific topic** | [Reference documentation](#reference-documentation) | — |
-| **Present Akamata** | [English slides](docs/en/slides.pdf) · [日本語 PDF](docs/ja/slides.pdf) | 25 slides |
-
-The detailed tutorial builds a complete **Todo list API + HTML UI** from
-scratch, then deploys it to production using SQLite and Cloudflare D1. It is
-written for readers who are also new to Zig.
-
-## Installing the akamata CLI
-
-`scripts/install.sh` builds the CLI and installs it on your `PATH`.
+The CLI installer is included in the repository; clone it first:
 
 ```bash
-# Install to the default $HOME/.local/bin
+git clone https://github.com/appleuser634/Akamata.git
+cd Akamata
 ./scripts/install.sh
 
-# Install under a custom prefix
-./scripts/install.sh --prefix=/usr/local
-PREFIX=/opt/akamata ./scripts/install.sh
-
-# Select the optimization mode (default: ReleaseSafe)
-./scripts/install.sh --fast        # ReleaseFast
-./scripts/install.sh --small       # ReleaseSmall
-./scripts/install.sh --debug       # Debug
-
-# Uninstall
-./scripts/install.sh --uninstall
-
-# Help
-./scripts/install.sh --help
+# Ensure $HOME/.local/bin is on PATH, then create an app next to this clone.
+cd ..
+akamata init myapp --target=both
+cd myapp
+zig build run
 ```
 
-Requirement: Zig 0.16 or later must be available on `PATH`. If the selected
-prefix's `bin` directory is not on `PATH`, the installer explains how to add it.
+In another terminal:
 
 ```bash
-# Verify the installation
-akamata help
-akamata init myapp --target=both
+curl -sS http://127.0.0.1:8080/
+curl -sS http://127.0.0.1:8080/notes
 ```
+
+The generated project includes a validated `Note` model, SQLite auto-migration,
+CRUD routes under `/notes`, a health route, a Workers entry point, Wrangler
+configuration, Workers JS glue, and a Container Dockerfile. See the
+[Quick Start](docs/en/quickstart.md) for the exact tree and responses.
+
+Developing the CLI itself? Build without installing:
+
+```bash
+zig build cli
+./zig-out/bin/akamata help
+```
+
+## Requirements and compatibility
+
+| Scope | Requirement |
+|---|---|
+| Core development | Zig 0.16.x, macOS or Linux, libc |
+| Native database | Bundled SQLite amalgamation; no system SQLite install required |
+| Workers | Node.js + Wrangler, a Cloudflare account; D1 is optional |
+| Containers | Docker; Cloudflare Containers requires an eligible Cloudflare plan |
+| Turso / HTTPS client | Zig standard-library TLS and the OS trust store |
+| FCM RS256 signing only | Optional OpenSSL build flag (`-Dopenssl=true`) |
+
+Windows native support is not documented or tested; use WSL2 for the supported
+Linux workflow. SSE and native WebSocket connections are native-only today;
+Workers WebSockets use the provided Workers/Durable Object integration pattern.
+
+## Documentation
+
+| Goal | English | 日本語 |
+|---|---|---|
+| Get running | [Quick Start](docs/en/quickstart.md) | [クイックスタート](docs/ja/quickstart.md) |
+| Learn step by step | [Tutorial](docs/en/tutorial.md) | [チュートリアル](docs/ja/tutorial.md) |
+| Tour the framework | [Handbook](docs/en/handbook.md) | [ハンドブック](docs/ja/handbook.md) |
+| Find a topic | [Documentation home](docs/en/README.md) | [ドキュメントホーム](docs/ja/README.md) |
+| Present Akamata | [Slides (PDF)](docs/en/slides.pdf) | [スライド (PDF)](docs/ja/slides.pdf) |
 
 ## Features
 
-| | Description |
-|---|---|
-| **App(State)** | Generic App builder with `app.get("/", h).post(...).use(...)` chaining |
-| **Context(State)** | `c.req.param/query/json(T)`, `c.json/text/html/redirect` |
-| **Router** | Path parameters such as `/users/:id` and `/files/*rest` |
-| **Middleware** | Path-scoped (`app.use("/api/*", mw)`) and global (`app.useAll`) middleware |
-| **basePath** | Prefix groups with `app.basePath("/api/v1")` |
-| **Built-in middleware** | `cors`, `bearerAuth`, `jwt`, `logger`, `recover`, `serveStatic` |
-| **WebSocket** | Upgrade from an HTTP route with `am.ws.upgrade(Ctx, c, opts)` |
-| **SQLite / D1** | Unified `am.db` abstraction: sqlite3 natively and D1 on Workers |
-| **JWT / bcrypt** | Pure Zig `am.auth.jwt` and `$2a$`/`$2b$`-compatible `am.auth.bcrypt` |
-| **HTTPS client** | `am.http_client.send(...)` with OpenSSL linking |
-| **MQTT QoS0 / FCM Push** | `am.mq.Publisher`, `am.push.Sender` |
-| **akamata-cli** | `init`, `dev`, `build`, `deploy`, and `db` workflows |
+- Runtime route builder, path parameters, grouped routes, and middleware
+- JSON, form, multipart, cookies, validation, and typed model repositories
+- SQLite, D1 through JSPI, and Turso/libsql Hrana
+- Native WebSocket, SSE, static files, compression, and security middleware
+- JWT, bcrypt, sessions, CSRF, rate limiting, and bearer authentication
+- Native/Workers outbound HTTP, MQTT QoS 0, and optional FCM support
+- Request IDs, access logs, Prometheus metrics, lightweight spans, and
+  `Server-Timing`
+- OpenAPI generation, typed client generation, testing client, jobs, and cron
+
+Backend availability and API details are documented in the
+[Handler API](docs/en/handler-api.md), [DB backends](docs/en/db-backends.md),
+and [WebSocket guide](docs/en/websocket.md).
 
 ## Examples
 
-| Directory | Description |
-|---|---|
-| `examples/chat/` | Multi-user chat with REST, WebSocket, and SQLite |
-| `examples/turso/` | Native guestbook API backed by Turso/libsql Hrana |
-| `examples/mobus/` | Full mobus_server_zig port with 26 endpoints, JWT, friends, messages, real-time chat, devices, and weather |
-
-## Reference documentation
-
-### Learn and get started
-
-- [📘 Detailed tutorial](docs/en/tutorial.md) / [日本語](docs/ja/tutorial.md) — build a Todo application from scratch (60–90 min)
-- [Handbook](docs/en/handbook.md) / [日本語](docs/ja/handbook.md) — tour all features in 15 minutes
-- [Quick start](docs/en/quickstart.md) — run your first application in 5 minutes
-- [🎤 English slides](docs/en/slides.pdf) / [日本語 PDF](docs/ja/slides.pdf) — 25-slide introduction
-
-### Reference
-
-- [Architecture](docs/en/architecture.md) — framework internals
-- [Handler API](docs/en/handler-api.md) — all Context, Request, and Response functions
-- [WebSocket](docs/en/websocket.md) — WebSocket upgrades and handlers
-- [DB backends](docs/en/db-backends.md) — SQLite, Turso, D1, and JSPI
-- [Cloudflare](docs/en/cloudflare.md) — Workers and Containers deployment
-- [Hono-style DX design](docs/en/hono-style-redesign.md) — API design rationale
-
-### Production operations
-
-- [Observability](docs/en/observability.md) — Prometheus metrics and logs
-- [Benchmarks](docs/en/benchmarks.md) — short benchmark results
-- [Long-running benchmarks](docs/en/benchmarks-long-run.md) — five-minute, churn, and low-concurrency results
-- [Performance follow-ups](docs/en/perf-followups.md) — experiments and future improvements
-- [mobus portability plan](docs/en/mobus-portability.md) / [mobus deployment](docs/en/mobus-deployment.md) — real-world porting example
+- [`examples/chat/`](examples/chat/) — REST + native WebSocket chat with SQLite
+- [`examples/guestbook/`](examples/guestbook/) — model/repository guestbook for
+  SQLite, D1, and Turso
+- [`examples/tasks/`](examples/tasks/) — reference REST API covering validation,
+  OpenAPI, SSE, sessions, security middleware, jobs, and testing
+- [`examples/mobus/`](examples/mobus/) — a larger real-world application port
+- [`examples/bench/`](examples/bench/) — reproducible framework benchmarks
 
 ## License
 

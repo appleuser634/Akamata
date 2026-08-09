@@ -14,10 +14,10 @@ Cloudflare D1 を URL の違いだけで透過的に切り替えます — ハ�
 ## 0. インストール
 
 ```bash
-git clone https://github.com/yourorg/Akamata
+git clone https://github.com/appleuser634/Akamata.git
 cd Akamata
-zig build cli      # ./zig-out/bin/akamata
-# (任意) zig-out/bin を PATH に追加すれば任意のディレクトリから `akamata` を呼べる
+./scripts/install.sh
+# source開発では代わりに zig build cli
 ```
 
 以下も併せて入れておくと便利です:
@@ -31,6 +31,7 @@ zig build cli      # ./zig-out/bin/akamata
 ## 1. プロジェクトの雛形生成 (30 秒)
 
 ```bash
+# Akamata checkoutと同じ階層で実行します。build.zig.zonは../Akamataを参照します。
 akamata init mynotes --target=both
 cd mynotes
 zig build run
@@ -39,9 +40,9 @@ zig build run
 
 `--target=both` を指定すると、native (`src/main.zig`) と Workers (`src/worker.zig`)
 の**両方**のエントリーポイントが生成されます。生成された `main.zig` は
-1 ファイルで現代的なモデルベースのワークフローを丸ごとデモしています —
-`Note` モデル、バリデーション、スキーママイグレーション、CRUD ハンドラが
-すでに揃っています。
+1 fileのmodel-based applicationで、validation付き`Note` model、schema自動migration、list／create／show／delete handlerを含みます。`deploy/Dockerfile`、`deploy/wrangler.toml`、`deploy/worker/index.mjs`も生成されます。
+
+初期routeは`GET /`、`GET /health`、`GET /notes`、`POST /notes`、`GET /notes/:id`、`DELETE /notes/:id`です。migration fileは生成されません。nativeでは起動時にauto-diffを実行し、Workersではisolateごとの初回requestで`migrate.Once`を実行します。
 
 動作確認:
 
@@ -254,17 +255,14 @@ Workers では `migrate_once.run` ミドルウェアを使います (雛形が�
 HTTP リクエスト時に走るよう自動で組み込みます。`akamata_init` 時点では
 JSPI がまだ有効でないため、初回リクエストで実行するのがポイント)。
 
-### B. バージョン付きファイル (本番運用に向く)
+### B. version付きSQL file
 
 ```bash
 akamata migrate generate add_users        # migrations/<ts>_add_users.sql を生成
 # ...SQL を編集...
-./zig-out/bin/myapp migrate-up            # 未適用分を実行、schema_migrations に記録
 ```
 
-`migrate-up` は雛形 `main.zig` に組み込まれているサブコマンドで、内部で
-`am.model.migrate.Migrator` を呼びます。独自ロックや dry-run を入れたい
-場合はその部分を書き換えてください。
+生成されるscaffoldにはversion付きmigration runnerは含まれません。確認済みのSQL fileをD1へ適用する場合は`akamata db migrations/<file>.sql --remote`を使うか、アプリケーションのdeploy workflowへ`am.model.migrate.Migrator`を組み込んでください。本番環境で未確認のmodel diffを自動適用しないでください。
 
 ---
 
@@ -277,27 +275,25 @@ zig build -Doptimize=ReleaseFast -Dtarget=x86_64-linux-musl
 # zig-out/bin/myapp が musl 静的バイナリとして出力される
 ```
 
-`deploy/Dockerfile` (akamata init で生成) は `FROM scratch + COPY` だけの
-最小構成です。`docker build -f deploy/Dockerfile -t myapp .` で完了。
+`akamata init`が生成する`deploy/Dockerfile`はmulti-stage buildで、runtime stageに`FROM scratch`を使用します。`docker build -f deploy/Dockerfile -t myapp .`でbuildできます。
 
 ### Cloudflare Workers + D1
 
 ```bash
 akamata deploy --workers \
   --config=deploy/wrangler.toml \
-  --migrate=<(./zig-out/bin/myapp --print-schema)
+  --migrate=migrations/20260810000000_initial.sql
 ```
 
 このコマンド一発で:
 
 1. `wrangler.toml` の `[[d1_databases]]` ブロックを読む
 2. `database_id` がプレースホルダ (`00000000-...`) なら `wrangler d1 create <name>` を実行し、得た UUID を `wrangler.toml` に書き戻す。すでに同名 DB がアカウントに存在する場合は `wrangler d1 list --json` で UUID を取得して採用する
-3. `--migrate` で渡されたスキーマを本番 D1 に適用する
+3. `--migrate`で渡した確認済みSQL fileをremote D1へ適用する
 4. `zig build -Dbackend=workers -Doptimize=ReleaseSmall` でビルド
 5. `wrangler deploy --config=...` でデプロイ
 
-`<(...)` はプロセス置換で、テンポラリファイル無しでスキーマを直接パイプ
-できます。普通のファイルパスでも問題ありません: `--migrate=migrations/00_init.sql`。
+scaffoldでは`[[d1_databases]]` blockがcomment outされています。D1またはone-shot deployを使う前に有効化し、database名を設定してください。
 
 ### Cloudflare Workers + Turso
 

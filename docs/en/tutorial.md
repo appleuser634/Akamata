@@ -81,20 +81,21 @@ zig version
 Akamata's framework code and the `akamata` CLI live in the same repo.
 
 ```bash
-git clone https://github.com/yourorg/Akamata
+git clone https://github.com/appleuser634/Akamata.git
 cd Akamata
-zig build cli
+./scripts/install.sh
+# For source development instead: zig build cli
 ```
 
-After it builds you'll have `zig-out/bin/akamata`. Add it to your `PATH` so
-later commands are short:
+The installer copies the CLI to `$HOME/.local/bin` by default. Add that
+directory to `PATH` if necessary:
 
 ```bash
 # temporary
-export PATH="$PWD/zig-out/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 
 # persistent (zsh)
-echo 'export PATH="'"$PWD"'/zig-out/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
 Smoke-test:
@@ -116,7 +117,7 @@ Commands:
 
 > **Gotcha**: if you see `command not found: akamata` after adding to
 > `.zshrc`, open a fresh terminal — your existing shell hasn't reloaded
-> the file. Alternatively call the full path: `./zig-out/bin/akamata help`.
+> the file. A source build can be called as `./zig-out/bin/akamata help`.
 
 ---
 
@@ -129,10 +130,11 @@ Commands:
 
 ### Command
 
-Move **outside** the Akamata repo to wherever you keep your own projects:
+The generated package currently refers to `../Akamata`, so create it next to
+the Akamata checkout:
 
 ```bash
-cd ~/projects        # any working directory
+cd ..                # from the Akamata checkout
 akamata init mytodo --target=both
 ```
 
@@ -163,6 +165,7 @@ mytodo/
 ├── build.zig                  # build configuration
 ├── build.zig.zon              # package manifest (depends on Akamata)
 ├── deploy/
+│   ├── Dockerfile             # Cloudflare Containers image
 │   ├── wrangler.toml          # Cloudflare Workers config
 │   └── worker/
 │       └── index.mjs          # JS host that loads the wasm
@@ -179,6 +182,7 @@ mytodo/
 | **`build.zig.zon`** | Package manifest including the Akamata dependency |
 | **`src/main.zig`** | Native entry point. You'll spend 90% of your time here |
 | **`src/worker.zig`** | Workers entry point — just calls into `main.zig` |
+| **`deploy/Dockerfile`** | Multi-stage native build with a scratch runtime image |
 | **`deploy/wrangler.toml`** | D1 bindings + env vars |
 | **`deploy/worker/index.mjs`** | JS shim that loads the wasm and bridges D1 |
 
@@ -898,7 +902,7 @@ deeper layer panics.
 Expand `registerRoutes`:
 
 ```zig
-var metrics_counters: am.MetricsCounters = .{};
+var metrics_counters: am.mw.MetricsCounters = .{};
 
 pub fn registerRoutes(app: *am.App(State)) !void {
     _ = try app.useAll(am.mw.recover(State));
@@ -950,10 +954,10 @@ akamata_requests_by_status{class="5xx"} 0
 Your `zig build run` terminal prints one JSON line per request:
 
 ```json
-{"ts_unix_us":1779999999000000,"req_id":"a64d6f73-2b0e-4ad1-9aa3-8c0f4f2c5d6e","ip":"-","method":"GET","path":"/api/todos","status":200,"latency_us":412}
+{"ts_unix_us":1779999999000000,"request_id":"a64d6f73-2b0e-4ad1-9aa3-8c0f4f2c5d6e","method":"GET","path":"/api/todos","route":"/api/todos","status":200,"duration_ms":0.412,"db":{"queries":1,"execs":0,"errors":0,"duration_ms":0.100},"outbound_http":{"requests":0,"duration_ms":0.000},"storage":{"operations":0,"duration_ms":0.000}}
 ```
 
-`req_id` is also echoed on `X-Request-ID` so you can correlate front-end
+`request_id` is also echoed on `X-Request-ID` so you can correlate front-end
 errors with server logs.
 
 More detail in [docs/en/observability.md](observability.md).
@@ -1018,7 +1022,7 @@ cd ..
 # one-shot deploy
 akamata deploy --workers \
   --config=deploy/wrangler.toml \
-  --migrate=<(./zig-out/bin/mytodo --print-schema)
+  --migrate=migrations/20260810000000_initial.sql
 ```
 
 What this single command does:
@@ -1026,8 +1030,7 @@ What this single command does:
 1. Reads the `[[d1_databases]]` block from `wrangler.toml`
 2. Sees the placeholder `database_id`, runs `wrangler d1 create`, writes
    the real UUID back to the file
-3. Runs `mytodo --print-schema` to dump current DDL
-4. Pipes it into `wrangler d1 execute --remote`
+3. Applies the reviewed SQL file with `wrangler d1 execute --remote`
 5. Runs `zig build -Dbackend=workers -Doptimize=ReleaseSmall`
 6. Runs `wrangler deploy`
 
@@ -1197,7 +1200,7 @@ You've only touched the basics. To go deeper:
 
 ### Bigger apps
 
-- **`examples/mobus/`** — 26 endpoints, JWT auth, friends, WS chat, FCM
+- **`examples/mobus/`** — a larger application with JWT auth, friends, WebSocket chat, and FCM
 - **`examples/chat/`** — Durable Object SQLite + WebSocket
 
 ### Individual topics
