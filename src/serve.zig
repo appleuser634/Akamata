@@ -7,6 +7,7 @@ const app_mod = @import("app.zig");
 const req_mod = @import("http/request.zig");
 const res_mod = @import("http/response.zig");
 const parser = @import("http/parser.zig");
+const clock = @import("observability/clock.zig");
 
 const is_native = build_options.backend == .native;
 const Io = std.Io;
@@ -74,6 +75,7 @@ fn serveNative(comptime State: type, app: *app_mod.App(State), opts: app_mod.Ser
     }
     acceptLoop(State, &ctx);
     for (threads.items) |t| t.join();
+    while (ctx.active_connections.load(.acquire) != 0) std.Thread.yield() catch {};
 }
 
 fn LoopCtx(comptime State: type) type {
@@ -82,6 +84,7 @@ fn LoopCtx(comptime State: type) type {
         io: Io,
         listener: *net.Server,
         opts: *const app_mod.ServeOptions,
+        active_connections: std.atomic.Value(usize) = .init(0),
     };
 }
 
@@ -138,14 +141,28 @@ fn acceptLoop(comptime State: type, ctx: *LoopCtx(State)) void {
         const stream: net.Stream = .{ .socket = .{ .handle = cfd, .address = undefined } };
         applyTimeouts(stream, ctx.opts) catch {};
         applyTcpNoDelay(stream) catch {};
-        handleConnection(State, ctx.app, ctx.io, stream) catch |err| switch (err) {
-            // OOM in a per-connection arena should not crash the worker; the
-            // peer already saw its socket get closed by the defer above, so
-            // we just log and keep accepting.
-            error.OutOfMemory => std.log.err("conn aborted: OOM", .{}),
-            else => std.log.err("conn error: {t}", .{err}),
+        const previous = ctx.active_connections.fetchAdd(1, .acq_rel);
+        if (previous >= ctx.opts.max_connections) {
+            _ = ctx.active_connections.fetchSub(1, .acq_rel);
+            stream.close(ctx.io);
+            continue;
+        }
+        const thread = std.Thread.spawn(.{}, connectionThread, .{ State, ctx, stream }) catch {
+            _ = ctx.active_connections.fetchSub(1, .acq_rel);
+            stream.close(ctx.io);
+            continue;
         };
+        thread.detach();
     }
+}
+
+fn connectionThread(comptime State: type, ctx: *LoopCtx(State), stream: net.Stream) void {
+    defer _ = ctx.active_connections.fetchSub(1, .acq_rel);
+    handleConnection(State, ctx.app, ctx.io, stream, ctx.opts) catch |err| switch (err) {
+        error.Timeout, error.EndOfStream => {},
+        error.OutOfMemory => std.log.err("conn aborted: OOM", .{}),
+        else => std.log.warn("conn rejected: {t}", .{err}),
+    };
 }
 
 // === Socket-level timeout configuration ===
@@ -311,41 +328,49 @@ fn applyTimeouts(stream: net.Stream, opts: *const app_mod.ServeOptions) !void {
     _ = opts;
 }
 
-fn handleConnection(comptime State: type, app: *app_mod.App(State), io: Io, stream: net.Stream) !void {
+fn handleConnection(comptime State: type, app: *app_mod.App(State), io: Io, stream: net.Stream, opts: *const app_mod.ServeOptions) !void {
     var owns_stream = true;
     defer if (owns_stream) stream.close(io);
     var arena_state: std.heap.ArenaAllocator = .init(app.gpa);
     defer arena_state.deinit();
 
-    const recv_cap: usize = 16 * 1024;
-    const recv_buf = try app.gpa.alloc(u8, recv_cap);
-    defer app.gpa.free(recv_buf);
+    var recv_buf: std.ArrayList(u8) = .empty;
+    defer recv_buf.deinit(app.gpa);
+    try recv_buf.ensureTotalCapacity(app.gpa, @min(opts.parse_limits.max_request_bytes + 4, 16 * 1024));
 
     var sock_reader_buf: [4096]u8 = undefined;
     var sr = stream.reader(io, &sock_reader_buf);
     const r: *Io.Reader = &sr.interface;
 
     var pending_len: usize = 0;
+    var request_count: u32 = 0;
     keep_alive: while (true) {
         _ = arena_state.reset(.retain_capacity);
         const arena = arena_state.allocator();
 
-        while (parser.headersEnd(recv_buf[0..pending_len]) == null) {
-            if (pending_len == recv_buf.len) return error.HeadersTooLarge;
-            var vec: [1][]u8 = .{recv_buf[pending_len..]};
-            const n = r.readVec(&vec) catch return;
-            if (n == 0) return;
+        const request_start = clock.monotonicNs();
+        var first_header_read = pending_len == 0;
+        while (parser.headersEnd(recv_buf.items[0..pending_len]) == null) {
+            if (pending_len >= opts.parse_limits.max_request_bytes + 4) return error.HeadersTooLarge;
+            try ensureReadCapacity(&recv_buf, app.gpa, pending_len, opts.parse_limits.max_request_bytes + 4);
+            var vec: [1][]u8 = .{recv_buf.allocatedSlice()[pending_len..recv_buf.capacity]};
+            const phase_ms = if (first_header_read and request_count > 0) opts.keep_alive_idle_timeout_ms else opts.header_read_timeout_ms;
+            const n = try timedRead(r, stream.socket.handle, &vec, boundedTimeout(phase_ms, opts.total_request_timeout_ms, request_start));
+            first_header_read = false;
             pending_len += n;
+            recv_buf.items.len = pending_len;
         }
 
         const parsed = blk: while (true) {
-            const p = parser.parseRequest(arena, recv_buf[0..pending_len], .{}) catch |e| switch (e) {
+            const p = parser.parseRequest(arena, recv_buf.items[0..pending_len], opts.parse_limits) catch |e| switch (e) {
                 parser.ParseError.Incomplete => {
-                    if (pending_len == recv_buf.len) return error.PayloadTooLarge;
-                    var vec: [1][]u8 = .{recv_buf[pending_len..]};
-                    const n = r.readVec(&vec) catch return;
-                    if (n == 0) return;
+                    const max_buffer = std.math.add(usize, opts.parse_limits.max_request_bytes + 4, opts.parse_limits.max_body_bytes) catch return error.PayloadTooLarge;
+                    if (pending_len >= max_buffer) return error.PayloadTooLarge;
+                    try ensureReadCapacity(&recv_buf, app.gpa, pending_len, max_buffer);
+                    var vec: [1][]u8 = .{recv_buf.allocatedSlice()[pending_len..recv_buf.capacity]};
+                    const n = try timedRead(r, stream.socket.handle, &vec, boundedTimeout(opts.body_read_timeout_ms, opts.total_request_timeout_ms, request_start));
                     pending_len += n;
+                    recv_buf.items.len = pending_len;
                     continue;
                 },
                 else => return e,
@@ -415,16 +440,45 @@ fn handleConnection(comptime State: type, app: *app_mod.App(State), io: Io, stre
         w.flush() catch return;
 
         if (!res.keep_alive) return;
+        request_count += 1;
+        if (request_count >= opts.max_requests_per_connection) return;
 
         const total = parsed.consumed;
         if (total < pending_len) {
-            std.mem.copyForwards(u8, recv_buf[0 .. pending_len - total], recv_buf[total..pending_len]);
+            std.mem.copyForwards(u8, recv_buf.items[0 .. pending_len - total], recv_buf.items[total..pending_len]);
             pending_len -= total;
+            recv_buf.items.len = pending_len;
         } else {
             pending_len = 0;
+            recv_buf.items.len = 0;
         }
         continue :keep_alive;
     }
+}
+
+fn ensureReadCapacity(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, used: usize, maximum: usize) !void {
+    if (buf.capacity > used) return;
+    const next = @min(maximum, @max(used +| 1, buf.capacity *| 2));
+    if (next <= used) return error.PayloadTooLarge;
+    try buf.ensureTotalCapacity(allocator, next);
+}
+
+fn boundedTimeout(phase_ms: u32, total_ms: u32, started_ns: u64) u32 {
+    const elapsed_ms = clock.elapsedNs(started_ns) / std.time.ns_per_ms;
+    if (elapsed_ms >= total_ms or elapsed_ms >= phase_ms) return 0;
+    return @min(@as(u32, @intCast(phase_ms - elapsed_ms)), @as(u32, @intCast(total_ms - elapsed_ms)));
+}
+
+fn timedRead(r: *Io.Reader, fd: c_int, vec: [][]u8, timeout_ms: u32) !usize {
+    if (timeout_ms == 0 or !waitReadReady(fd, @intCast(@min(timeout_ms, std.math.maxInt(c_int))))) return error.Timeout;
+    const n = r.readVec(vec) catch return error.EndOfStream;
+    if (n == 0) return error.EndOfStream;
+    return n;
+}
+
+fn waitReadReady(fd: c_int, timeout_ms: c_int) bool {
+    var pfd = [_]PollFd{.{ .fd = fd, .events = POLLIN }};
+    return poll(&pfd, 1, timeout_ms) > 0 and (pfd[0].revents & POLLIN) != 0;
 }
 
 // =========================================================================

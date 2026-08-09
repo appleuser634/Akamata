@@ -5,6 +5,15 @@ const std = @import("std");
 pub const FormError = error{
     InvalidEscape,
     OutOfMemory,
+    BodyTooLarge,
+    TooManyFields,
+    FieldTooLarge,
+};
+
+pub const Limits = struct {
+    max_body_bytes: usize = 1024 * 1024,
+    max_fields: usize = 1024,
+    max_field_bytes: usize = 64 * 1024,
 };
 
 pub const Field = struct { name: []const u8, value: []const u8 };
@@ -27,13 +36,20 @@ pub const Form = struct {
 /// Parse `key1=val1&key2=val2&...` (RFC 3986 percent-decoded, `+` → space).
 /// All `Field` slices are allocated in `arena`.
 pub fn parse(arena: std.mem.Allocator, body: []const u8) FormError!Form {
+    return parseWithLimits(arena, body, .{});
+}
+
+pub fn parseWithLimits(arena: std.mem.Allocator, body: []const u8, limits: Limits) FormError!Form {
+    if (body.len > limits.max_body_bytes) return FormError.BodyTooLarge;
     var out: std.ArrayList(Field) = .empty;
     var it = std.mem.splitScalar(u8, body, '&');
     while (it.next()) |pair| {
         if (pair.len == 0) continue;
+        if (out.items.len >= limits.max_fields) return FormError.TooManyFields;
         const eq = std.mem.indexOfScalar(u8, pair, '=');
         const name_raw = if (eq) |e| pair[0..e] else pair;
         const value_raw = if (eq) |e| pair[e + 1 ..] else "";
+        if (name_raw.len > limits.max_field_bytes or value_raw.len > limits.max_field_bytes) return FormError.FieldTooLarge;
         const name = try decode(arena, name_raw);
         const value = try decode(arena, value_raw);
         try out.append(arena, .{ .name = name, .value = value });

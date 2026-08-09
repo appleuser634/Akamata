@@ -47,6 +47,21 @@ test "decode masked text frame unmasks payload" {
     try std.testing.expectEqualStrings("hello", r.frame.payload);
 }
 
+test "server decoder rejects unmasked and invalid control frames" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const unmasked = [_]u8{ 0x81, 0x01, 'x' };
+    try std.testing.expectError(frame.FrameError.InvalidFrame, frame.decodeClient(arena, &unmasked, 1024));
+    const fragmented_ping = [_]u8{ 0x09, 0x80, 0, 0, 0, 0 };
+    try std.testing.expectError(frame.FrameError.InvalidFrame, frame.decodeClient(arena, &fragmented_ping, 1024));
+}
+
+test "handshake rejects malformed websocket key" {
+    var out: [64]u8 = undefined;
+    try std.testing.expectError(handshake.HandshakeError.InvalidKey, handshake.acceptKey("not-a-16-byte-key", &out));
+}
+
 test "decode returns null on incomplete frame" {
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();

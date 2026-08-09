@@ -15,7 +15,7 @@ pub const Options = struct {
     max_age_secs: ?i64 = null,
     expires_unix: ?i64 = null,
     http_only: bool = false,
-    secure: bool = false,
+    secure: bool = true,
     same_site: ?SameSite = null,
 };
 

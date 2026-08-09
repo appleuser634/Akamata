@@ -154,6 +154,7 @@ pub fn build(b: *std.Build) void {
         "tests/client_gen_test.zig",
         "tests/jobs_test.zig",
         "tests/observability_test.zig",
+        "tests/security_middleware_test.zig",
     };
 
     const integration_step = b.step("integration", "build integration test (manual run)");

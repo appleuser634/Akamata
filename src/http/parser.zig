@@ -10,7 +10,7 @@ pub const ParseError = error{
     BodyTooLarge,
     UnsupportedTransferEncoding,
     /// RFC 9112 §6.1 — Content-Length and Transfer-Encoding both present,
-    /// or Content-Length appears more than once with conflicting values.
+    /// or Content-Length appears more than once.
     /// We reject any such request to avoid HTTP request smuggling.
     AmbiguousFraming,
     Incomplete,
@@ -43,11 +43,15 @@ pub fn parseRequest(
     var line_iter = std.mem.splitSequence(u8, head, "\r\n");
     const first = line_iter.next() orelse return ParseError.InvalidRequestLine;
 
+    if (std.mem.indexOfScalar(u8, first, '\r') != null or std.mem.indexOfScalar(u8, first, '\n') != null) return ParseError.InvalidRequestLine;
     var parts = std.mem.splitScalar(u8, first, ' ');
     const method_str = parts.next() orelse return ParseError.InvalidRequestLine;
     const target = parts.next() orelse return ParseError.InvalidRequestLine;
     const version = parts.next() orelse return ParseError.InvalidRequestLine;
     if (parts.next() != null) return ParseError.InvalidRequestLine;
+
+    if (!(std.mem.eql(u8, version, "HTTP/1.1") or std.mem.eql(u8, version, "HTTP/1.0"))) return ParseError.InvalidRequestLine;
+    if (!validRequestTarget(target)) return ParseError.InvalidRequestLine;
 
     const method = status.Method.parse(method_str) orelse return ParseError.UnknownMethod;
 
@@ -66,28 +70,27 @@ pub fn parseRequest(
     var cl_seen: bool = false; // ensure no conflicting duplicate
     var chunked: bool = false;
     var transfer_encoding_seen: bool = false;
+    var host_seen: bool = false;
 
     while (line_iter.next()) |line| {
         if (line.len == 0) continue;
         if (headers.items.len >= limits.max_headers) return ParseError.HeadersTooLarge;
 
         const colon = std.mem.indexOfScalar(u8, line, ':') orelse return ParseError.InvalidHeader;
-        const name = std.mem.trim(u8, line[0..colon], " \t");
+        const name = line[0..colon];
         const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
-        if (name.len == 0) return ParseError.InvalidHeader;
+        if (!validFieldName(name) or !validFieldValue(value)) return ParseError.InvalidHeader;
 
-        headers.appendAssumeCapacity(.{ .name = name, .value = value });
+        try headers.append(arena, .{ .name = name, .value = value });
 
         if (req.eqlIgnoreCase(name, "content-length")) {
-            // Reject multiple Content-Length headers with conflicting values
-            // (RFC 9112 §6.3-4). Identical duplicates are still allowed.
+            // Reject every duplicate. Normalizing identical duplicates has
+            // caused parser differentials in intermediaries and is unnecessary.
+            if (value.len == 0 or !allDecimal(value)) return ParseError.InvalidHeader;
             const parsed_cl = std.fmt.parseInt(usize, value, 10) catch return ParseError.InvalidHeader;
-            if (cl_seen) {
-                if (content_length.? != parsed_cl) return ParseError.AmbiguousFraming;
-            } else {
-                content_length = parsed_cl;
-                cl_seen = true;
-            }
+            if (cl_seen) return ParseError.AmbiguousFraming;
+            content_length = parsed_cl;
+            cl_seen = true;
         } else if (req.eqlIgnoreCase(name, "transfer-encoding")) {
             transfer_encoding_seen = true;
             // We only support `chunked`; anything else (gzip,deflate,...) is rejected.
@@ -96,8 +99,13 @@ pub fn parseRequest(
         } else if (req.eqlIgnoreCase(name, "connection")) {
             if (req.containsIgnoreCase(value, "close")) keep_alive = false;
             if (req.containsIgnoreCase(value, "keep-alive")) keep_alive = true;
+        } else if (req.eqlIgnoreCase(name, "host")) {
+            if (host_seen or !validHost(value)) return ParseError.InvalidHeader;
+            host_seen = true;
         }
     }
+
+    if (std.mem.eql(u8, version, "HTTP/1.1") and !host_seen) return ParseError.InvalidHeader;
 
     // RFC 9112 §6.1: if both Transfer-Encoding and Content-Length are present,
     // the request is malformed — close the connection and reject.
@@ -112,9 +120,10 @@ pub fn parseRequest(
         consumed = body_start + decoded.consumed;
     } else if (content_length) |cl| {
         if (cl > limits.max_body_bytes) return ParseError.BodyTooLarge;
-        if (bytes.len < body_start + cl) return ParseError.Incomplete;
-        body = bytes[body_start .. body_start + cl];
-        consumed = body_start + cl;
+        const body_end = std.math.add(usize, body_start, cl) catch return ParseError.BodyTooLarge;
+        if (bytes.len < body_end) return ParseError.Incomplete;
+        body = bytes[body_start..body_end];
+        consumed = body_end;
     }
 
     return .{
@@ -143,37 +152,117 @@ fn decodeChunked(arena: std.mem.Allocator, buf: []const u8, limits: Limits) Pars
         const line_end = std.mem.indexOfPos(u8, buf, i, "\r\n") orelse return ParseError.Incomplete;
         const size_line = buf[i..line_end];
         const semi = std.mem.indexOfScalar(u8, size_line, ';');
+        // Chunk extensions are not consumed by Akamata. Reject them instead
+        // of risking a differential with an intermediary that interprets
+        // extension quoting/escaping differently.
+        if (semi != null) return ParseError.InvalidHeader;
         const size_str = if (semi) |s| size_line[0..s] else size_line;
-        const trimmed = std.mem.trim(u8, size_str, " \t");
-        const size = std.fmt.parseInt(usize, trimmed, 16) catch return ParseError.InvalidHeader;
-        i = line_end + 2;
+        if (size_str.len == 0 or !allHex(size_str)) return ParseError.InvalidHeader;
+        const size = std.fmt.parseInt(usize, size_str, 16) catch return ParseError.InvalidHeader;
+        i = std.math.add(usize, line_end, 2) catch return ParseError.InvalidHeader;
 
         if (size == 0) {
-            const trailer_end = std.mem.indexOfPos(u8, buf, i, "\r\n") orelse return ParseError.Incomplete;
             // Optionally skip trailer headers until empty line
             var j = i;
             while (true) {
                 const le = std.mem.indexOfPos(u8, buf, j, "\r\n") orelse return ParseError.Incomplete;
                 if (le == j) {
-                    i = j + 2;
+                    i = std.math.add(usize, j, 2) catch return ParseError.InvalidHeader;
                     break;
                 }
-                j = le + 2;
+                const trailer = buf[j..le];
+                const colon = std.mem.indexOfScalar(u8, trailer, ':') orelse return ParseError.InvalidHeader;
+                const name = trailer[0..colon];
+                const value = std.mem.trim(u8, trailer[colon + 1 ..], " \t");
+                if (!validFieldName(name) or !validFieldValue(value)) return ParseError.InvalidHeader;
+                if (req.eqlIgnoreCase(name, "content-length") or req.eqlIgnoreCase(name, "transfer-encoding") or req.eqlIgnoreCase(name, "host")) return ParseError.InvalidHeader;
+                j = std.math.add(usize, le, 2) catch return ParseError.InvalidHeader;
             }
-            _ = trailer_end;
             break;
         }
 
-        if (i + size + 2 > buf.len) return ParseError.Incomplete;
-        if (out.items.len + size > limits.max_body_bytes) return ParseError.BodyTooLarge;
+        const data_end = std.math.add(usize, i, size) catch return ParseError.BodyTooLarge;
+        const framed_end = std.math.add(usize, data_end, 2) catch return ParseError.BodyTooLarge;
+        if (framed_end > buf.len) return ParseError.Incomplete;
+        const output_end = std.math.add(usize, out.items.len, size) catch return ParseError.BodyTooLarge;
+        if (output_end > limits.max_body_bytes) return ParseError.BodyTooLarge;
 
-        try out.appendSlice(arena, buf[i .. i + size]);
-        i += size;
+        try out.appendSlice(arena, buf[i..data_end]);
+        i = data_end;
         if (!std.mem.eql(u8, buf[i .. i + 2], "\r\n")) return ParseError.InvalidHeader;
         i += 2;
     }
 
     return .{ .body = out.items, .consumed = i };
+}
+
+fn validFieldName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    for (name) |ch| switch (ch) {
+        '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~', '0'...'9', 'A'...'Z', 'a'...'z' => {},
+        else => return false,
+    };
+    return true;
+}
+
+fn validFieldValue(value: []const u8) bool {
+    for (value) |ch| if (ch == '\r' or ch == '\n' or ch == 0 or (ch < 0x20 and ch != '\t') or ch == 0x7f) return false;
+    return true;
+}
+
+fn validRequestTarget(target: []const u8) bool {
+    if (target.len == 0 or target[0] != '/') return false;
+    var i: usize = 0;
+    while (i < target.len) : (i += 1) {
+        const ch = target[i];
+        if (ch <= 0x20 or ch == 0x7f or ch == '#') return false;
+        if (ch == '%') {
+            if (i + 2 >= target.len or !std.ascii.isHex(target[i + 1]) or !std.ascii.isHex(target[i + 2])) return false;
+            i += 2;
+        }
+    }
+    return true;
+}
+
+fn validHost(value: []const u8) bool {
+    if (value.len == 0 or value.len > 255) return false;
+    if (value[0] == '[') {
+        const close = std.mem.indexOfScalar(u8, value, ']') orelse return false;
+        if (close <= 1) return false;
+        for (value[1..close]) |ch| if (!(std.ascii.isHex(ch) or ch == ':' or ch == '.')) return false;
+        if (close + 1 == value.len) return true;
+        return value[close + 1] == ':' and validPort(value[close + 2 ..]);
+    }
+    if (std.mem.count(u8, value, ":") > 1) return false;
+    const colon = std.mem.lastIndexOfScalar(u8, value, ':');
+    const host = if (colon) |at| value[0..at] else value;
+    if (colon) |at| if (!validPort(value[at + 1 ..])) return false;
+    if (host.len == 0 or host[0] == '.' or host[host.len - 1] == '.') return false;
+    var label_start: usize = 0;
+    for (host, 0..) |ch, i| {
+        if (ch == '.') {
+            if (i == label_start or host[i - 1] == '-') return false;
+            label_start = i + 1;
+        } else if (!(std.ascii.isAlphanumeric(ch) or ch == '-')) return false;
+        if (i == label_start and ch == '-') return false;
+    }
+    return host[host.len - 1] != '-';
+}
+
+fn validPort(port: []const u8) bool {
+    if (port.len == 0 or port.len > 5 or !allDecimal(port)) return false;
+    const number = std.fmt.parseInt(u16, port, 10) catch return false;
+    return number != 0;
+}
+
+fn allHex(value: []const u8) bool {
+    for (value) |ch| if (!std.ascii.isHex(ch)) return false;
+    return true;
+}
+
+fn allDecimal(value: []const u8) bool {
+    for (value) |ch| if (!std.ascii.isDigit(ch)) return false;
+    return true;
 }
 
 /// Find end of headers (CRLFCRLF). Returns null if not yet complete.
@@ -207,6 +296,32 @@ test "rejects conflicting duplicate Content-Length" {
     const arena = arena_state.allocator();
     const bytes = "POST / HTTP/1.1\r\nhost: a\r\ncontent-length: 5\r\ncontent-length: 7\r\n\r\nhelloxx";
     try std.testing.expectError(ParseError.AmbiguousFraming, parseRequest(arena, bytes, .{}));
+}
+
+test "strict header and host validation rejects smuggling differentials" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const cases = [_][]const u8{
+        "POST / HTTP/1.1\r\nHost: a\r\nContent-Length : 0\r\n\r\n",
+        "GET / HTTP/1.1\r\nHost : a\r\n\r\n",
+        "GET / HTTP/1.1\r\nHost: a\r\n folded: x\r\n\r\n",
+        "GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n",
+        "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n",
+        "GET / HTTP/2.0\r\nHost: a\r\n\r\n",
+        "GET relative HTTP/1.1\r\nHost: a\r\n\r\n",
+        "GET / HTTP/1.1\nHost: a\n\n",
+    };
+    for (cases) |bytes| {
+        if (parseRequest(arena, bytes, .{})) |_| return error.TestExpectedError else |_| {}
+    }
+}
+
+test "chunk size overflow is rejected" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const bytes = "POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF\r\n";
+    try std.testing.expectError(ParseError.InvalidHeader, parseRequest(arena_state.allocator(), bytes, .{}));
 }
 
 test "rejects unsupported Transfer-Encoding (gzip,chunked)" {

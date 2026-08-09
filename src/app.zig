@@ -180,16 +180,17 @@ pub const ServeOptions = struct {
     /// `std.Thread.getCpuCount()` (default). Has no effect on the
     /// threaded runtime, which uses `accept_thread_count` instead.
     worker_count: ?usize = null,
-    /// Per-connection read timeout in milliseconds. **Currently unused** —
-    /// the previous SO_RCVTIMEO-based implementation conflicted with Zig
-    /// 0.16's std.Io.Threaded (which treats EAGAIN as a programmer bug and
-    /// panics). Field is kept so a future non-stdlib read path can honour
-    /// it without breaking callers' ServeOptions literals. See the comment
-    /// block in src/serve.zig for the full rationale.
+    /// Deprecated compatibility alias. Phase-specific deadlines below are
+    /// enforced by the threaded server without SO_RCVTIMEO.
     read_timeout_ms: u32 = 30_000,
-    /// Per-connection write timeout in milliseconds. See `read_timeout_ms`
-    /// note above — currently unused.
     write_timeout_ms: u32 = 30_000,
+    header_read_timeout_ms: u32 = 10_000,
+    body_read_timeout_ms: u32 = 30_000,
+    keep_alive_idle_timeout_ms: u32 = 5_000,
+    total_request_timeout_ms: u32 = 60_000,
+    max_requests_per_connection: u32 = 100,
+    /// Bounds detached connection workers and their request buffers.
+    max_connections: usize = 1024,
 };
 
 pub fn App(comptime State: type) type {

@@ -20,6 +20,8 @@ pub const Frame = struct {
     payload: []u8,
 };
 
+pub const Decoded = struct { frame: Frame, consumed: usize };
+
 pub const FrameError = error{
     Incomplete,
     InvalidFrame,
@@ -36,7 +38,17 @@ pub fn decode(
     arena: std.mem.Allocator,
     bytes: []const u8,
     max_payload: usize,
-) FrameError!?struct { frame: Frame, consumed: usize } {
+) FrameError!?Decoded {
+    return decodeMode(arena, bytes, max_payload, false);
+}
+
+/// Decode a frame received by a server. RFC 6455 requires every client frame
+/// to be masked; accepting unmasked frames enables proxy/cache confusion.
+pub fn decodeClient(arena: std.mem.Allocator, bytes: []const u8, max_payload: usize) FrameError!?Decoded {
+    return decodeMode(arena, bytes, max_payload, true);
+}
+
+fn decodeMode(arena: std.mem.Allocator, bytes: []const u8, max_payload: usize, require_mask: bool) FrameError!?Decoded {
     if (bytes.len < 2) return null;
     const b0 = bytes[0];
     const b1 = bytes[1];
@@ -45,17 +57,27 @@ pub fn decode(
     if ((b0 & 0x70) != 0) return FrameError.UnsupportedReservedBits;
     const opcode: Opcode = @enumFromInt(@as(u4, @truncate(b0 & 0x0F)));
     const masked = (b1 & 0x80) != 0;
+    if (require_mask and !masked) return FrameError.InvalidFrame;
     var pos: usize = 2;
     var payload_len: u64 = @intCast(b1 & 0x7F);
 
     if (payload_len == 126) {
         if (bytes.len < pos + 2) return null;
         payload_len = std.mem.readInt(u16, bytes[pos..][0..2], .big);
+        if (payload_len < 126) return FrameError.InvalidFrame;
         pos += 2;
     } else if (payload_len == 127) {
         if (bytes.len < pos + 8) return null;
         payload_len = std.mem.readInt(u64, bytes[pos..][0..8], .big);
+        if ((payload_len & (@as(u64, 1) << 63)) != 0) return FrameError.InvalidFrame;
+        if (payload_len <= 0xffff) return FrameError.InvalidFrame;
         pos += 8;
+    }
+
+    if (opcode.isControl() and (!fin or payload_len > 125)) return FrameError.InvalidFrame;
+    switch (opcode) {
+        .cont, .text, .binary, .close, .ping, .pong => {},
+        _ => return FrameError.InvalidFrame,
     }
 
     if (payload_len > max_payload) return FrameError.PayloadTooLarge;
@@ -68,7 +90,8 @@ pub fn decode(
     }
 
     const plen: usize = @intCast(payload_len);
-    if (bytes.len < pos + plen) return null;
+    const payload_end = std.math.add(usize, pos, plen) catch return FrameError.PayloadTooLarge;
+    if (bytes.len < payload_end) return null;
 
     var payload = try arena.alloc(u8, plen);
     @memcpy(payload, bytes[pos .. pos + plen]);
@@ -80,7 +103,7 @@ pub fn decode(
     }
     return .{
         .frame = .{ .fin = fin, .opcode = opcode, .payload = payload },
-        .consumed = pos + plen,
+        .consumed = payload_end,
     };
 }
 

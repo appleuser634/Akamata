@@ -11,6 +11,9 @@ pub const Options = struct {
 };
 
 pub fn cors(comptime State: type, comptime opts: Options) app_mod.Middleware(State) {
+    if (opts.credentials and std.mem.eql(u8, opts.origin, "*")) {
+        @compileError("CORS credentials cannot be combined with wildcard origin; configure an exact origin");
+    }
     const Impl = struct {
         fn call(c: *app_mod.App(State).Ctx, next: app_mod.Next(State)) anyerror!void {
             try c.header("access-control-allow-origin", opts.origin);
@@ -18,7 +21,10 @@ pub fn cors(comptime State: type, comptime opts: Options) app_mod.Middleware(Sta
             if (opts.expose_headers.len > 0) try c.header("access-control-expose-headers", opts.expose_headers);
 
             // Preflight short-circuit
-            if (std.mem.eql(u8, c.req.method(), "OPTIONS")) {
+            if (std.mem.eql(u8, c.req.method(), "OPTIONS") and
+                c.req.header("origin") != null and
+                c.req.header("access-control-request-method") != null)
+            {
                 try c.header("access-control-allow-methods", opts.allow_methods);
                 try c.header("access-control-allow-headers", opts.allow_headers);
                 if (opts.max_age) |m| {

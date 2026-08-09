@@ -146,3 +146,50 @@ test "server streams chunked response" {
     // Terminator
     try std.testing.expect(std.mem.endsWith(u8, resp, "0\r\n\r\n"));
 }
+
+test "slow header times out without starving subsequent connections" {
+    const alloc = std.testing.allocator;
+    var io_impl: std.Io.Threaded = .init(alloc, .{});
+    defer io_impl.deinit();
+    const io = io_impl.io();
+    var app: App = .{};
+    const port: u16 = 18182;
+    const addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", port) catch unreachable;
+    var server = try am.Server(App).init(alloc, io, &app, .{
+        .address = addr,
+        .router = router,
+        .accept_thread_count = 1,
+        .header_read_timeout_ms = 100,
+        .keep_alive_idle_timeout_ms = 100,
+    });
+    defer server.deinit();
+    const t = try std.Thread.spawn(.{}, runServer, .{&server});
+    defer {
+        server.requestShutdown();
+        t.join();
+    }
+    std.Io.sleep(io, .fromMilliseconds(80), .awake) catch {};
+
+    var connect_addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", port) catch unreachable;
+    var slow = try std.Io.net.IpAddress.connect(&connect_addr, io, .{ .mode = .stream });
+    defer slow.close(io);
+    var slow_w_buf: [128]u8 = undefined;
+    var slow_w = slow.writer(io, &slow_w_buf);
+    try slow_w.interface.writeAll("GET /hello HTTP/1.1\r\nHost:");
+    try slow_w.interface.flush();
+    std.Io.sleep(io, .fromMilliseconds(200), .awake) catch {};
+
+    // A single accept worker remains available because connection handling is
+    // detached and bounded; the valid request succeeds after the slow peer.
+    var normal = try std.Io.net.IpAddress.connect(&connect_addr, io, .{ .mode = .stream });
+    defer normal.close(io);
+    var w_buf: [256]u8 = undefined;
+    var w = normal.writer(io, &w_buf);
+    try w.interface.writeAll("GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    try w.interface.flush();
+    var r_buf: [1024]u8 = undefined;
+    var reader = normal.reader(io, &r_buf);
+    var out: [1024]u8 = undefined;
+    const n = try reader.interface.readSliceShort(&out);
+    try std.testing.expect(std.mem.startsWith(u8, out[0..n], "HTTP/1.1 200"));
+}

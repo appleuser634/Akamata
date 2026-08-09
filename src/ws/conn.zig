@@ -10,6 +10,9 @@ const net = std.Io.net;
 pub const UpgradeOptions = struct {
     max_message_bytes: usize = 64 * 1024,
     read_buffer_bytes: usize = 8 * 1024,
+    read_timeout_ms: u32 = 60_000,
+    /// Exact browser Origin allowlist. Empty preserves non-browser clients.
+    allowed_origins: []const []const u8 = &.{},
 };
 
 pub const Message = struct {
@@ -26,6 +29,7 @@ pub const ReadError = error{
     UnsupportedReservedBits,
     BufferTooSmall,
     WriteFailed,
+    Timeout,
 };
 
 /// Single WebSocket connection. Holds an owned read buffer and reuses the
@@ -39,6 +43,7 @@ pub const Conn = struct {
     write_mutex: @import("../sync.zig").Mutex = .{},
     recv_buf: std.ArrayList(u8) = .empty,
     max_payload: usize = 64 * 1024,
+    read_timeout_ms: u32 = 60_000,
     closed: std.atomic.Value(bool) = .init(false),
 
     pub fn init(gpa: std.mem.Allocator, stream: net.Stream, io: Io, max_payload: usize) Conn {
@@ -128,6 +133,8 @@ pub const Conn = struct {
             if (fr.opcode.isControl()) {
                 switch (fr.opcode) {
                     .close => {
+                        if (fr.payload.len == 1) return ReadError.InvalidFrame;
+                        if (fr.payload.len >= 2 and !validClosePayload(fr.payload)) return ReadError.InvalidFrame;
                         if (!self.closed.swap(true, .seq_cst)) self.stream.close(self.io);
                         return ReadError.ClosedByPeer;
                     },
@@ -140,10 +147,14 @@ pub const Conn = struct {
                 }
             }
 
-            if (first_opcode == null) first_opcode = fr.opcode;
+            if (first_opcode == null) {
+                if (fr.opcode == .cont) return ReadError.InvalidFrame;
+                first_opcode = fr.opcode;
+            } else if (fr.opcode != .cont) return ReadError.InvalidFrame;
             try assembled.appendSlice(self.gpa, fr.payload);
             if (assembled.items.len > self.max_payload) return ReadError.PayloadTooLarge;
             if (fr.fin) {
+                if (first_opcode.? == .text and !std.unicode.utf8ValidateSlice(assembled.items)) return ReadError.InvalidFrame;
                 const out = try arena.alloc(u8, assembled.items.len);
                 @memcpy(out, assembled.items);
                 return .{ .opcode = first_opcode.?, .payload = out };
@@ -154,7 +165,7 @@ pub const Conn = struct {
     fn readFrame(self: *Conn, arena: std.mem.Allocator) ReadError!?frame.Frame {
         while (true) {
             if (self.recv_buf.items.len > 0) {
-                const r = frame.decode(arena, self.recv_buf.items, self.max_payload) catch |e| switch (e) {
+                const r = frame.decodeClient(arena, self.recv_buf.items, self.max_payload) catch |e| switch (e) {
                     frame.FrameError.Incomplete => null,
                     frame.FrameError.InvalidFrame => return ReadError.InvalidFrame,
                     frame.FrameError.UnsupportedReservedBits => return ReadError.UnsupportedReservedBits,
@@ -174,12 +185,30 @@ pub const Conn = struct {
             var sr_buf: [4096]u8 = undefined;
             var sr = self.stream.reader(self.io, &sr_buf);
             const reader: *Io.Reader = &sr.interface;
+            if (!waitReadable(self.stream.socket.handle, self.read_timeout_ms)) return ReadError.Timeout;
             const n = reader.readSliceShort(&tmp) catch return ReadError.ReadFailed;
             if (n == 0) return null;
             self.recv_buf.appendSlice(self.gpa, tmp[0..n]) catch return ReadError.OutOfMemory;
+            if (self.recv_buf.items.len > self.max_payload + 14) return ReadError.PayloadTooLarge;
         }
     }
 };
+
+const PollFd = extern struct { fd: c_int, events: i16, revents: i16 = 0 };
+const POLLIN: i16 = 0x0001;
+extern "c" fn poll(fds: [*]PollFd, nfds: c_uint, timeout_ms: c_int) c_int;
+
+fn waitReadable(fd: c_int, timeout_ms: u32) bool {
+    if (timeout_ms == 0) return true;
+    var pfd = [_]PollFd{.{ .fd = fd, .events = POLLIN }};
+    return poll(&pfd, 1, @intCast(@min(timeout_ms, std.math.maxInt(c_int)))) > 0 and (pfd[0].revents & POLLIN) != 0;
+}
+
+fn validClosePayload(payload: []const u8) bool {
+    const code = std.mem.readInt(u16, payload[0..2], .big);
+    if (code < 1000 or code >= 5000 or code == 1004 or code == 1005 or code == 1006 or code == 1015) return false;
+    return std.unicode.utf8ValidateSlice(payload[2..]);
+}
 
 /// Perform a WebSocket upgrade. Accepts either the legacy `Ctx(App)` or the
 /// new `Context(State)` — both expose the fields we need (`req`, `res`,
@@ -192,6 +221,26 @@ pub fn upgrade(comptime CtxT: type, ctx: *CtxT, opts: UpgradeOptions) !Conn {
     const conn_h = ctx.req.header("connection");
     const ver = ctx.req.header("sec-websocket-version");
     const key = ctx.req.header("sec-websocket-key");
+
+    if (opts.allowed_origins.len > 0) {
+        const origin = ctx.req.header("origin") orelse {
+            ctx.res.setStatus(403);
+            try ctx.res.text("websocket origin rejected");
+            return error.ForbiddenOrigin;
+        };
+        var allowed = false;
+        for (opts.allowed_origins) |candidate| {
+            if (std.mem.eql(u8, origin, candidate)) {
+                allowed = true;
+                break;
+            }
+        }
+        if (!allowed) {
+            ctx.res.setStatus(403);
+            try ctx.res.text("websocket origin rejected");
+            return error.ForbiddenOrigin;
+        }
+    }
 
     if (!handshake.isUpgradeRequest(upg, conn_h, ver)) {
         ctx.res.setStatus(400);
@@ -230,5 +279,7 @@ pub fn upgrade(comptime CtxT: type, ctx: *CtxT, opts: UpgradeOptions) !Conn {
     try w.flush();
     ctx.res.finalized = true;
 
-    return Conn.init(ctx.arena, stream_ptr.*, io_ptr.*, opts.max_message_bytes);
+    var conn = Conn.init(ctx.arena, stream_ptr.*, io_ptr.*, opts.max_message_bytes);
+    conn.read_timeout_ms = opts.read_timeout_ms;
+    return conn;
 }

@@ -25,6 +25,12 @@ pub fn unixMicros() i64 {
     return (@as(i64, ts.tv_sec) * std.time.us_per_s) + @divTrunc(ts.tv_nsec, std.time.ns_per_us);
 }
 
+/// Wall-clock Unix time for expiry/validity checks. Never use this for
+/// durations; wall clocks may move backwards or jump forwards.
+pub fn unixSeconds() i64 {
+    return @divFloor(unixMicros(), std.time.us_per_s);
+}
+
 pub fn elapsedNs(start_ns: u64) u64 {
     const now = monotonicNs();
     return if (now >= start_ns) now - start_ns else 0;

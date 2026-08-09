@@ -111,8 +111,9 @@ pub const Response = struct {
         // so the client immediately sees a 200 + headers; otherwise an
         // EventSource would sit in "Connecting…" until the first chunk
         // landed (or 4 KB of header lines had piled up in the buffer).
-        const code: status.Code = @enumFromInt(self.status_code);
-        try sw.print("HTTP/1.1 {d} {s}\r\n", .{ self.status_code, code.phrase() });
+        const wire_status: u16 = if (validStatus(self.status_code)) self.status_code else 500;
+        const code: status.Code = @enumFromInt(wire_status);
+        try sw.print("HTTP/1.1 {d} {s}\r\n", .{ wire_status, code.phrase() });
         for (self.headers.items) |h| try sw.print("{s}: {s}\r\n", .{ h.name, h.value });
         try sw.print("connection: close\r\n", .{});
         try sw.writeAll("\r\n");
@@ -133,7 +134,15 @@ pub const Response = struct {
         try cw.end();
     }
 
+    /// Backward-compatible setter. Invalid HTTP status values are converted
+    /// to 500 rather than reaching enum conversion or the wire.
     pub fn setStatus(self: *Response, code: u16) void {
+        self.status_code = if (validStatus(code)) code else 500;
+    }
+
+    /// Strict variant for code paths that need to report invalid input.
+    pub fn setStatusChecked(self: *Response, code: u16) error{InvalidStatus}!void {
+        if (!validStatus(code)) return error.InvalidStatus;
         self.status_code = code;
     }
 
@@ -178,8 +187,9 @@ pub const Response = struct {
     /// been written directly to the socket.
     pub fn writeTo(self: *Response, w: anytype) !void {
         if (self.streaming != null) return;
-        const code: status.Code = @enumFromInt(self.status_code);
-        try w.print("HTTP/1.1 {d} {s}\r\n", .{ self.status_code, code.phrase() });
+        const wire_status: u16 = if (validStatus(self.status_code)) self.status_code else 500;
+        const code: status.Code = @enumFromInt(wire_status);
+        try w.print("HTTP/1.1 {d} {s}\r\n", .{ wire_status, code.phrase() });
 
         var saw_content_length = false;
         var saw_connection = false;
@@ -209,6 +219,10 @@ fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
     return true;
 }
 
+fn validStatus(code: u16) bool {
+    return code >= 100 and code <= 599;
+}
+
 test "header() rejects CRLF in value (response splitting)" {
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
@@ -230,4 +244,15 @@ test "header() rejects non-token header name" {
     try std.testing.expectError(HeaderError.InvalidHeader, res.header("x trace", "ok"));
     try std.testing.expectError(HeaderError.InvalidHeader, res.header("x:trace", "ok"));
     try std.testing.expectError(HeaderError.InvalidHeader, res.header("", "ok"));
+}
+
+test "status validation never emits invalid codes" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    var res = Response.init(arena_state.allocator());
+    res.setStatus(99);
+    try std.testing.expectEqual(@as(u16, 500), res.status_code);
+    try std.testing.expectError(error.InvalidStatus, res.setStatusChecked(600));
+    try res.setStatusChecked(299);
+    try std.testing.expectEqual(@as(u16, 299), res.status_code);
 }

@@ -11,7 +11,19 @@ pub const MultipartError = error{
     BoundaryTooLarge,
     InvalidFormat,
     InvalidHeader,
+    TooManyParts,
+    PartTooLarge,
+    BodyTooLarge,
     OutOfMemory,
+};
+
+pub const Limits = struct {
+    max_body_bytes: usize = 4 * 1024 * 1024,
+    max_parts: usize = 128,
+    max_headers_per_part: usize = 16,
+    max_header_bytes_per_part: usize = 16 * 1024,
+    max_part_bytes: usize = 4 * 1024 * 1024,
+    max_boundary_bytes: usize = 70,
 };
 
 pub const Part = struct {
@@ -76,8 +88,14 @@ pub fn boundaryFromContentType(content_type: []const u8) ?[]const u8 {
 /// `body`, so `body` must outlive the result (typically by sitting in the
 /// per-request arena alongside this call).
 pub fn parse(arena: std.mem.Allocator, body: []const u8, boundary: []const u8) MultipartError!Parsed {
+    return parseWithLimits(arena, body, boundary, .{});
+}
+
+pub fn parseWithLimits(arena: std.mem.Allocator, body: []const u8, boundary: []const u8, limits: Limits) MultipartError!Parsed {
     if (boundary.len == 0) return MultipartError.BoundaryMissing;
-    if (boundary.len > 200) return MultipartError.BoundaryTooLarge;
+    if (boundary.len > limits.max_boundary_bytes) return MultipartError.BoundaryTooLarge;
+    if (body.len > limits.max_body_bytes) return MultipartError.BodyTooLarge;
+    for (boundary) |ch| if (ch <= 0x20 or ch >= 0x7f) return MultipartError.InvalidFormat;
 
     // Build the "--boundary" delimiter once.
     var delim_buf: std.ArrayList(u8) = .empty;
@@ -85,11 +103,17 @@ pub fn parse(arena: std.mem.Allocator, body: []const u8, boundary: []const u8) M
     try delim_buf.appendSlice(arena, "--");
     try delim_buf.appendSlice(arena, boundary);
     const delim = delim_buf.items;
+    var framed_buf: std.ArrayList(u8) = .empty;
+    defer framed_buf.deinit(arena);
+    try framed_buf.appendSlice(arena, "\r\n");
+    try framed_buf.appendSlice(arena, delim);
+    const framed_delim = framed_buf.items;
 
     var parts: std.ArrayList(Part) = .empty;
 
     // Locate first delimiter. Anything before it is the "preamble" and we drop.
     var i = std.mem.indexOf(u8, body, delim) orelse return MultipartError.InvalidFormat;
+    if (i != 0 and (i < 2 or !std.mem.eql(u8, body[i - 2 .. i], "\r\n"))) return MultipartError.InvalidFormat;
     i += delim.len;
     while (true) {
         // After a delim we expect either CRLF (next part) or "--" then optional trailer (end).
@@ -104,6 +128,7 @@ pub fn parse(arena: std.mem.Allocator, body: []const u8, boundary: []const u8) M
         // Parse headers up to the empty CRLFCRLF.
         const headers_end = std.mem.indexOfPos(u8, body, i, "\r\n\r\n") orelse return MultipartError.InvalidFormat;
         const headers_slice = body[i..headers_end];
+        if (headers_slice.len > limits.max_header_bytes_per_part) return MultipartError.InvalidHeader;
         i = headers_end + 4;
 
         var name: ?[]const u8 = null;
@@ -111,10 +136,14 @@ pub fn parse(arena: std.mem.Allocator, body: []const u8, boundary: []const u8) M
         var ctype: ?[]const u8 = null;
 
         var header_iter = std.mem.splitSequence(u8, headers_slice, "\r\n");
+        var header_count: usize = 0;
         while (header_iter.next()) |hline| {
+            header_count += 1;
+            if (header_count > limits.max_headers_per_part) return MultipartError.InvalidHeader;
             const colon = std.mem.indexOfScalar(u8, hline, ':') orelse return MultipartError.InvalidHeader;
-            const hname = std.mem.trim(u8, hline[0..colon], " \t");
+            const hname = hline[0..colon];
             const hvalue = std.mem.trim(u8, hline[colon + 1 ..], " \t");
+            if (!validHeaderName(hname) or containsCtl(hvalue)) return MultipartError.InvalidHeader;
             if (eqlIgnoreCase(hname, "content-disposition")) {
                 parseContentDisposition(hvalue, &name, &filename);
             } else if (eqlIgnoreCase(hname, "content-type")) {
@@ -126,23 +155,35 @@ pub fn parse(arena: std.mem.Allocator, body: []const u8, boundary: []const u8) M
         // Find end of the part body (the next delim, preceded by CRLF).
         // Per RFC, the boundary is CRLF-prefixed in the body.
         const search_from = i;
-        const next_delim_pos = std.mem.indexOfPos(u8, body, search_from, delim) orelse return MultipartError.InvalidFormat;
-        // The CRLF immediately before the delim belongs to the framing, not the data.
-        var data_end = next_delim_pos;
-        if (data_end >= 2 and body[data_end - 2] == '\r' and body[data_end - 1] == '\n') {
-            data_end -= 2;
-        }
+        const framed_pos = std.mem.indexOfPos(u8, body, search_from, framed_delim) orelse return MultipartError.InvalidFormat;
+        const data_end = framed_pos;
         const data = body[search_from..data_end];
+        if (data.len > limits.max_part_bytes) return MultipartError.PartTooLarge;
+        if (parts.items.len >= limits.max_parts) return MultipartError.TooManyParts;
         try parts.append(arena, .{
             .name = name.?,
             .filename = filename,
             .content_type = ctype,
             .data = data,
         });
-        i = next_delim_pos + delim.len;
+        i = framed_pos + framed_delim.len;
     }
 
     return .{ .parts = try parts.toOwnedSlice(arena) };
+}
+
+fn validHeaderName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    for (name) |ch| switch (ch) {
+        '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~', '0'...'9', 'A'...'Z', 'a'...'z' => {},
+        else => return false,
+    };
+    return true;
+}
+
+fn containsCtl(value: []const u8) bool {
+    for (value) |ch| if (ch == '\r' or ch == '\n' or ch == 0 or (ch < 0x20 and ch != '\t') or ch == 0x7f) return true;
+    return false;
 }
 
 fn parseContentDisposition(value: []const u8, name_out: *?[]const u8, filename_out: *?[]const u8) void {
@@ -160,14 +201,12 @@ fn parseContentDisposition(value: []const u8, name_out: *?[]const u8, filename_o
             val_start += 1;
             const end = std.mem.indexOfScalarPos(u8, rest, val_start, '"') orelse break;
             const v = rest[val_start..end];
-            if (eqlIgnoreCase(key, "name")) name_out.* = v
-            else if (eqlIgnoreCase(key, "filename")) filename_out.* = v;
+            if (eqlIgnoreCase(key, "name")) name_out.* = v else if (eqlIgnoreCase(key, "filename")) filename_out.* = v;
             rest = if (end + 1 < rest.len) rest[end + 1 ..] else "";
         } else {
             const end = std.mem.indexOfScalarPos(u8, rest, val_start, ';') orelse rest.len;
             const v = std.mem.trim(u8, rest[val_start..end], " \t");
-            if (eqlIgnoreCase(key, "name")) name_out.* = v
-            else if (eqlIgnoreCase(key, "filename")) filename_out.* = v;
+            if (eqlIgnoreCase(key, "name")) name_out.* = v else if (eqlIgnoreCase(key, "filename")) filename_out.* = v;
             rest = if (end < rest.len) rest[end..] else "";
         }
     }
@@ -253,4 +292,13 @@ test "parse handles preamble" {
     const out = try parse(arena, body, "B");
     try std.testing.expectEqual(@as(usize, 1), out.parts.len);
     try std.testing.expectEqualStrings("v", out.parts[0].data);
+}
+
+test "multipart limits parts headers and total bytes" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const body = "--B\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\nv\r\n--B--\r\n";
+    try std.testing.expectError(MultipartError.BodyTooLarge, parseWithLimits(arena_state.allocator(), body, "B", .{ .max_body_bytes = 8 }));
+    try std.testing.expectError(MultipartError.TooManyParts, parseWithLimits(arena_state.allocator(), body, "B", .{ .max_parts = 0 }));
+    try std.testing.expectError(MultipartError.InvalidHeader, parseWithLimits(arena_state.allocator(), body, "B", .{ .max_headers_per_part = 0 }));
 }

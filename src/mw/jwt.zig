@@ -1,11 +1,17 @@
 const std = @import("std");
 const app_mod = @import("../app.zig");
 const jwt = @import("../auth/jwt.zig");
+const clock = @import("../observability/clock.zig");
 
 pub const Options = struct {
     secret: []const u8,
     /// Stash the JWT `sub` claim into `c.user_data` as a `*Claims`.
     stash_claims: bool = true,
+    /// Authentication tokens without an expiry are rejected by default.
+    require_exp: bool = true,
+    leeway_seconds: u32 = 0,
+    reject_future_iat: bool = false,
+    now_fn: *const fn () i64 = clock.unixSeconds,
 };
 
 pub const Claims = struct {
@@ -13,16 +19,16 @@ pub const Claims = struct {
 };
 
 pub fn jwtAuth(comptime State: type, comptime opts: Options) app_mod.Middleware(State) {
+    if (opts.secret.len < 32) @compileError("JWT HS256 secret must be at least 32 bytes");
     const Impl = struct {
         fn call(c: *app_mod.App(State).Ctx, next: app_mod.Next(State)) anyerror!void {
             const token = extract(c) orelse return unauthorized(c);
-            const now = std.time.timestamp();
-            _ = now;
-            // std.time.timestamp() was removed in 0.16; rely on jwt.verify with
-            // null to skip exp check, or use clock helper if user provides it.
-            // For now we set now_unix = null and rely on `exp` only when the
-            // user explicitly checks it in their handler.
-            const claims = jwt.verify(c.arena, opts.secret, token, null) catch return unauthorized(c);
+            const claims = jwt.verifyWithOptions(c.arena, opts.secret, token, .{
+                .now_unix = opts.now_fn(),
+                .require_exp = opts.require_exp,
+                .leeway_seconds = opts.leeway_seconds,
+                .reject_future_iat = opts.reject_future_iat,
+            }) catch return unauthorized(c);
             const sub = claims.sub orelse return unauthorized(c);
             if (opts.stash_claims) {
                 const slot = try c.arena.create(Claims);

@@ -48,11 +48,10 @@ pub const Options = struct {
 pub fn secureHeaders(comptime State: type, comptime opts: Options) app_mod.Middleware(State) {
     const Impl = struct {
         fn call(c: *app_mod.App(State).Ctx, next: app_mod.Next(State)) anyerror!void {
-            try next.run(c);
-            // Set headers post-handler so streaming handlers that already
-            // committed headers aren't disrupted. For buffered responses
-            // this is equivalent to setting them before next.run.
-            if (c.res.streaming != null) return;
+            // Apply before the handler so streaming responses cannot commit
+            // without the security policy. Applications that need different
+            // values should configure this middleware rather than append a
+            // second CSP/HSTS header in the handler.
             inline for (.{
                 .{ "strict-transport-security", opts.strict_transport_security },
                 .{ "content-security-policy", opts.content_security_policy },
@@ -67,6 +66,7 @@ pub fn secureHeaders(comptime State: type, comptime opts: Options) app_mod.Middl
                 const value = pair[1];
                 if (value) |v| try c.header(name, v);
             }
+            try next.run(c);
         }
     };
     return .{ .name = "secure_headers", .call = Impl.call };

@@ -8,6 +8,7 @@ const std = @import("std");
 const app_mod = @import("../app.zig");
 const cookie_mod = @import("../http/cookie.zig");
 const sync = @import("../sync.zig");
+const clock = @import("../observability/clock.zig");
 
 const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 const b64url = std.base64.url_safe_no_pad;
@@ -19,13 +20,16 @@ pub const Options = struct {
     cookie_name: []const u8 = "AKID",
     cookie_path: []const u8 = "/",
     cookie_max_age_secs: i64 = 60 * 60 * 24 * 7, // 1 week
-    cookie_secure: bool = false,
+    cookie_secure: bool = true,
     cookie_http_only: bool = true,
     cookie_same_site: cookie_mod.SameSite = .lax,
     /// If non-null, this Store is used for value persistence. A null store
     /// means "in-memory, per-process" (created lazily on first request via
     /// `MemoryStore`).
     store: ?*Store = null,
+    /// Refresh the signed server-enforced expiry on each valid request.
+    sliding_expiration: bool = false,
+    now_fn: *const fn () i64 = clock.unixSeconds,
 };
 
 // ----- Store interface -----
@@ -165,13 +169,21 @@ pub const Session = struct {
     sid: []const u8,
     store: Store,
     arena: std.mem.Allocator,
+    secret: []const u8,
+    cookie_name: []const u8,
+    cookie_path: []const u8,
+    cookie_max_age_secs: i64,
+    cookie_secure: bool,
+    cookie_http_only: bool,
+    cookie_same_site: cookie_mod.SameSite,
+    now_fn: *const fn () i64,
 
     /// Return value if present. Allocates in the request arena.
     pub fn get(self: Session, key: []const u8) !?[]u8 {
         var buf: std.ArrayList(u8) = .empty;
         const found = try self.store.get(self.sid, key, &buf, self.arena);
         if (!found) return null;
-        return buf.toOwnedSlice(self.arena);
+        return try buf.toOwnedSlice(self.arena);
     }
 
     pub fn set(self: Session, key: []const u8, value: []const u8) !void {
@@ -184,6 +196,22 @@ pub const Session = struct {
 
     pub fn destroy(self: Session) !void {
         try self.store.destroy(self.sid);
+    }
+
+    /// Rotate the SID after login or privilege changes. Existing data is
+    /// deliberately destroyed to prevent fixation across trust boundaries.
+    pub fn rotate(self: *Session, c: anytype) !void {
+        try self.store.destroy(self.sid);
+        self.sid = try mintSessionId(self.arena);
+        const expires_at = try std.math.add(i64, self.now_fn(), self.cookie_max_age_secs);
+        const signed = try sign(self.arena, self.secret, self.sid, expires_at);
+        try c.setCookie(self.cookie_name, signed, .{
+            .path = self.cookie_path,
+            .max_age_secs = self.cookie_max_age_secs,
+            .secure = self.cookie_secure,
+            .http_only = self.cookie_http_only,
+            .same_site = self.cookie_same_site,
+        });
     }
 };
 
@@ -228,15 +256,30 @@ pub fn session(comptime State: type, comptime opts: Options) app_mod.Middleware(
         }
 
         fn call(c: *app_mod.App(State).Ctx, next: app_mod.Next(State)) anyerror!void {
+            if (opts.secret.len < 32) return error.SessionSecretTooShort;
+            if (opts.cookie_max_age_secs <= 0) return error.InvalidSessionLifetime;
             const st = try ensureStore(c);
-            const sid_opt = readSid(c);
+            const sid_opt = readSid(c, st);
             const sid = if (sid_opt) |s| s else try mintSid(c);
             const sess = try c.arena.create(Session);
-            sess.* = .{ .sid = sid, .store = st, .arena = c.arena };
+            sess.* = .{
+                .sid = sid,
+                .store = st,
+                .arena = c.arena,
+                .secret = opts.secret,
+                .cookie_name = opts.cookie_name,
+                .cookie_path = opts.cookie_path,
+                .cookie_max_age_secs = opts.cookie_max_age_secs,
+                .cookie_secure = opts.cookie_secure,
+                .cookie_http_only = opts.cookie_http_only,
+                .cookie_same_site = opts.cookie_same_site,
+                .now_fn = opts.now_fn,
+            };
             c.user_data = @ptrCast(sess);
 
-            if (sid_opt == null) {
-                const signed = try sign(c.arena, opts.secret, sid);
+            if (sid_opt == null or opts.sliding_expiration) {
+                const expires_at = std.math.add(i64, opts.now_fn(), opts.cookie_max_age_secs) catch return error.InvalidSessionLifetime;
+                const signed = try sign(c.arena, opts.secret, sid, expires_at);
                 try c.setCookie(opts.cookie_name, signed, .{
                     .path = opts.cookie_path,
                     .max_age_secs = opts.cookie_max_age_secs,
@@ -248,26 +291,34 @@ pub fn session(comptime State: type, comptime opts: Options) app_mod.Middleware(
             return next.run(c);
         }
 
-        fn readSid(c: *app_mod.App(State).Ctx) ?[]const u8 {
+        fn readSid(c: *app_mod.App(State).Ctx, st: Store) ?[]const u8 {
             const raw = c.req.cookie(opts.cookie_name) orelse return null;
-            return verify(c.arena, opts.secret, raw) catch null;
+            const verified = verify(c.arena, opts.secret, raw, opts.now_fn()) catch |err| {
+                if (err == error.ExpiredCookie) {
+                    if (untrustedSid(raw)) |sid| st.destroy(sid) catch {};
+                }
+                return null;
+            };
+            return verified.sid;
         }
 
         fn mintSid(c: *app_mod.App(State).Ctx) ![]u8 {
-            var raw: [16]u8 = undefined;
-            // Reuse the same entropy path as auth/bcrypt (libc arc4random_buf).
-            // We just call libc directly to avoid pulling that file in.
-            const Rand = struct {
-                extern "c" fn arc4random_buf(buf: [*]u8, nbytes: usize) void;
-            };
-            Rand.arc4random_buf(&raw, raw.len);
-            const enc_len = b64url.Encoder.calcSize(raw.len);
-            const out = try c.arena.alloc(u8, enc_len);
-            _ = b64url.Encoder.encode(out, &raw);
-            return out;
+            return mintSessionId(c.arena);
         }
     };
     return .{ .name = "session", .call = Impl.call };
+}
+
+fn mintSessionId(arena: std.mem.Allocator) ![]u8 {
+    var raw: [16]u8 = undefined;
+    const Rand = struct {
+        extern "c" fn arc4random_buf(buf: [*]u8, nbytes: usize) void;
+    };
+    Rand.arc4random_buf(&raw, raw.len);
+    const enc_len = b64url.Encoder.calcSize(raw.len);
+    const out = try arena.alloc(u8, enc_len);
+    _ = b64url.Encoder.encode(out, &raw);
+    return out;
 }
 
 pub fn currentSession(comptime State: type, c: *app_mod.App(State).Ctx) ?*Session {
@@ -277,49 +328,75 @@ pub fn currentSession(comptime State: type, c: *app_mod.App(State).Ctx) ?*Sessio
 
 // ----- Cookie signing -----
 
-fn sign(arena: std.mem.Allocator, secret: []const u8, sid: []const u8) ![]u8 {
+const VerifiedCookie = struct { sid: []const u8, expires_at: i64 };
+
+fn sign(arena: std.mem.Allocator, secret: []const u8, sid: []const u8, expires_at: i64) ![]u8 {
+    const payload = try std.fmt.allocPrint(arena, "{s}.{d}", .{ sid, expires_at });
     var mac: [HmacSha256.mac_length]u8 = undefined;
-    HmacSha256.create(&mac, sid, secret);
+    HmacSha256.create(&mac, payload, secret);
     const enc_len = b64url.Encoder.calcSize(mac.len);
-    var out = try arena.alloc(u8, sid.len + 1 + enc_len);
-    @memcpy(out[0..sid.len], sid);
-    out[sid.len] = '.';
-    _ = b64url.Encoder.encode(out[sid.len + 1 ..], &mac);
+    var out = try arena.alloc(u8, payload.len + 1 + enc_len);
+    @memcpy(out[0..payload.len], payload);
+    out[payload.len] = '.';
+    _ = b64url.Encoder.encode(out[payload.len + 1 ..], &mac);
     return out;
 }
 
-fn verify(arena: std.mem.Allocator, secret: []const u8, signed: []const u8) ![]u8 {
-    const dot = std.mem.indexOfScalar(u8, signed, '.') orelse return error.BadCookie;
-    const sid_part = signed[0..dot];
-    const mac_b64 = signed[dot + 1 ..];
+fn verify(arena: std.mem.Allocator, secret: []const u8, signed: []const u8, now: i64) !VerifiedCookie {
+    const dot1 = std.mem.indexOfScalar(u8, signed, '.') orelse return error.BadCookie;
+    const dot2 = std.mem.indexOfScalarPos(u8, signed, dot1 + 1, '.') orelse return error.BadCookie;
+    if (std.mem.indexOfScalarPos(u8, signed, dot2 + 1, '.') != null) return error.BadCookie;
+    const sid_part = signed[0..dot1];
+    if (sid_part.len == 0 or sid_part.len > 128) return error.BadCookie;
+    const expires_at = std.fmt.parseInt(i64, signed[dot1 + 1 .. dot2], 10) catch return error.BadCookie;
+    const mac_b64 = signed[dot2 + 1 ..];
 
     var expected: [HmacSha256.mac_length]u8 = undefined;
-    HmacSha256.create(&expected, sid_part, secret);
+    HmacSha256.create(&expected, signed[0..dot2], secret);
 
     var got: [HmacSha256.mac_length]u8 = undefined;
+    if (mac_b64.len != b64url.Encoder.calcSize(got.len)) return error.BadCookie;
     b64url.Decoder.decode(&got, mac_b64) catch return error.BadCookie;
     if (!std.crypto.timing_safe.eql([HmacSha256.mac_length]u8, got, expected)) {
         return error.BadCookie;
     }
-    return arena.dupe(u8, sid_part);
+    if (now >= expires_at) return error.ExpiredCookie;
+    return .{ .sid = try arena.dupe(u8, sid_part), .expires_at = expires_at };
+}
+
+fn untrustedSid(signed: []const u8) ?[]const u8 {
+    const dot = std.mem.indexOfScalar(u8, signed, '.') orelse return null;
+    const sid = signed[0..dot];
+    if (sid.len == 0 or sid.len > 128) return null;
+    return sid;
 }
 
 test "sign/verify roundtrip" {
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const signed = try sign(arena, "s3cr3t", "abc123");
-    const back = try verify(arena, "s3cr3t", signed);
-    try std.testing.expectEqualStrings("abc123", back);
+    const signed = try sign(arena, "s3cr3t", "abc123", 200);
+    const back = try verify(arena, "s3cr3t", signed, 100);
+    try std.testing.expectEqualStrings("abc123", back.sid);
+    try std.testing.expectError(error.ExpiredCookie, verify(arena, "s3cr3t", signed, 200));
 }
 
 test "verify rejects tampered signature" {
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var signed = try sign(arena, "s3cr3t", "abc123");
+    var signed = try sign(arena, "s3cr3t", "abc123", 200);
     signed[signed.len - 1] ^= 0x01;
-    try std.testing.expectError(error.BadCookie, verify(arena, "s3cr3t", signed));
+    try std.testing.expectError(error.BadCookie, verify(arena, "s3cr3t", signed, 100));
+}
+
+test "signed expiry cannot be forged" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var signed = try sign(arena, "s3cr3t", "abc123", 200);
+    signed[7] = '9';
+    try std.testing.expectError(error.BadCookie, verify(arena, "s3cr3t", signed, 100));
 }
 
 test "MemoryStore get/set/delete" {

@@ -20,7 +20,7 @@ pub const Options = struct {
     cookie_name: []const u8 = "akamata_csrf",
     header_name: []const u8 = "x-csrf-token",
     cookie_path: []const u8 = "/",
-    cookie_secure: bool = false,
+    cookie_secure: bool = true,
     cookie_same_site: cookie_mod.SameSite = .lax,
     /// Methods that bypass token verification (and on which a fresh token is
     /// minted if the cookie is missing).
@@ -84,7 +84,9 @@ pub fn csrf(comptime State: type, comptime opts: Options) app_mod.Middleware(Sta
 
         fn mintToken(arena: std.mem.Allocator) ![]u8 {
             var raw: [24]u8 = undefined;
-            const Rand = struct { extern "c" fn arc4random_buf(buf: [*]u8, n: usize) void; };
+            const Rand = struct {
+                extern "c" fn arc4random_buf(buf: [*]u8, n: usize) void;
+            };
             Rand.arc4random_buf(&raw, raw.len);
             const enc_len = b64url.Encoder.calcSize(raw.len);
             const out = try arena.alloc(u8, enc_len);

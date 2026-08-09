@@ -11,6 +11,7 @@ pub const JwtError = error{
     InvalidAlgorithm,
     Expired,
     NotYetValid,
+    MissingExpiration,
     OutOfMemory,
 };
 
@@ -70,6 +71,14 @@ pub const Claims = struct {
     sub: ?[]const u8 = null,
     exp: ?i64 = null,
     iat: ?i64 = null,
+    nbf: ?i64 = null,
+};
+
+pub const VerifyOptions = struct {
+    now_unix: ?i64 = null,
+    require_exp: bool = false,
+    leeway_seconds: u32 = 0,
+    reject_future_iat: bool = false,
 };
 
 /// Verify HS256 JWT and return claims if valid.
@@ -81,6 +90,17 @@ pub fn verify(
     secret: []const u8,
     token: []const u8,
     now_unix: ?i64,
+) JwtError!Claims {
+    return verifyWithOptions(arena, secret, token, .{ .now_unix = now_unix });
+}
+
+/// Policy-aware verifier used by authentication middleware. The legacy
+/// `verify` entry point remains source-compatible and does not require `exp`.
+pub fn verifyWithOptions(
+    arena: std.mem.Allocator,
+    secret: []const u8,
+    token: []const u8,
+    options: VerifyOptions,
 ) JwtError!Claims {
     const dot1 = std.mem.indexOfScalar(u8, token, '.') orelse return JwtError.InvalidFormat;
     const dot2 = std.mem.indexOfScalarPos(u8, token, dot1 + 1, '.') orelse return JwtError.InvalidFormat;
@@ -129,7 +149,7 @@ pub fn verify(
     var claims: Claims = .{ .payload_json = payload_json };
 
     // Best-effort parse of standard fields. Use Parsed.deinit-free leaky variant within arena.
-    const Std = struct { sub: ?[]const u8 = null, exp: ?i64 = null, iat: ?i64 = null };
+    const Std = struct { sub: ?[]const u8 = null, exp: ?i64 = null, iat: ?i64 = null, nbf: ?i64 = null };
     const parsed = std.json.parseFromSliceLeaky(Std, arena, payload_json, .{
         .ignore_unknown_fields = true,
         .duplicate_field_behavior = .use_last,
@@ -137,11 +157,21 @@ pub fn verify(
     claims.sub = parsed.sub;
     claims.exp = parsed.exp;
     claims.iat = parsed.iat;
+    claims.nbf = parsed.nbf;
 
-    if (now_unix) |now| {
+    if (options.require_exp and claims.exp == null) return JwtError.MissingExpiration;
+    if (options.now_unix) |now| {
+        const leeway: i64 = @intCast(options.leeway_seconds);
         if (claims.exp) |e| {
-            if (now >= e) return JwtError.Expired;
+            // JWT expiry is exclusive. Leeway deliberately extends validity.
+            if (now >= std.math.add(i64, e, leeway) catch std.math.maxInt(i64)) return JwtError.Expired;
         }
+        if (claims.nbf) |n| {
+            if (now < std.math.sub(i64, n, leeway) catch std.math.minInt(i64)) return JwtError.NotYetValid;
+        }
+        if (options.reject_future_iat) if (claims.iat) |issued| {
+            if (now < std.math.sub(i64, issued, leeway) catch std.math.minInt(i64)) return JwtError.NotYetValid;
+        };
     }
 
     return claims;
@@ -204,4 +234,17 @@ test "JWT HS256 detects expiration" {
     const Payload = struct { sub: []const u8, exp: i64 };
     const tok = try sign(arena, "s", Payload{ .sub = "u", .exp = 100 });
     try std.testing.expectError(JwtError.Expired, verify(arena, "s", tok, 200));
+}
+
+test "JWT policy requires exp and validates nbf boundaries" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const no_exp = try sign(arena, "s", .{ .sub = "u" });
+    try std.testing.expectError(JwtError.MissingExpiration, verifyWithOptions(arena, "s", no_exp, .{ .now_unix = 100, .require_exp = true }));
+
+    const boundary = try sign(arena, "s", .{ .sub = "u", .exp = 100, .nbf = 90 });
+    try std.testing.expectError(JwtError.Expired, verifyWithOptions(arena, "s", boundary, .{ .now_unix = 100, .require_exp = true }));
+    try std.testing.expectError(JwtError.NotYetValid, verifyWithOptions(arena, "s", boundary, .{ .now_unix = 89, .require_exp = true }));
+    _ = try verifyWithOptions(arena, "s", boundary, .{ .now_unix = 90, .require_exp = true });
 }
