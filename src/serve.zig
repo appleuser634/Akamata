@@ -434,17 +434,17 @@ fn handleConnection(comptime State: type, app: *app_mod.App(State), io: Io, stre
 const runtime_workers = if (build_options.backend == .workers) @import("runtime/workers.zig") else struct {};
 
 fn serveWorkers(comptime State: type, app: *app_mod.App(State), opts: app_mod.ServeOptions) !void {
-    _ = opts;
     if (is_native) return;
     const Wrap = struct {
         var app_ref: *app_mod.App(State) = undefined;
+        var parse_limits: parser.Limits = .{};
         fn dispatch(request_bytes: []const u8, out: *std.ArrayList(u8)) anyerror!void {
             const gpa = std.heap.wasm_allocator;
             var arena_state: std.heap.ArenaAllocator = .init(gpa);
             defer arena_state.deinit();
             const arena = arena_state.allocator();
 
-            const parsed = try parser.parseRequest(arena, request_bytes, .{});
+            const parsed = try parser.parseRequest(arena, request_bytes, parse_limits);
             var req_local = parsed.request;
             var res: res_mod.Response = .init(arena);
             res.keep_alive = false;
@@ -457,6 +457,7 @@ fn serveWorkers(comptime State: type, app: *app_mod.App(State), opts: app_mod.Se
         }
     };
     Wrap.app_ref = app;
+    Wrap.parse_limits = opts.parse_limits;
     runtime_workers.setDispatch(Wrap.dispatch);
     // Hand control back; the JS host invokes `handle_fetch` per request.
 }

@@ -31,9 +31,12 @@ pub fn parseRequest(
     bytes: []const u8,
     limits: Limits,
 ) ParseError!struct { request: req.Request, consumed: usize } {
-    if (bytes.len > limits.max_request_bytes) return ParseError.HeadersTooLarge;
-
     const head_end = std.mem.indexOf(u8, bytes, "\r\n\r\n") orelse return ParseError.Incomplete;
+    // `max_request_bytes` historically names the header-section limit.  Do
+    // not apply it to the complete request buffer: Workers hands this parser
+    // headers and the full body in one slice, so doing so rejects ordinary
+    // uploads as `HeadersTooLarge` once their body pushes the slice over 64 KiB.
+    if (head_end > limits.max_request_bytes) return ParseError.HeadersTooLarge;
     const head = bytes[0..head_end];
     const body_start = head_end + 4;
 
@@ -212,4 +215,16 @@ test "rejects unsupported Transfer-Encoding (gzip,chunked)" {
     const arena = arena_state.allocator();
     const bytes = "POST / HTTP/1.1\r\nhost: a\r\ntransfer-encoding: gzip, chunked\r\n\r\n0\r\n\r\n";
     try std.testing.expectError(ParseError.UnsupportedTransferEncoding, parseRequest(arena, bytes, .{}));
+}
+
+test "header limit does not include request body" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const body = "x" ** (65 * 1024);
+    const request = "POST /upload HTTP/1.1\r\nhost: example.com\r\ncontent-length: 66560\r\n\r\n" ++ body;
+    const parsed = try parseRequest(arena, request, .{});
+
+    try std.testing.expectEqual(@as(usize, body.len), parsed.request.body.len);
 }

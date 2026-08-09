@@ -168,6 +168,10 @@ pub const ServeOptions = struct {
     address: ?[]const u8 = null,
     port: u16 = 8080,
     accept_thread_count: usize = 4,
+    /// HTTP parsing limits used by the Workers/WASM bridge. Increase
+    /// `max_body_bytes` for endpoints that intentionally accept larger
+    /// request bodies, such as image uploads.
+    parse_limits: parser.Limits = .{},
     /// HTTP runtime selection. `.threaded` is the current production
     /// model; `.reactor` is the new kqueue-based prototype (BSD-family
     /// kernels only). See `docs/perf-reactor-design.md`.
