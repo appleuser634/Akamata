@@ -1025,6 +1025,11 @@ test "scaffold dependency is remote, pinned, and locally overridable" {
     try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "zig build --fork=") != null);
 }
 
+test "scaffold dependency tracks the current stable release" {
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.0.1.tar.gz") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "akamata-0.0.1-uJIoIyrDpgGW_zcWhJ23IXuXNGR1Qz9T7-jhI0sKk3gg") != null);
+}
+
 test "Workers scaffold guards zero-length wasm memory access" {
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "l === 0 ? new Uint8Array(0)") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "if (b.length > 0) new Uint8Array(memory.buffer") != null);
