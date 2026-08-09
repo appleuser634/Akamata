@@ -12,9 +12,12 @@ let jspi = false;
 const d1stmts = new Map();
 let nextStmtId = 1;
 
-function readBytes(p, l) { return new Uint8Array(memory.buffer, p, l); }
+// A zero-length wasm slice may legally carry address 0 or an address at the
+// end of memory. Constructing a Uint8Array at that address is not portable,
+// so never touch wasm memory when there are no bytes to read or write.
+function readBytes(p, l) { return l === 0 ? new Uint8Array(0) : new Uint8Array(memory.buffer, p, l); }
 function readStr(p, l) { return new TextDecoder().decode(readBytes(p, l)); }
-function writeBytes(p, b) { new Uint8Array(memory.buffer, p, b.length).set(b); }
+function writeBytes(p, b) { if (b.length > 0) new Uint8Array(memory.buffer, p, b.length).set(b); }
 
 function detectJspi() {
   jspi = typeof WebAssembly.Suspending === "function" &&
@@ -44,6 +47,8 @@ async function init(env) {
       writeBytes(p, b);
     },
     akamata_unix_seconds() { return BigInt(Math.floor(Date.now() / 1000)); },
+    akamata_unix_micros() { return BigInt(Date.now()) * 1000n; },
+    akamata_monotonic_ns() { return BigInt(Math.floor(performance.now() * 1_000_000)); },
   };
 
   const d1 = env.DB;

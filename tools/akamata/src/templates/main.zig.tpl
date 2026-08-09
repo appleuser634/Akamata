@@ -26,7 +26,7 @@ pub const Note = struct {
         },
         .validates = .{
             .title = .{ am.model.rule.required, am.model.rule.max_len(120) },
-            .body  = .{ am.model.rule.required, am.model.rule.max_len(4096) },
+            .body = .{ am.model.rule.required, am.model.rule.max_len(4096) },
         },
     };
 };
@@ -111,6 +111,7 @@ pub fn buildState(alloc: std.mem.Allocator) !State {
     if (am.backend == .native) am.env.loadDotEnv(alloc, ".env") catch {};
     const url = am.env.get(alloc, "DATABASE_URL") orelse
         try alloc.dupe(u8, if (am.backend == .native) "file:{{NAME}}.db" else "d1:DB");
+    defer alloc.free(url);
     const database = try am.db.open(alloc, url);
     if (am.backend == .native) {
         var arena_state: std.heap.ArenaAllocator = .init(alloc);
@@ -126,13 +127,67 @@ pub fn buildState(alloc: std.mem.Allocator) !State {
     return .{ .db = database };
 }
 
-pub fn main() !void {
+fn migrateUp(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    var dir: []const u8 = "migrations";
+    var target: ?[]const u8 = null;
+    for (args) |raw| {
+        const arg = std.mem.sliceTo(raw, 0);
+        if (std.mem.startsWith(u8, arg, "--dir=")) dir = arg[6..] else if (std.mem.startsWith(u8, arg, "--target=")) target = arg[9..] else {
+            std.debug.print("migrate-up: unknown option `{s}`\n", .{arg});
+            return error.InvalidMigrationOption;
+        }
+    }
+
+    am.env.loadDotEnv(alloc, ".env") catch {};
+    const url = am.env.get(alloc, "DATABASE_URL") orelse try alloc.dupe(u8, "file:{{NAME}}.db");
+    defer alloc.free(url);
+
+    var arena_state: std.heap.ArenaAllocator = .init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const database = try am.db.open(alloc, url);
+    defer database.close();
+
+    const all = am.model.migrate.loadMigrationsFromDir(arena, dir) catch |err| {
+        if (err == error.MigrationsDirNotFound) {
+            std.debug.print("migrate-up: directory `{s}` does not exist\n", .{dir});
+        }
+        return err;
+    };
+    const migrator: am.model.migrate.Migrator = .{ .arena = arena, .db = database };
+    const pending = try migrator.pending(all);
+
+    var selected: std.ArrayList(am.model.migrate.Migration) = .empty;
+    for (pending) |migration| {
+        if (target) |limit| {
+            if (std.mem.order(u8, migration.version, limit) == .gt) continue;
+        }
+        try selected.append(arena, migration);
+    }
+    if (selected.items.len == 0) {
+        std.log.info("migrate-up: nothing pending ({d} migration file(s))", .{all.len});
+        return;
+    }
+    for (selected.items) |migration| std.log.info("applying {s}", .{migration.name});
+    try migrator.applyAll(selected.items);
+    std.log.info("applied {d} migration(s)", .{selected.items.len});
+}
+
+pub fn main(init: std.process.Init) !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
+    var args_arena: std.heap.ArenaAllocator = .init(alloc);
+    defer args_arena.deinit();
+    const args = try init.minimal.args.toSlice(args_arena.allocator());
+    if (args.len >= 2 and std.mem.eql(u8, std.mem.sliceTo(args[1], 0), "migrate-up")) {
+        return migrateUp(alloc, args[2..]);
+    }
+
     var app = am.App(State).init(alloc, try buildState(alloc));
     defer app.deinit();
+    defer app.state().db.close();
     try registerRoutes(&app);
 
     const port_env = am.env.get(alloc, "PORT");

@@ -39,6 +39,14 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
     const cmd = args[1];
+    if (std.mem.eql(u8, cmd, "help")) {
+        if (args.len >= 3) try commandUsage(std.mem.sliceTo(args[2], 0)) else try usage();
+        return;
+    }
+    if (args.len >= 3 and isHelpArg(std.mem.sliceTo(args[2], 0))) {
+        try commandUsage(cmd);
+        return;
+    }
     if (std.mem.eql(u8, cmd, "init")) {
         try cmdInit(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "build")) {
@@ -53,7 +61,7 @@ pub fn main(init: std.process.Init) !void {
         try cmdDb(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "migrate")) {
         try cmdMigrate(alloc, args[2..]);
-    } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "-h")) {
+    } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "-h")) {
         try usage();
     } else if (std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "-v") or std.mem.eql(u8, cmd, "version")) {
         std.debug.print("akamata {s}\n", .{VERSION});
@@ -69,6 +77,10 @@ pub fn main(init: std.process.Init) !void {
 }
 
 const VERSION = "0.3.0";
+
+fn isHelpArg(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
+}
 
 const known_commands = [_][]const u8{
     "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "help", "version",
@@ -158,6 +170,71 @@ fn usage() !void {
     std.debug.print("{s}", .{msg});
 }
 
+fn commandUsage(command: []const u8) !void {
+    const msg = if (std.mem.eql(u8, command, "init"))
+        \\Usage: akamata init <name> [options]
+        \\
+        \\Scaffold a new Akamata application.
+        \\
+        \\Options:
+        \\  --target=native|workers|containers|both  Generated deployment targets (default: native)
+        \\  -h, --help                               Show this help
+        \\
+    else if (std.mem.eql(u8, command, "build"))
+        \\Usage: akamata build [options]
+        \\
+        \\Build the current application.
+        \\
+        \\Options:
+        \\  --workers                 Build the Workers wasm target
+        \\  --containers              Build a static Linux container target
+        \\  --optimize=MODE           Zig optimize mode
+        \\  -h, --help                Show this help
+        \\
+    else if (std.mem.eql(u8, command, "deploy"))
+        \\Usage: akamata deploy [options]
+        \\
+        \\Build and deploy the current application.
+        \\
+        \\Options:
+        \\  --workers                 Deploy to Cloudflare Workers (default)
+        \\  --containers              Build the Cloudflare Containers image
+        \\  --config=PATH             Wrangler config path
+        \\  --migrate=SQL             Apply a SQL file to remote D1 before deploy
+        \\  --optimize=MODE           Workers optimize mode
+        \\  -h, --help                Show this help without deploying
+        \\
+    else if (std.mem.eql(u8, command, "db"))
+        \\Usage: akamata db <sql-file> [options]
+        \\
+        \\Apply a SQL file to the configured D1 database.
+        \\
+        \\Options:
+        \\  --local                   Apply to local D1 (default)
+        \\  --remote                  Apply to remote D1
+        \\  --config=PATH             Wrangler config path
+        \\  -h, --help                Show this help
+        \\
+    else if (std.mem.eql(u8, command, "migrate"))
+        \\Usage: akamata migrate <generate|up> [options]
+        \\
+        \\Commands:
+        \\  generate <name>           Create a timestamped SQL migration
+        \\  up                        Apply pending migrations through the generated app runner
+        \\
+        \\Options:
+        \\  --dir=PATH                Migration directory (default: migrations)
+        \\  --target=VERSION          Stop after VERSION when applying
+        \\  -h, --help                Show this help
+        \\
+    else {
+        std.debug.print("akamata: unknown help topic `{s}`\n\n", .{command});
+        try usage();
+        return;
+    };
+    std.debug.print("{s}", .{msg});
+}
+
 // ---- init ----
 
 const InitOpts = struct {
@@ -179,11 +256,7 @@ fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
         const a = std.mem.sliceTo(raw, 0);
         if (std.mem.startsWith(u8, a, "--target=")) {
             const v = a[9..];
-            if (std.mem.eql(u8, v, "native")) opts.target = .native
-            else if (std.mem.eql(u8, v, "workers")) opts.target = .workers
-            else if (std.mem.eql(u8, v, "containers")) opts.target = .containers
-            else if (std.mem.eql(u8, v, "both")) opts.target = .both
-            else {
+            if (std.mem.eql(u8, v, "native")) opts.target = .native else if (std.mem.eql(u8, v, "workers")) opts.target = .workers else if (std.mem.eql(u8, v, "containers")) opts.target = .containers else if (std.mem.eql(u8, v, "both")) opts.target = .both else {
                 std.debug.print("unknown --target value: {s}\n", .{v});
                 return error.UsageError;
             }
@@ -231,6 +304,8 @@ fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
             .{ .key = "{{NAME}}", .val = opts.name },
         });
     }
+    try makeDirRecursive(try std.fmt.allocPrint(alloc, "{s}/migrations", .{opts.name}));
+    try renderFile(alloc, opts.name, "migrations/.gitkeep", "", &.{});
 
     std.debug.print(
         \\
@@ -560,10 +635,7 @@ fn cmdDeploy(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     var migrate_path: ?[]const u8 = null;
     for (args) |raw| {
         const a = std.mem.sliceTo(raw, 0);
-        if (std.mem.eql(u8, a, "--workers")) target_workers = true
-        else if (std.mem.eql(u8, a, "--containers")) target_containers = true
-        else if (std.mem.startsWith(u8, a, "--config=")) config_path = a[9..]
-        else if (std.mem.startsWith(u8, a, "--migrate=")) migrate_path = a[10..];
+        if (std.mem.eql(u8, a, "--workers")) target_workers = true else if (std.mem.eql(u8, a, "--containers")) target_containers = true else if (std.mem.startsWith(u8, a, "--config=")) config_path = a[9..] else if (std.mem.startsWith(u8, a, "--migrate=")) migrate_path = a[10..];
     }
     if (!target_workers and !target_containers) target_workers = true;
 
@@ -751,9 +823,7 @@ fn readD1FromConfig(alloc: std.mem.Allocator, path: []const u8) !?D1Info {
         if (v.len >= 2 and (v[0] == '"' or v[0] == '\'') and v[v.len - 1] == v[0]) {
             v = v[1 .. v.len - 1];
         }
-        if (std.mem.eql(u8, k, "binding")) binding = v
-        else if (std.mem.eql(u8, k, "database_name")) name = v
-        else if (std.mem.eql(u8, k, "database_id")) id = v;
+        if (std.mem.eql(u8, k, "binding")) binding = v else if (std.mem.eql(u8, k, "database_name")) name = v else if (std.mem.eql(u8, k, "database_id")) id = v;
     }
     if (binding == null or name == null or id == null) return null;
     return .{
@@ -939,6 +1009,46 @@ test "suggestCommand: 'migrtae' -> 'migrate'" {
 
 test "suggestCommand: completely different input returns null" {
     try std.testing.expect(suggestCommand("xyz") == null);
+}
+
+test "help flags are recognized before command execution" {
+    try std.testing.expect(isHelpArg("--help"));
+    try std.testing.expect(isHelpArg("-h"));
+    try std.testing.expect(!isHelpArg("--workers"));
+}
+
+test "scaffold dependency is remote, pinned, and locally overridable" {
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, ".url = \"https://github.com/appleuser634/Akamata/archive/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, ".hash = \"akamata-") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "../Akamata") == null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "zig build --fork=") != null);
+}
+
+test "Workers scaffold guards zero-length wasm memory access" {
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "l === 0 ? new Uint8Array(0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "if (b.length > 0) new Uint8Array(memory.buffer") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "new Uint8Array(memory.buffer, p, l)") != null);
+}
+
+test "Workers scaffold includes current observability clock imports" {
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "akamata_monotonic_ns") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "performance.now()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "akamata_unix_micros") != null);
+}
+
+test "generated app exposes the migration runner expected by the CLI" {
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_main, "\"migrate-up\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_main, "am.model.migrate.Migrator") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_main, "loadMigrationsFromDir") != null);
+}
+
+test "generated migration comments do not contain statement separators" {
+    var lines = std.mem.splitScalar(u8, migration_file_template, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "--")) {
+            try std.testing.expect(std.mem.indexOfScalar(u8, line, ';') == null);
+        }
+    }
 }
 
 test "extractUuid finds the UUID in wrangler create output" {
@@ -1145,11 +1255,23 @@ fn cmdMigrate(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
         return error.UsageError;
     }
     const sub = std.mem.sliceTo(args[0], 0);
+    if (isHelpArg(sub)) return commandUsage("migrate");
+    if (args.len >= 2 and isHelpArg(std.mem.sliceTo(args[1], 0))) return commandUsage("migrate");
     if (std.mem.eql(u8, sub, "generate")) return migrateGenerate(alloc, args[1..]);
     if (std.mem.eql(u8, sub, "up")) return migrateUp(alloc, args[1..]);
     std.debug.print("unknown migrate subcommand: {s}\n", .{sub});
     return error.UsageError;
 }
+
+const migration_file_template =
+    \\-- akamata migration
+    \\-- Generated: {s}
+    \\-- Name: {s}
+    \\
+    \\-- Write SQL statements here, separated by SQL terminators. Statements run in the
+    \\-- order they appear. Recommend each is idempotent (IF NOT EXISTS).
+    \\
+;
 
 fn migrateGenerate(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     if (args.len == 0) {
@@ -1170,16 +1292,7 @@ fn migrateGenerate(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     const arena = arena_state.allocator();
     const ts = nowVersion(arena);
     const fname = try std.fmt.allocPrint(arena, "{s}/{s}_{s}.sql", .{ dir, ts, name });
-    const template =
-        \\-- akamata migration
-        \\-- Generated: {s}
-        \\-- Name: {s}
-        \\
-        \\-- Write SQL statements here, ; to separate. Statements run in the
-        \\-- order they appear. Recommend each is idempotent (IF NOT EXISTS).
-        \\
-    ;
-    const body = try std.fmt.allocPrint(arena, template, .{ ts, name });
+    const body = try std.fmt.allocPrint(arena, migration_file_template, .{ ts, name });
     try writeFileBytes(fname, body);
     std.debug.print("created {s}\n", .{fname});
 }
@@ -1217,11 +1330,33 @@ fn nowVersion(arena: std.mem.Allocator) []const u8 {
 /// `migrate-up` subcommand (cargo-style). The app sets up its DB url, loads
 /// the migration directory, and runs `am.model.migrate.Migrator.applyAll`.
 fn migrateUp(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    var dir: []const u8 = "migrations";
+    for (args) |raw| {
+        const arg = std.mem.sliceTo(raw, 0);
+        if (std.mem.startsWith(u8, arg, "--dir=")) dir = arg[6..];
+    }
+    if (!directoryExists(dir)) {
+        std.debug.print("migrate: {s}/ does not exist; nothing to apply. Create one with `akamata migrate generate <name>`.\n", .{dir});
+        return;
+    }
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(alloc);
     try argv.appendSlice(alloc, &.{ "zig", "build", "run", "--", "migrate-up" });
     for (args) |raw| try argv.append(alloc, std.mem.sliceTo(raw, 0));
-    try runChild(alloc, argv.items, null);
+    runChild(alloc, argv.items, null) catch |err| {
+        std.debug.print("migrate: application runner failed. Ensure `zig build run -- migrate-up` works in this project and DATABASE_URL is valid.\n", .{});
+        return err;
+    };
+}
+
+fn directoryExists(path: []const u8) bool {
+    var buf: [4096]u8 = undefined;
+    if (path.len >= buf.len) return false;
+    @memcpy(buf[0..path.len], path);
+    buf[path.len] = 0;
+    const dir = opendir(@ptrCast(&buf)) orelse return false;
+    _ = closedir(dir);
+    return true;
 }
 
 // ---- db ----
@@ -1236,9 +1371,7 @@ fn cmdDb(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     var config_path: ?[]const u8 = null;
     for (args[1..]) |raw| {
         const a = std.mem.sliceTo(raw, 0);
-        if (std.mem.eql(u8, a, "--remote")) mode = "--remote"
-        else if (std.mem.eql(u8, a, "--local")) mode = "--local"
-        else if (std.mem.startsWith(u8, a, "--config=")) config_path = a[9..];
+        if (std.mem.eql(u8, a, "--remote")) mode = "--remote" else if (std.mem.eql(u8, a, "--local")) mode = "--local" else if (std.mem.startsWith(u8, a, "--config=")) config_path = a[9..];
     }
 
     // Pick the D1 name from the wrangler.toml (so we don't hard-code "DB").

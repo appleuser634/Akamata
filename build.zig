@@ -124,6 +124,12 @@ pub fn build(b: *std.Build) void {
     const install_cli = b.addInstallArtifact(cli_exe, .{});
     b.step("cli", "build the akamata CLI binary").dependOn(&install_cli.step);
 
+    // End-to-end scaffold regression test. Kept as an explicit step because
+    // the default scaffold resolves its commit-pinned dependency over HTTPS.
+    const scaffold_smoke = b.addSystemCommand(&.{ "sh", "tests/scaffold_smoke.sh" });
+    scaffold_smoke.addArtifactArg(cli_exe);
+    b.step("scaffold-test", "generate and build a portable scaffold").dependOn(&scaffold_smoke.step);
+
     // === Tests ===
     const test_step = b.step("test", "run unit tests");
     const test_targets = [_][]const u8{

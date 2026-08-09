@@ -1,6 +1,6 @@
 # {{NAME}}
 
-A Akamata web app.
+An Akamata web app.
 
 ## Usage
 
@@ -9,6 +9,11 @@ A Akamata web app.
 zig build run
 # or
 akamata dev
+
+# Create and apply a versioned SQLite migration
+akamata migrate generate add_widgets
+# Edit migrations/<timestamp>_add_widgets.sql, then:
+akamata migrate up
 
 # Build for Cloudflare Workers (WASM)
 akamata build --workers
@@ -20,3 +25,6 @@ akamata build --containers
 akamata deploy --workers       # requires npx wrangler login
 akamata deploy --containers    # requires docker
 ```
+
+`build.zig.zon` pins Akamata by commit and content hash. To develop against a
+local Akamata checkout temporarily, run `zig build --fork=/path/to/Akamata`.
