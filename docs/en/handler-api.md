@@ -1,10 +1,34 @@
-# Handler API (new Hono style)
+# Handler API Reference
 
 Handlers have one signature:
 
 ```zig
 fn handler(c: *am.Context(State)) !void
 ```
+
+Unless a section says otherwise, returned slices and parsed values live in the
+request arena and must not be retained after the handler returns. Operations
+return Zig error unions; application errors can be handled with `app.onError`
+or `am.mw.recover`. Native and Workers share the handler signature, but APIs
+that require sockets or a filesystem are marked explicitly.
+
+## Reference map
+
+| Area | Primary signature / entry point | Return, errors, lifetime, and backend |
+|---|---|---|
+| App | `am.App(State).init(allocator, state)` | Returns an owned app. Route registration can fail allocation; call `deinit()`. Native and Workers share the route table. |
+| Context | `*am.Context(State)` | Borrowed for one request. `c.state()` is application-owned; `c.arena` values are request-owned. |
+| Request | `c.req.param`, `paramAs`, `query`, `queries`, `json(T)`, `body`, `header` | Missing/parse/allocation errors use error unions where shown. Returned slices and decoded bodies are request-scoped. |
+| Response | `c.json(value, status)`, `text`, `html`, `redirect`, `header`, `status` | Writes the current response and can fail serialization/allocation. Do not write another body after a streaming response commits. |
+| Database | `c.db()`, then `Db.prepare`/`exec` and `Stmt.bind`/`step`/`column*` | `c.db()` enables request instrumentation. Statements own backend resources until `deinit()`. SQLite, D1, and Turso share the facade. |
+| Model/repository | `am.model.repo(Model)` and `Model.__schema` | Comptime-generated CRUD; read results and text fields use the supplied arena. Database and validation errors are propagated. |
+| HTTP client | `c.fetch(am.http_client.Request)` or `am.http_client.send(allocator, request)` | Returns a response/error; response slices use the supplied allocator (`c.arena` for `c.fetch`). `c.fetch` records timing and is available on native and Workers. Full URLs are not metric labels. |
+| Authentication | `am.mw.bearerAuth`, `am.mw.jwt`, `am.auth.jwt`, `am.auth.password` | Middleware returns 401 on failed authentication. JWT middleware is HS256 and does not automatically check expiration; bcrypt/password helpers may fail allocation or verification. |
+| WebSocket | `app.ws(path, handler)` and `am.ws.upgrade(...)` | Native sockets are handled by Zig. Workers use the JavaScript/Durable Object integration described in the WebSocket guide. |
+| SSE/streaming | `am.sse.open(c)` and `c.startStream(options)` | Native only. The writer is request-scoped and commits headers; write/flush operations can return I/O errors. |
+
+See [Database backends](db-backends.md), [WebSocket](websocket.md), and
+[Observability](observability.md) for backend-specific behavior.
 
 ## App Builder
 
@@ -42,7 +66,7 @@ app.onError(myErrorHandler);
 try app.serve(.{ .port = 8080 });
 ```
 
-## Context (equivalent to Hono's `c`)
+## Context
 
 ```zig
 fn handler(c: *am.Context(State)) !void {
@@ -127,23 +151,41 @@ Custom values ​​can also be passed in `c.user_data` (opaque pointer).
 
 ## Built-in middleware
 
-| | Description |
+`app.useAll(middleware)` applies middleware globally; `app.use(pattern,
+middleware)` applies it to matching paths. Options are `comptime`, so their
+strings must remain valid for the application's lifetime.
+
+| Signature | Important defaults and notes |
 |---|---|
-| `am.mw.logger(State)` | Request log (method/path/status) |
-| `am.mw.recover(State)` | error → 500 map |
-| `am.mw.cors(State, opts)` | CORS header + OPTIONS preflight |
-| `am.mw.bearerAuth(State, opts)` | Fixed Token Bearer |
-| `am.mw.jwt(State, opts)` | JWT HS256 validation + claims injection |
-| `am.mw.serveStatic(State, opts)` | Static files (native only) |
-| `am.mw.requestId(State)` | Numbering `X-Request-ID` with UUIDv4 |
-| `am.mw.rateLimit(State, opts)` | Fixed window rate-limit |
-| `am.mw.session(State, opts)` | Signed Cookie + Replaceable Store |
-| `am.mw.csrf(State, opts)` | double-submit cookie |
-| `am.mw.metrics(State, opts)` | Prometheus + Latency Histogram |
-| `am.mw.accessLog(State, opts)` | Structured JSON / Apache combined logs |
-| `am.mw.secureHeaders(State, opts)` | Presets such as HSTS / CSP / X-Frame-Options |
-| `am.mw.compress(State, opts)` | gzip/deflate (no-op on Workers) |
-| `am.mw.etag(State, opts)` | SHA-256 ETag automatic grant + 304 rewrite |
+| `recover(State)` | Maps an unhandled handler error to a generic 500 response; it does not expose the error text. |
+| `logger(State)` | Simple method/path/status development log. Use `accessLog` for structured production output. |
+| `requestId(State)` | Accepts a printable `X-Request-ID` up to 64 bytes or generates UUIDv4; available through `c.requestId()`. |
+| `accessLog(State, format)` | `format` is `.json` or `.combined`. `accessLogWithOptions` defaults to JSON and excludes the raw path. |
+| `metrics(State, *MetricsCounters)` | Records request metrics with the `.web` latency profile. `metricsWithConfig` also accepts `.fast`; expose with `metricsHandler`. |
+| `serverTiming(State, options)` | Disabled by default; `include_named_spans = true`. Opt in only when exposing component names is acceptable. |
+| `cors(State, options)` | Origin `*`; common methods and `content-type,authorization`; credentials off. Do not combine wildcard origin with credentials for credentialed browser traffic. |
+| `bearerAuth(State, options)` | Requires a fixed `token`; realm defaults to `Restricted`. Compare and store secrets outside source code. |
+| `jwt(State, options)` | Requires an HS256 `secret`; claims are placed in `user_data` by default. Expiration is not checked automatically by this middleware. |
+| `session(State, options)` | Requires an HMAC secret; cookie `AKID`, one-week lifetime, `HttpOnly`, `SameSite=Lax`; `Secure` is off and must be enabled for HTTPS production. The default store is process-local memory. |
+| `csrf(State, options)` | Double-submit cookie; safe methods are GET/HEAD/OPTIONS. Set `cookie_secure` for HTTPS production. |
+| `rateLimit(State, options)` | Requires `key_fn`; defaults to 60 requests per 60 seconds and emits headers. State is process/isolate local, not a distributed quota. |
+| `secureHeaders(State, options)` | API-oriented HSTS/CSP/frame/MIME/referrer/permissions defaults; customize CSP for HTML applications. |
+| `compress(State, options)` | Minimum 1024 bytes; prefers gzip then deflate. Buffered native responses only; no-op on Workers and streaming responses. |
+| `etag(State, options)` | Strong SHA-256 ETag for buffered 2xx bodies of at least 32 bytes; can rewrite to 304. |
+| `serveStatic(State, options)` | Requires `root`; prefix `/`, index `index.html`. Native only; use Workers assets on Cloudflare. |
+
+For production observability, register the outer middleware in this order:
+
+```zig
+_ = try app.useAll(am.mw.requestId(State));
+_ = try app.useAll(am.mw.accessLogWithOptions(State, .{}));
+_ = try app.useAll(am.mw.metrics(State, &counters));
+_ = try app.useAll(am.mw.serverTiming(State, .{ .enabled = false }));
+```
+
+Each middleware wraps those registered after it. Place authentication,
+session, CSRF, and rate limiting before protected handlers. See
+[Observability](observability.md) for metric names, spans, and privacy rules.
 
 ## Input parsing + validation (`c.input`)
 

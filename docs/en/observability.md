@@ -113,8 +113,8 @@ Request series retained for compatibility:
 New fixed-cardinality series:
 
 - `akamata_request_errors_total{class="handler"}`
-- `akamata_db_operations_total{backend}`
-- `akamata_db_operation_duration_seconds{backend}`
+- `akamata_db_operations_total{backend,operation}`
+- `akamata_db_operation_duration_seconds{backend,operation}`
 - `akamata_db_errors_total{backend}`
 - `akamata_outbound_http_requests_total`
 - `akamata_outbound_http_errors_total`

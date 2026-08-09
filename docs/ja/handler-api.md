@@ -1,10 +1,29 @@
-# Handler API (新 Hono風)
+# Handler API reference
 
 ハンドラは 1 種類のシグネチャに統一:
 
 ```zig
 fn handler(c: *am.Context(State)) !void
 ```
+
+特記がない限り、返されるsliceとparse済みの値はrequest arena上にあり、handler return後に保持できません。operationはZigのerror unionを返し、application errorは`app.onError`または`am.mw.recover`で処理できます。nativeとWorkersのhandler signatureは共通ですが、socketやfilesystemを必要とするAPIは各節で明記します。
+
+## Reference map
+
+| 分野 | 主なsignature／entry point | return value、error、lifetime、backend |
+|---|---|---|
+| App | `am.App(State).init(allocator, state)` | appを所有して返します。route登録はallocation errorを返す場合があり、最後に`deinit()`します。route tableはnative／Workers共通です。 |
+| Context | `*am.Context(State)` | 1 request中だけborrowします。`c.state()`はapplication-owned、`c.arena`の値はrequest-ownedです。 |
+| Request | `c.req.param`、`paramAs`、`query`、`queries`、`json(T)`、`body`、`header` | missing／parse／allocation errorは該当するerror unionで返ります。sliceとdecode済みbodyはrequest-scopedです。 |
+| Response | `c.json(value, status)`、`text`、`html`、`redirect`、`header`、`status` | 現在のresponseへ書き込み、serialization／allocation errorを返す場合があります。streaming response commit後に別のbodyを書かないでください。 |
+| Database | `c.db()`の後に`Db.prepare`／`exec`、`Stmt.bind`／`step`／`column*` | `c.db()`でrequest instrumentationが有効になります。statementは`deinit()`までbackend resourceを所有します。SQLite、D1、Tursoでfacadeは共通です。 |
+| Model／repository | `am.model.repo(Model)`と`Model.__schema` | comptime生成のCRUDです。read結果と文字列fieldは指定したarena上にあります。DB／validation errorを伝播します。 |
+| HTTP client | `c.fetch(am.http_client.Request)`または`am.http_client.send(allocator, request)` | responseまたはerrorを返し、response sliceは指定allocator（`c.fetch`では`c.arena`）上にあります。`c.fetch`はtimingを記録し、native／Workersで利用できます。URL全体をmetrics labelには使いません。 |
+| 認証 | `am.mw.bearerAuth`、`am.mw.jwt`、`am.auth.jwt`、`am.auth.password` | 認証失敗時はmiddlewareが401を返します。JWT middlewareはHS256で、expirationを自動検証しません。password helperはallocation／verification errorを返す場合があります。 |
+| WebSocket | `app.ws(path, handler)`と`am.ws.upgrade(...)` | native socketはZigで処理します。WorkersではWebSocket guideに記載したJavaScript／Durable Object integrationを使います。 |
+| SSE／streaming | `am.sse.open(c)`と`c.startStream(options)` | native専用です。writerはrequest-scopedでheaderをcommitし、write／flushはI/O errorを返す場合があります。 |
+
+backend固有の挙動は[Database backends](db-backends.md)、[WebSocket](websocket.md)、[Observability](observability.md)を参照してください。
 
 ## App ビルダ
 
@@ -42,7 +61,7 @@ app.onError(myErrorHandler);
 try app.serve(.{ .port = 8080 });
 ```
 
-## Context (Hono の `c` 相当)
+## Context
 
 ```zig
 fn handler(c: *am.Context(State)) !void {
@@ -125,25 +144,39 @@ fn protected(c: *am.Context(State)) !void {
 
 カスタム値も `c.user_data` (opaque pointer) に詰めて受け渡せる。
 
-## ビルトインミドルウェア
+## Built-in middleware
 
-| | 説明 |
+`app.useAll(middleware)`はすべてのrouteへ、`app.use(pattern, middleware)`は一致したpathへmiddlewareを適用します。optionsは`comptime`なので、文字列はapplication lifetime中有効である必要があります。
+
+| Signature | 主なdefaultと注意点 |
 |---|---|
-| `am.mw.logger(State)` | リクエストログ (method/path/status) |
-| `am.mw.recover(State)` | error → 500 マップ |
-| `am.mw.cors(State, opts)` | CORS ヘッダ + OPTIONS preflight |
-| `am.mw.bearerAuth(State, opts)` | 固定トークン Bearer |
-| `am.mw.jwt(State, opts)` | JWT HS256 検証 + claims 注入 |
-| `am.mw.serveStatic(State, opts)` | 静的ファイル (native のみ) |
-| `am.mw.requestId(State)` | UUIDv4 で `X-Request-ID` を採番 |
-| `am.mw.rateLimit(State, opts)` | 固定ウィンドウ rate-limit |
-| `am.mw.session(State, opts)` | 署名付き Cookie + 取り換え可能 Store |
-| `am.mw.csrf(State, opts)` | double-submit cookie |
-| `am.mw.metrics(State, opts)` | Prometheus + レイテンシヒストグラム |
-| `am.mw.accessLog(State, opts)` | 構造化 JSON / Apache combined ログ |
-| `am.mw.secureHeaders(State, opts)` | HSTS / CSP / X-Frame-Options などのプリセット |
-| `am.mw.compress(State, opts)` | gzip/deflate (Workers では no-op) |
-| `am.mw.etag(State, opts)` | SHA-256 ETag 自動付与 + 304 書き換え |
+| `recover(State)` | 未処理のhandler errorを汎用的な500 responseへ変換します。error文字列は公開しません。 |
+| `logger(State)` | method／path／statusを出す開発向けlogです。本番のstructured outputには`accessLog`を使います。 |
+| `requestId(State)` | 印字可能で64 byte以下の`X-Request-ID`を引き継ぐかUUIDv4を生成します。`c.requestId()`で取得できます。 |
+| `accessLog(State, format)` | `.json`または`.combined`を指定します。`accessLogWithOptions`はJSONがdefaultで、raw pathを除外します。 |
+| `metrics(State, *MetricsCounters)` | `.web` profileでrequest metricsを記録します。`metricsWithConfig`では`.fast`も選択でき、`metricsHandler`で公開します。 |
+| `serverTiming(State, options)` | defaultは無効、`include_named_spans = true`です。component名を公開してよい場合だけ有効にします。 |
+| `cors(State, options)` | origin `*`、一般的なmethod、`content-type,authorization`、credentials無効がdefaultです。credential付きbrowser requestでwildcard originを使わないでください。 |
+| `bearerAuth(State, options)` | 固定`token`が必須で、realmは`Restricted`です。secretをsource codeへ直接書かないでください。 |
+| `jwt(State, options)` | HS256 `secret`が必須で、defaultではclaimsを`user_data`へ保存します。このmiddlewareはexpirationを自動検証しません。 |
+| `session(State, options)` | HMAC secretが必須です。cookie名`AKID`、1週間、`HttpOnly`、`SameSite=Lax`で、`Secure`は無効です。本番HTTPSでは有効にしてください。default storeはprocess-local memoryです。 |
+| `csrf(State, options)` | double-submit cookie方式で、safe methodはGET／HEAD／OPTIONSです。本番HTTPSでは`cookie_secure`を有効にします。 |
+| `rateLimit(State, options)` | `key_fn`が必須です。defaultは60秒あたり60 requestでheaderを出力します。process／isolate localであり、distributed quotaではありません。 |
+| `secureHeaders(State, options)` | API向けのHSTS／CSP／frame／MIME／referrer／permissions headerを設定します。HTML applicationではCSPを調整します。 |
+| `compress(State, options)` | 1024 byte以上でgzip、deflateの順に選択します。nativeのbuffered response向けで、Workersとstreaming responseではno-opです。 |
+| `etag(State, options)` | 32 byte以上のbuffered 2xx bodyへSHA-256 ETagを付け、必要に応じて304へ変換します。 |
+| `serveStatic(State, options)` | `root`が必須で、prefixは`/`、indexは`index.html`です。native専用で、CloudflareではWorkers assetsを使います。 |
+
+本番向けObservability middlewareは、外側から次の順で登録します。
+
+```zig
+_ = try app.useAll(am.mw.requestId(State));
+_ = try app.useAll(am.mw.accessLogWithOptions(State, .{}));
+_ = try app.useAll(am.mw.metrics(State, &counters));
+_ = try app.useAll(am.mw.serverTiming(State, .{ .enabled = false }));
+```
+
+各middlewareは後から登録した処理を内包します。認証、session、CSRF、rate limitは保護対象handlerより前に置きます。metrics、span、privacyについては[Observability](observability.md)を参照してください。
 
 ## 入力パース + バリデーション (`c.input`)
 

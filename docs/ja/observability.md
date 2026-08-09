@@ -1,12 +1,10 @@
-# 可観測性
+# Observability
 
-Akamata はリクエスト、データベース、アウトバウンド HTTP、およびアプリケーション定義を測定します
-1 つの単調クロックとリクエストスコープの割り当て不要のトレースによるタイミング。
-OpenTelemetry よりも意図的に小さいため、データは次のように公開できます。
-SQL、生の URL を配置しない Prometheus メトリクス、JSON ログ、または `Server-Timing`
-または、無制限のユーザー値をラベルに追加します。
+Akamataでは、request全体に加えてDB、outbound HTTP、storage、アプリケーション独自処理の所要時間を計測できます。計測には共通のmonotonic clockとrequest-localな`TraceContext`を使用し、通常のrequest処理では追加のheap確保を必要としません。
 
-## クイックスタート
+これは完全なOpenTelemetry実装ではありません。SQL、raw URL、ユーザー入力などcardinalityの高い値をlabelへ含めず、Prometheus metrics、structured log、`Server-Timing`から処理時間の内訳を確認するための軽量な基盤です。
+
+## Quick start
 
 ```zig
 var counters: am.mw.MetricsCounters = .{};
@@ -23,29 +21,22 @@ _ = try app.useAll(am.mw.serverTiming(State, .{ .enabled = false }));
 _ = try app.get("/metrics", am.mw.metricsHandler(State, &counters));
 ```
 
-既存の `requestId`、`accessLog`、`metrics`、および `metricsHandler` API は次のとおりです。
-まだ利用可能です。 `metrics` は、デフォルトで `.web` ヒストグラム プロファイルになりました。
+従来の`requestId`、`accessLog`、`metrics`、`metricsHandler`も引き続き利用できます。`metrics`のdefault histogram profileは`.web`です。
 
-ミドルウェアの順序は重要です。リクエスト ID とアクセス ログはメトリクスをラップする必要があります。
-アプリケーション。 `Server-Timing` は、出力するスパンのコードをラップする必要があります。
+middlewareは外側から`requestId`、`accessLog`、`metrics`、`serverTiming`、application handlerの順に登録します。`Server-Timing`は、出力対象となるspanを作る処理の外側に置く必要があります。
 
-## リクエストコンテキスト
+## Request context
 
-すべての `Context` には `TraceContext` が埋め込まれます。有効期間はリクエストと同じです
-そして割り当てません。これは `c.user_data` とは別のものであり、そのまま残ります。
-セッション、JWT クレーム、アプリケーション ミドルウェア。
+すべての`Context`はrequestと同じlifetimeを持つ`TraceContext`を内包します。session、JWT claims、application middleware向けの`c.user_data`とは独立しているため、middleware同士でpointerを共有しません。
 
 ```zig
-const request_id = c.requestId();       // ?[]const u8
-const route = c.routePattern();         // e.g. /api/news/:id
+const request_id = c.requestId();   // ?[]const u8
+const route = c.routePattern();     // 例: /api/news/:id
 ```
 
-ルーターは登録されたルート テンプレートのみを書き込みます。生の動的パスは次のとおりです。
-メトリックラベルとしては決して使用されません。 `requestId` は印刷可能な受信メールを受け入れます
-`X-Request-ID` 最大 64 バイト、または UUIDv4 を生成し、専用の
-トレースフィールドを取得し、それを応答でエコーします。
+routerが保存するのは登録済みroute templateだけです。`/api/news/42`のようなraw pathをmetrics labelには使用しません。`requestId` middlewareは、印字可能で64 byte以下の`X-Request-ID`を引き継ぎ、それ以外の場合はUUIDv4を生成します。値は専用fieldへ保存され、response headerにも返されます。
 
-## 軽量スパン
+## Lightweight span
 
 ```zig
 fn create(c: *Ctx) !void {
@@ -55,24 +46,19 @@ fn create(c: *Ctx) !void {
 }
 ```
 
-`defer` は、成功時とエラー時にスパンを閉じます。ネストにまたがり、その親を保持します
-インデックスを作成し、固定の 24 エントリのリクエスト バッファを使用します。超過スパンは次のようにカウントされます。
-落とした。リクエスト HashMap やヒープ割り当てはありません。コンプタイム/静的を優先する
-名前。 ID、SQL、URL、ユーザー名、またはその他の入力から名前を構築しないでください。
+`defer`を使うため、正常終了時だけでなくerror return時にもspanが閉じられます。spanはnestでき、parent indexを保持します。requestごとに固定24 entryのbufferを使用し、上限を超えたspanはdropped countへ加算されます。request-localな`HashMap`やheap確保は行いません。
 
-次のプレフィックスも安全なリクエスト集約にフィードします。
+span名にはcomptimeまたはstaticな文字列を使用してください。ID、SQL、URL、usernameなどの入力値からspan名を生成してはいけません。次のprefixはrequest aggregateにも反映されます。
 
-- `r2.` / `storage.` → 保存期間と操作回数
-- `http.` / `fetch.` → 手動スパンとして使用される場合のアウトバウンド HTTP 集約
-- `db.`、`serialize`、`framework`、`middleware` → 分類されたスパンレコード
+- `r2.`／`storage.`: storage durationとoperation count
+- `http.`／`fetch.`: manual spanとして使った場合のoutbound HTTP aggregate
+- `db.`、`serialize`、`framework`、`middleware`: 分類済みspan record
 
-自動的に計測されるアウトバウンド HTTP には `c.fetch(request)` を使用します。記録します
-URL を保持せずに、カウント、期間、エラーを追跡します。直接
-`am.http_client.send` は互換性を考慮して実装されていません。
+自動計測が必要なoutbound HTTPには`c.fetch(request)`を使用します。URLを保持せず、request count、duration、error countを記録します。互換性維持のため、`am.http_client.send`を直接呼んだ場合は自動計測されません。
 
-## データベースのインストルメンテーション
+## DB instrumentation
 
-ハンドラーで `c.db()` を使用し、その値をモデル/クエリ関数に渡します。
+handlerでは`c.db()`を取得し、model／query関数へ渡します。
 
 ```zig
 var stmt = try c.db().prepare("SELECT id, title FROM news");
@@ -80,62 +66,50 @@ defer stmt.deinit();
 while ((try stmt.step()) == .row) { ... }
 ```
 
-`c.db()` は、このリクエスト トレースにバインドされた `Db` の軽量コピーを返します。それはあります
-共有データベースハンドルを変更しないでください。計測は次の場所に集中されています。
-`Db`/`Stmt` vtable ファサード:
+`c.db()`は共有DB handleを変更せず、現在のrequest traceへ関連付けた軽量な`Db` copyを返します。計測は`Db`／`Stmt` vtable facadeに集約されています。
 
-- `exec()` は `exec` として 1 回計測されます。
-- 準備されたステートメントは、最初の `step()` で 1 回計時/カウントされます。
-- さらに行ステップを実行してもカウントは増加しません。
-- `reset()` は、新しい実行ライフサイクルを開始します。
-- エラーにより、固定バックエンド エラー カウンターが増加します。
+- `exec()`は`exec` operationとして1回だけ計測します。
+- prepared statementは最初の`step()`で1回だけcountとdurationを記録します。
+- 複数rowを読むための追加`step()`ではcountを増やしません。
+- `reset()`後は新しい実行lifecycleとして扱います。
+- error時は固定backendのerror counterを増やします。
 
-バックエンドは、固定セット `sqlite`、`d1`、`turso`、`other` です。 D1の場合は最初
-ステップには単一の `d1_run()` JSPI サスペンドが含まれているため、その期間は正確に
-D1 バインド/生待機とブリッジ オーバーヘッド (`prepare()` やすべての行ではありません)。
-SQLite は最初の `sqlite3_step` を測定します。 Turso は Hrana HTTP パイプラインを測定します
-待ってください。デフォルトでは、SQL テキストはエクスポートまたはログに記録されません。
+backendは`sqlite`、`d1`、`turso`、`other`の固定集合です。D1では最初の`step()`に1回の`d1_run()` JSPI suspendが含まれるため、D1のbind／raw awaitとbridge overheadを計測できます。`prepare()`やrowごとに同じ時間を重複計上しません。SQLiteは最初の`sqlite3_step`、TursoはHrana HTTP pipelineの待ち時間を計測します。SQL本文はdefaultではexportもlog出力もしません。
 
-`c.state().db` を呼び出すと、リクエストのインストルメンテーションがバイパスされます。これは保存されます
-ソースの互換性と、リクエスト外の初期化/移行コード用。
+`c.state().db`を直接使うとrequest instrumentationを通りません。この経路はsource compatibilityと、request外で行う初期化／migration向けに残されています。
 
-## メトリクス
+## Metrics
 
-互換性のために保持されているリクエスト シリーズ:
+互換性を維持しているrequest series:
 
 - `akamata_requests_total`
 - `akamata_requests_in_flight`
 - `akamata_requests_by_status{class}`
 - `akamata_requests_by_method{method}`
-- `akamata_request_latency_seconds` ヒストグラム/カウント/合計
-- ネイティブ プロセス RSS、最初の観測時間、稼働時間
+- `akamata_request_latency_seconds` histogram／count／sum
+- native processのRSS、初回観測時刻、uptime
 
-新しい固定カーディナリティ シリーズ:
+固定cardinalityの追加series:
 
 - `akamata_request_errors_total{class="handler"}`
-- `akamata_db_operations_total{backend}`
-- `akamata_db_operation_duration_seconds{backend}`
+- `akamata_db_operations_total{backend,operation}`
+- `akamata_db_operation_duration_seconds{backend,operation}`
 - `akamata_db_errors_total{backend}`
 - `akamata_outbound_http_requests_total`
 - `akamata_outbound_http_errors_total`
 - `akamata_outbound_http_duration_seconds`
 
-`.web` 境界は、10、25、50、100、250、500 ミリ秒、1、2.5、および 5 秒です。
-`.fast` は、以前の 100 μs から 100 ms のプロファイルを保存します。
+`.web` profileの境界は10、25、50、100、250、500 ms、1、2.5、5 sです。従来の100 µs〜100 ms向けbucketは`.fast`で選択できます。
 
 ```zig
 am.mw.metricsWithConfig(State, &counters, .{ .latency_profile = .fast })
 ```
 
-プロセス RSS は、意味のある情報がないため、ワーカーではゼロとして報告されます。
-RSSを処理します。ワーカー分離カウンタはコールド スタート時にリセットされ、複数のワーカーに分割される場合があります
-は分離されるため、`/metrics` は診断エンドポイントであり、永続的なグローバル カウンターではありません。
-構造化ログ、Cloudflare Workers Analytics、または将来のエクスポーターを使用して、
-フリート全体の生産データ。
+Workersには意味のあるprocess RSSがないため、RSSは0として出力されます。また、counterはisolateのcold startでresetされ、複数isolateへ分散します。Workers上の`/metrics`は診断用endpointであり、fleet全体の永続counterではありません。本番環境ではstructured logやCloudflare Workers Analyticsなども併用してください。
 
-## サーバーのタイミング
+## Server-Timing
 
-これは、内部コンポーネント名をクライアントに明らかにするため、オプトインです。
+内部component名をclientへ公開するため、defaultでは無効です。
 
 ```zig
 _ = try app.useAll(am.mw.serverTiming(State, .{
@@ -144,50 +118,36 @@ _ = try app.useAll(am.mw.serverTiming(State, .{
 }));
 ```
 
-例: `サーバータイミング: db;dur=38.700, storage;dur=154.600,
-r2.title.put;dur=71.200`。名前には ASCII 文字、数字のみを含める必要があります。
-`.`、`_`、または `-` であり、48 バイトに制限されます。 SQL や属性は出力されません。
-パブリック実稼働応答で名前付きスパンまたはミドルウェア全体を無効にします。
+出力例:
 
-## 構造化されたアクセスログ
+```http
+Server-Timing: db;dur=38.700, storage;dur=154.600, r2.title.put;dur=71.200
+```
 
-`accessLogWithOptions` は、コンパクトなリクエスト集約を発行します。
+span名に使用できるのはASCII letter、digit、`.`、`_`、`-`で、最大48 byteです。SQLやattributeは出力されません。公開された本番responseではnamed spanを無効にするか、middleware自体を使用しない構成を検討してください。
+
+## Structured access log
+
+`accessLogWithOptions`はrequest aggregateをcompactなJSONで出力します。
 
 ```json
 {"request_id":"…","method":"GET","path":"-","route":"/api/news/:id","status":200,"duration_ms":42.100,"db":{"queries":1,"execs":0,"errors":0,"duration_ms":37.800},"outbound_http":{"requests":0,"duration_ms":0.000},"storage":{"operations":0,"duration_ms":0.000}}
 ```
 
-パスに電子メール アドレス、トークン、
-検索用語やその他の PII。 Akamata は認証ヘッダー、本文、
-SQL、バインド値、または完全な送信 URL。リクエスト ID は、
-リクエストログからアプリケーションエラーログへ。エラー自体は制限されたままです
-スタック/エラー文字列をラベルとして使用するのではなく、メトリクス (`handler`、バックエンド) を使用します。
+pathにemail address、token、検索語などのPIIが入る可能性がある場合は`include_raw_path = false`を指定してください。Akamataはauthorization header、body、SQL、bind value、outbound URL全体をlogへ出しません。request IDはrequest logとapplication error logを関連付けるために使えます。stack traceや任意のerror文字列をmetrics labelにはしません。
 
-## ネイティブ クロックとワーカー クロック
+## nativeとWorkersのclock
 
-ウォールのタイムスタンプと期間は別のものです。ネイティブ期間の使用
-`clock_gettime(CLOCK_MONOTONIC)`;ワーカーは `akamata_monotonic_ns` をインポートし、バックアップされます
-by `performance.now() * 1_000_000`。 JSON タイムスタンプは realtime/`Date.now()` を使用します
-ウォールタイムとしてのみ。 `Date.now()` は一定期間使用されません。これにより短くなります
-ワーカーのリクエストと JSPI の一時停止をマイクロ/ミリ秒の解像度で表示します。
+wall clockとduration計測は分離されています。nativeのdurationには`clock_gettime(CLOCK_MONOTONIC)`を使用します。Workersでは`akamata_monotonic_ns`をimportし、JavaScript側の`performance.now() * 1_000_000`で実装します。JSON timestampにはwall clockとしてrealtime／`Date.now()`を使いますが、durationには`Date.now()`を使用しません。このため短いWorkers requestやJSPI suspendもµs／ms単位で確認できます。
 
-## 生産パターン
+## 本番環境での利用例
 
-`GET /api/news` の場合、`c.db()` を通じてクエリを実行すると、ログ/Server-Timing が表示されます。
-リクエストの合計と D1 の合計。イメージを作成するには、各 R2 操作を次のようにラップします。
-`r2.title.put` や `r2.main.put` などの安定した名前。ストレージの合計とそれぞれ
-名前付きスパンは、R2 固有のフレームワーク依存関係を追加せずに表示されます。
-移行を `db.migrate` でラップして、コールド初期化作業を区別します。
+`GET /api/news`で`c.db()`を通してqueryを実行すると、request totalとD1 totalをlogまたは`Server-Timing`で比較できます。画像投稿では、各R2 operationを`r2.title.put`、`r2.main.put`のような安定した名前のspanで囲みます。R2専用APIをframeworkへ追加しなくても、storage totalと個別spanを確認できます。cold initializationを区別したい場合はmigrationを`db.migrate` spanで囲みます。
 
-現在、ストリーミング期間は時間ではなく、ミドルウェア/ハンドラーの完了を意味します。
-クライアントが最後のバイトを消費するまで。 WebSocket の持続時間はアップグレードを意味します
-ソケットの有効期間ではなく、リクエストの完了です。
+streamingのdurationは、現在はclientが最後のbyteを読み終えるまでの時間ではなく、middleware／handlerが完了するまでの時間です。WebSocketもsocket lifetimeではなくupgrade requestの完了までを表します。
 
-## カーディナリティと将来のエクスポーター
+## Cardinalityと将来のexporter
 
-固定列挙型と登録されたルート テンプレートのみが適切なメトリック ラベルです。
-生のパス、SQL、URL、エラー テキスト、リクエスト ID、または任意のラベルを付けないでください。
-スパン名。スパン レコードは、名前、親、および期間を小さな単位ですでに保持しています。
-リクエスト構造。トレース/スパン ID と `Observer.onRequestEnd/onDbEnd` フック
-ハンドラー スパンを変更せずに、後で OTLP または分析エンジンに追加できます
-使用法。完全な OpenTelemetry SDK/OTLP エクスポーターは意図的に範囲外です。
+metrics labelに適しているのは固定enumと登録済みroute templateだけです。raw path、SQL、URL、error text、request ID、任意のspan名をlabelへ使用しないでください。
+
+span recordは小さなrequest-local structureにname、parent、durationを保持します。将来はhandler側のspan APIを変えずにtrace／span IDや`Observer.onRequestEnd`／`onDbEnd` hookを追加し、OTLPやCloudflare Analytics Engineへ拡張できます。完全なOpenTelemetry SDK／OTLP exporterは現在のscope外です。
