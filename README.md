@@ -1,9 +1,10 @@
 # Akamata
 
-[English](README.en.md) | 日本語
+[日本語](README.ja.md) | English
 
-Hono に着想を得た、Zig 0.16 系のミニマル Web フレームワーク。
-標準ライブラリのみで HTTP / WebSocket / SQLite を提供し、Cloudflare Workers と Cloudflare Containers の両方にデプロイできる。
+A minimal web framework for Zig 0.16.
+It provides HTTP, WebSocket, and SQLite support using only the standard library,
+and deploys to both Cloudflare Workers and Cloudflare Containers.
 
 ```zig
 const std = @import("std");
@@ -37,122 +38,124 @@ fn showUser(c: *am.Context(State)) !void {
 }
 ```
 
-## クイックスタート
+## Quick start
 
 ```bash
-# 1. CLI をビルド
+# 1. Build the CLI
 zig build cli
 
-# 2. 新規プロジェクトを生成
+# 2. Create a project
 ./zig-out/bin/akamata init myapp --target=both
 cd myapp
 
-# 3. ネイティブで起動
+# 3. Run natively
 zig build run
 
-# Cloudflare Workers にデプロイ (要 npx wrangler)
+# Deploy to Cloudflare Workers (requires npx wrangler)
 akamata deploy --workers
 
-# Cloudflare Containers にデプロイ (要 docker)
+# Deploy to Cloudflare Containers (requires Docker)
 akamata deploy --containers
 ```
 
-## 📖 ドキュメントから始める
+## 📖 Start with the documentation
 
-| 目的 | ドキュメント | 所要時間 |
+| Goal | Document | Time |
 |---|---|---|
-| **まず動かしたい** | [クイックスタート](docs/ja/quickstart.md) | 5 分 |
-| **15 分で全機能を概観** | [ハンドブック](docs/en/handbook.md) ([日本語](docs/ja/handbook.md) · [PDF](docs/en/handbook.pdf) · [日本語 PDF](docs/ja/handbook.pdf)) | 15 分 |
-| **初心者向けに丁寧に学ぶ** | **[詳細チュートリアル (日本語)](docs/ja/tutorial.md)** · [English](docs/en/tutorial.md) · [日本語 PDF](docs/ja/tutorial.pdf) · [English PDF](docs/en/tutorial.pdf) | **60–90 分** |
-| **個別トピックを深掘り** | [リファレンス](#リファレンスドキュメント) | — |
-| **プレゼン用** | [紹介スライド (日本語 PDF)](docs/ja/slides.pdf) · [English PDF](docs/en/slides.pdf) | 25 枚 |
+| **Get running quickly** | [Quick start](docs/en/quickstart.md) | 5 min |
+| **Tour all features** | [Handbook](docs/en/handbook.md) ([日本語](docs/ja/handbook.md) · [PDF](docs/en/handbook.pdf) · [日本語 PDF](docs/ja/handbook.pdf)) | 15 min |
+| **Learn step by step** | **[Detailed tutorial](docs/en/tutorial.md)** · [日本語](docs/ja/tutorial.md) · [English PDF](docs/en/tutorial.pdf) · [日本語 PDF](docs/ja/tutorial.pdf) | **60–90 min** |
+| **Explore a specific topic** | [Reference documentation](#reference-documentation) | — |
+| **Present Akamata** | [English slides](docs/en/slides.pdf) · [日本語 PDF](docs/ja/slides.pdf) | 25 slides |
 
-> 詳細チュートリアルでは、ゼロから **Todo リスト API + HTML UI** を作成し、SQLite から Cloudflare D1 への本番デプロイまで一貫して学べます。Zig を触ったことが無い方も対象です。
+The detailed tutorial builds a complete **Todo list API + HTML UI** from
+scratch, then deploys it to production using SQLite and Cloudflare D1. It is
+written for readers who are also new to Zig.
 
-## akamata CLI のインストール
+## Installing the akamata CLI
 
-`scripts/install.sh` がビルドと `PATH` 配置をまとめて行う。
+`scripts/install.sh` builds the CLI and installs it on your `PATH`.
 
 ```bash
-# 既定の $HOME/.local/bin にインストール
+# Install to the default $HOME/.local/bin
 ./scripts/install.sh
 
-# 任意のプレフィックスへ
+# Install under a custom prefix
 ./scripts/install.sh --prefix=/usr/local
 PREFIX=/opt/akamata ./scripts/install.sh
 
-# 最適化レベルの切り替え (既定: ReleaseSafe)
+# Select the optimization mode (default: ReleaseSafe)
 ./scripts/install.sh --fast        # ReleaseFast
 ./scripts/install.sh --small       # ReleaseSmall
 ./scripts/install.sh --debug       # Debug
 
-# アンインストール
+# Uninstall
 ./scripts/install.sh --uninstall
 
-# ヘルプ
+# Help
 ./scripts/install.sh --help
 ```
 
-要件: `zig` 0.16 以降が PATH 上にあること。
-インストール後にプレフィックスの `bin` が PATH 上に無い場合はスクリプトが追加方法を案内する。
+Requirement: Zig 0.16 or later must be available on `PATH`. If the selected
+prefix's `bin` directory is not on `PATH`, the installer explains how to add it.
 
 ```bash
-# 動作確認
+# Verify the installation
 akamata help
 akamata init myapp --target=both
 ```
 
-## 主な機能
+## Features
 
-| | 説明 |
+| | Description |
 |---|---|
-| **App(State)** | ジェネリック App ビルダー。`app.get("/", h).post(...).use(...)` のチェーン式 |
+| **App(State)** | Generic App builder with `app.get("/", h).post(...).use(...)` chaining |
 | **Context(State)** | `c.req.param/query/json(T)`, `c.json/text/html/redirect` |
-| **Router** | `/users/:id`, `/files/*rest` などのパスパラメータ |
-| **Middleware** | パス単位 (`app.use("/api/*", mw)`) と全体 (`app.useAll`) |
-| **basePath** | `app.basePath("/api/v1")` で prefix 付きグループ |
-| **ビルトインmw** | `cors`, `bearerAuth`, `jwt`, `logger`, `recover`, `serveStatic` |
-| **WebSocket** | HTTP ルートからの upgrade (`am.ws.upgrade(Ctx, c, opts)`) |
-| **SQLite / D1** | `am.db` で抽象化、native は sqlite3、Workers は D1 |
-| **JWT / bcrypt** | `am.auth.jwt`, `am.auth.bcrypt` (純Zig、$2a$/$2b$ 互換) |
-| **HTTPS クライアント** | `am.http_client.send(...)` (OpenSSL リンク) |
+| **Router** | Path parameters such as `/users/:id` and `/files/*rest` |
+| **Middleware** | Path-scoped (`app.use("/api/*", mw)`) and global (`app.useAll`) middleware |
+| **basePath** | Prefix groups with `app.basePath("/api/v1")` |
+| **Built-in middleware** | `cors`, `bearerAuth`, `jwt`, `logger`, `recover`, `serveStatic` |
+| **WebSocket** | Upgrade from an HTTP route with `am.ws.upgrade(Ctx, c, opts)` |
+| **SQLite / D1** | Unified `am.db` abstraction: sqlite3 natively and D1 on Workers |
+| **JWT / bcrypt** | Pure Zig `am.auth.jwt` and `$2a$`/`$2b$`-compatible `am.auth.bcrypt` |
+| **HTTPS client** | `am.http_client.send(...)` with OpenSSL linking |
 | **MQTT QoS0 / FCM Push** | `am.mq.Publisher`, `am.push.Sender` |
-| **akamata-cli** | `init / dev / build / deploy / db` の一通り |
+| **akamata-cli** | `init`, `dev`, `build`, `deploy`, and `db` workflows |
 
-## サンプル
+## Examples
 
-| ディレクトリ | 内容 |
+| Directory | Description |
 |---|---|
-| `examples/chat/` | 多人数チャット (REST + WebSocket + SQLite) |
-| `examples/turso/` | Turso (libsql Hrana) で動く guestbook API (native 専用) |
-| `examples/mobus/` | mobus_server_zig の完全移植 (26 endpoints, JWT, friends, messages, rtchat, devices, weather) |
+| `examples/chat/` | Multi-user chat with REST, WebSocket, and SQLite |
+| `examples/turso/` | Native guestbook API backed by Turso/libsql Hrana |
+| `examples/mobus/` | Full mobus_server_zig port with 26 endpoints, JWT, friends, messages, real-time chat, devices, and weather |
 
-## リファレンスドキュメント
+## Reference documentation
 
-### 学ぶ・始める
+### Learn and get started
 
-- [📘 詳細チュートリアル (日本語)](docs/ja/tutorial.md) / [English](docs/en/tutorial.md) — Todo アプリをゼロから作る (60–90 分)
-- [ハンドブック](docs/en/handbook.md) / [日本語](docs/ja/handbook.md) — 15 分で全機能を概観
-- [クイックスタート](docs/ja/quickstart.md) — 5 分で起動まで
-- [🎤 紹介スライド (日本語 PDF)](docs/ja/slides.pdf) / [English PDF](docs/en/slides.pdf) — 25 枚、勉強会・社内紹介向け
+- [📘 Detailed tutorial](docs/en/tutorial.md) / [日本語](docs/ja/tutorial.md) — build a Todo application from scratch (60–90 min)
+- [Handbook](docs/en/handbook.md) / [日本語](docs/ja/handbook.md) — tour all features in 15 minutes
+- [Quick start](docs/en/quickstart.md) — run your first application in 5 minutes
+- [🎤 English slides](docs/en/slides.pdf) / [日本語 PDF](docs/ja/slides.pdf) — 25-slide introduction
 
-### リファレンス
+### Reference
 
-- [Architecture](docs/ja/architecture.md) — フレームワーク内部設計
-- [Handler API](docs/ja/handler-api.md) — Context / Request / Response の全関数
-- [WebSocket](docs/ja/websocket.md) — WS upgrade とハンドラ
-- [DB backends](docs/ja/db-backends.md) — SQLite / Turso / D1 と JSPI 仕組み
-- [Cloudflare](docs/ja/cloudflare.md) — Workers / Containers デプロイ詳細
-- [Hono 風 DX 設計書](docs/ja/hono-style-redesign.md) — API 設計の意図
+- [Architecture](docs/en/architecture.md) — framework internals
+- [Handler API](docs/en/handler-api.md) — all Context, Request, and Response functions
+- [WebSocket](docs/en/websocket.md) — WebSocket upgrades and handlers
+- [DB backends](docs/en/db-backends.md) — SQLite, Turso, D1, and JSPI
+- [Cloudflare](docs/en/cloudflare.md) — Workers and Containers deployment
+- [Hono-style DX design](docs/en/hono-style-redesign.md) — API design rationale
 
-### 本番運用
+### Production operations
 
-- [Observability](docs/ja/observability.md) — Prometheus メトリクスとログ
-- [Benchmarks](docs/ja/benchmarks.md) — 短期ベンチ結果
-- [Benchmarks (長時間)](docs/ja/benchmarks-long-run.md) — 5 分間 / churn / 低並列の結果
-- [Perf follow-ups](docs/ja/perf-followups.md) — 試行と未着手の改善案
-- [mobus 移植計画](docs/ja/mobus-portability.md) / [mobus デプロイ](docs/ja/mobus-deployment.md) — 実アプリの移植例
+- [Observability](docs/en/observability.md) — Prometheus metrics and logs
+- [Benchmarks](docs/en/benchmarks.md) — short benchmark results
+- [Long-running benchmarks](docs/en/benchmarks-long-run.md) — five-minute, churn, and low-concurrency results
+- [Performance follow-ups](docs/en/perf-followups.md) — experiments and future improvements
+- [mobus portability plan](docs/en/mobus-portability.md) / [mobus deployment](docs/en/mobus-deployment.md) — real-world porting example
 
-## ライセンス
+## License
 
 MIT
