@@ -31,9 +31,9 @@ function stmtRegistryAlloc(entry) {
 
 // Memory helpers — re-fetched on every call because JSPI suspends may have
 // grown `memory.buffer` and detached previous Uint8Array views.
-function readBytes(ptr, len) { return new Uint8Array(memory.buffer, ptr, len); }
+function readBytes(ptr, len) { return len === 0 ? new Uint8Array(0) : new Uint8Array(memory.buffer, ptr, len); }
 function readString(ptr, len) { return new TextDecoder().decode(readBytes(ptr, len)); }
-function writeBytes(ptr, bytes) { new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes); }
+function writeBytes(ptr, bytes) { if (bytes.length > 0) new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes); }
 
 // JSPI feature detection. Older runtimes (Wrangler pre-3.99, very old
 // Miniflare) might lack `WebAssembly.Suspending`; in that case we fall

@@ -17,9 +17,9 @@ let jspi_supported = false;
 const d1stmts = new Map();
 let nextStmtId = 1;
 
-function readBytes(p, l) { return new Uint8Array(memory.buffer, p, l); }
+function readBytes(p, l) { return l === 0 ? new Uint8Array(0) : new Uint8Array(memory.buffer, p, l); }
 function readString(p, l) { return new TextDecoder().decode(readBytes(p, l)); }
-function writeBytes(p, b) { new Uint8Array(memory.buffer, p, b.length).set(b); }
+function writeBytes(p, b) { if (b.length > 0) new Uint8Array(memory.buffer, p, b.length).set(b); }
 
 function detectJspi() {
   jspi_supported =
