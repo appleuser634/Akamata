@@ -1,5 +1,6 @@
-// Minimal in-process metrics. Lock-free atomic counters/histograms plus
-// a Prometheus-style `/metrics` endpoint.
+// Minimal in-process metrics. Native builds use lock-free atomic counters;
+// single-threaded Workers use isolate-local counters. Both expose the same
+// Prometheus-style `/metrics` endpoint.
 //
 // What's exposed (all gauges/counters share the `akamata_` prefix):
 //
@@ -23,6 +24,45 @@ const std = @import("std");
 const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
 const clock = @import("../observability/clock.zig");
+const is_workers = builtin.cpu.arch == .wasm32 and builtin.os.tag == .freestanding;
+
+/// Workers isolates are single-threaded and do not support shared Wasm memory,
+/// so 64-bit atomic instructions are unavailable. Keep the public counter
+/// widths unchanged while using ordinary isolate-local values on Workers.
+fn Counter(comptime T: type) type {
+    if (!is_workers) return std.atomic.Value(T);
+    return struct {
+        raw: T,
+
+        const Self = @This();
+
+        pub fn init(value: T) Self {
+            return .{ .raw = value };
+        }
+
+        pub fn load(self: *const Self, comptime _: std.builtin.AtomicOrder) T {
+            return self.raw;
+        }
+
+        pub fn fetchAdd(self: *Self, operand: T, comptime _: std.builtin.AtomicOrder) T {
+            const previous = self.raw;
+            self.raw +%= operand;
+            return previous;
+        }
+
+        pub fn fetchSub(self: *Self, operand: T, comptime _: std.builtin.AtomicOrder) T {
+            const previous = self.raw;
+            self.raw -%= operand;
+            return previous;
+        }
+
+        pub fn cmpxchgStrong(self: *Self, expected: T, new: T, comptime _: std.builtin.AtomicOrder, comptime _: std.builtin.AtomicOrder) ?T {
+            if (self.raw != expected) return self.raw;
+            self.raw = new;
+            return null;
+        }
+    };
+}
 
 pub const LatencyProfile = enum { fast, web };
 pub const Config = struct { latency_profile: LatencyProfile = .web };
@@ -53,36 +93,36 @@ fn methodFromString(s: []const u8) Method {
 
 pub const Counters = struct {
     /// Total successful + failed requests served.
-    requests_total: std.atomic.Value(u64) = .init(0),
+    requests_total: Counter(u64) = .init(0),
     /// In-flight requests right now (incremented on entry, decremented on exit).
-    requests_in_flight: std.atomic.Value(i64) = .init(0),
+    requests_in_flight: Counter(i64) = .init(0),
     /// Buckets: 1xx, 2xx, 3xx, 4xx, 5xx.
-    by_status_class: [5]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0), .init(0) },
+    by_status_class: [5]Counter(u64) = .{ .init(0), .init(0), .init(0), .init(0), .init(0) },
     /// Per-method counts. Indexed by `Method` enum (8 values).
-    by_method: [8]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0) },
+    by_method: [8]Counter(u64) = .{ .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0) },
     /// Cumulative request latency in microseconds. Combined with
     /// `requests_total` this gives Prometheus a real `_sum` (so average
     /// latency = sum / count works).
-    latency_us_total: std.atomic.Value(u64) = .init(0),
+    latency_us_total: Counter(u64) = .init(0),
     /// Latency histogram (microseconds):
     /// <=100, <=500, <=1000, <=5000, <=10_000, <=50_000, <=100_000, >100_000
-    latency_buckets: [10]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0) },
+    latency_buckets: [10]Counter(u64) = .{ .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0), .init(0) },
     latency_profile: LatencyProfile = .web,
-    db_operations: [4]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0) },
-    db_operation_counts: [4][2]std.atomic.Value(u64) = .{
+    db_operations: [4]Counter(u64) = .{ .init(0), .init(0), .init(0), .init(0) },
+    db_operation_counts: [4][2]Counter(u64) = .{
         .{ .init(0), .init(0) }, .{ .init(0), .init(0) }, .{ .init(0), .init(0) }, .{ .init(0), .init(0) },
     },
-    db_operation_duration_ns: [4][2]std.atomic.Value(u64) = .{
+    db_operation_duration_ns: [4][2]Counter(u64) = .{
         .{ .init(0), .init(0) }, .{ .init(0), .init(0) }, .{ .init(0), .init(0) }, .{ .init(0), .init(0) },
     },
-    db_errors: [4]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0) },
-    db_duration_ns: [4]std.atomic.Value(u64) = .{ .init(0), .init(0), .init(0), .init(0) },
-    request_errors: std.atomic.Value(u64) = .init(0),
-    outbound_http_requests: std.atomic.Value(u64) = .init(0),
-    outbound_http_errors: std.atomic.Value(u64) = .init(0),
-    outbound_http_duration_ns: std.atomic.Value(u64) = .init(0),
+    db_errors: [4]Counter(u64) = .{ .init(0), .init(0), .init(0), .init(0) },
+    db_duration_ns: [4]Counter(u64) = .{ .init(0), .init(0), .init(0), .init(0) },
+    request_errors: Counter(u64) = .init(0),
+    outbound_http_requests: Counter(u64) = .init(0),
+    outbound_http_errors: Counter(u64) = .init(0),
+    outbound_http_duration_ns: Counter(u64) = .init(0),
     /// Unix seconds at which the first request landed. `0` until then.
-    start_time_unix: std.atomic.Value(i64) = .init(0),
+    start_time_unix: Counter(i64) = .init(0),
 
     pub fn record(self: *Counters, method: Method, status_code: u16, elapsed_us: u64) void {
         // Stamp the start time lazily on the first observation. CAS so
