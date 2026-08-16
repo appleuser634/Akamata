@@ -1,6 +1,6 @@
 # Akamata
 
-![Akamata in the Yanbaru forest](assets/branding/akamata-yanbaru-hero.png)
+![Akamata ASCII art hero](assets/branding/akamata-ascii-hero.svg)
 
 [日本語](README.ja.md) | English
 

@@ -1,6 +1,6 @@
 # Akamata
 
-![ヤンバルの森に生息するAkamata](assets/branding/akamata-yanbaru-hero.png)
+![Akamata ASCIIアート](assets/branding/akamata-ascii-hero.svg)
 
 [English](README.md) | 日本語
 
