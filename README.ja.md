@@ -1,5 +1,7 @@
 # Akamata
 
+![ヤンバルの森に生息するAkamata](assets/branding/akamata-yanbaru-hero.png)
+
 [English](README.md) | 日本語
 
 Zig 0.16向けのミニマルWebフレームワークです。Zigと標準ライブラリを中心に

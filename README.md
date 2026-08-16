@@ -1,5 +1,7 @@
 # Akamata
 
+![Akamata in the Yanbaru forest](assets/branding/akamata-yanbaru-hero.png)
+
 [日本語](README.ja.md) | English
 
 A minimal web framework for Zig 0.16. Akamata builds its HTTP and WebSocket
