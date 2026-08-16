@@ -1,6 +1,6 @@
 # Akamata
 
-![Akamata ASCII art hero](assets/branding/akamata-ascii-hero.svg)
+![Akamata ASCII art hero](assets/branding/akamata-ascii-hero.png)
 
 [日本語](README.ja.md) | English
 
