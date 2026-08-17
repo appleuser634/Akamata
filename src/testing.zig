@@ -22,6 +22,7 @@ const std = @import("std");
 const req_mod = @import("http/request.zig");
 const res_mod = @import("http/response.zig");
 const status_mod = @import("http/status.zig");
+const db_mod = @import("db/db.zig");
 
 pub const Header = req_mod.Header;
 
@@ -305,6 +306,36 @@ pub const ContractAudit = struct {
     pub fn ok(self: ContractAudit) bool {
         return self.untyped == 0 and self.duplicate_operation_ids == 0;
     }
+};
+
+/// Transaction fixture for database tests. Unless commit is explicitly
+/// called, deinit rolls every mutation back.
+pub const DatabaseSandbox = struct {
+    tx: db_mod.Transaction,
+
+    pub fn init(database: db_mod.Db) !DatabaseSandbox {
+        return .{ .tx = try database.begin() };
+    }
+
+    pub fn commit(self: *DatabaseSandbox) !void {
+        try self.tx.commit();
+    }
+
+    pub fn deinit(self: *DatabaseSandbox) void {
+        self.tx.rollback() catch {};
+    }
+};
+
+/// Deterministic malformed HTTP bodies suitable as seeds for parser and
+/// contract fuzz tests. Applications can append domain-specific cases.
+pub const malformedJsonCorpus = [_][]const u8{
+    "",
+    "{",
+    "[]",
+    "{\"unknown\":true}",
+    "{\"value\":null}",
+    "{\"value\":1e9999}",
+    "{\"value\":\"\\u0000\"}",
 };
 
 /// Inspect the same route snapshot consumed by OpenAPI and client generation.
