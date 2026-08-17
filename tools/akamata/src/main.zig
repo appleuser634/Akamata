@@ -67,6 +67,12 @@ pub fn main(init: std.process.Init) !void {
         try cmdCheck(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "inspect")) {
         try cmdInspect(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "routes")) {
+        try cmdRoutes(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "doctor")) {
+        try cmdDoctor(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "config")) {
+        try cmdConfig(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "generate")) {
         try cmdGenerate(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "destroy")) {
@@ -102,7 +108,7 @@ fn isHelpArg(arg: []const u8) bool {
 }
 
 const known_commands = [_][]const u8{
-    "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "check", "inspect", "generate", "destroy", "api", "client", "help", "version",
+    "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "check", "inspect", "routes", "doctor", "config", "generate", "destroy", "api", "client", "help", "version",
 };
 
 /// Lightweight nearest-match — if the user typed something within 2 edits
@@ -189,6 +195,12 @@ fn usage() !void {
         \\      Validate project structure and run the full test suite.
         \\  inspect [--json]
         \\      Print targets, migrations, environment, and project health.
+        \\  routes [--json]
+        \\      Print the application's OpenAPI route graph.
+        \\  doctor [--json]
+        \\      Diagnose the local project and deployment toolchain.
+        \\  config <show|check>
+        \\      Inspect configuration keys without exposing secret values.
         \\  generate resource <name> [field:type ...] [--pretend]
         \\      Generate a typed model/handler/test plus SQL migration.
         \\  destroy resource <name> [--force]
@@ -1393,6 +1405,84 @@ fn cmdInspect(_: std.mem.Allocator, args: []const [:0]const u8) !void {
     }
 }
 
+fn cmdRoutes(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    var json = false;
+    for (args) |raw| {
+        const arg = std.mem.sliceTo(raw, 0);
+        if (std.mem.eql(u8, arg, "--json")) json = true else return error.UsageError;
+    }
+    const bytes = try captureCmd(alloc, &.{ "zig", "build", "run", "--", "akamata-openapi" });
+    defer alloc.free(bytes);
+    if (json) {
+        std.debug.print("{s}\n", .{std.mem.trim(u8, bytes, " \t\r\n")});
+        return;
+    }
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, bytes, .{});
+    defer parsed.deinit();
+    const paths = if (parsed.value == .object) parsed.value.object.get("paths") else null;
+    if (paths == null or paths.? != .object) return error.InvalidOpenApi;
+    var count: usize = 0;
+    var path_it = paths.?.object.iterator();
+    while (path_it.next()) |path| {
+        if (path.value_ptr.* != .object) continue;
+        var method_it = path.value_ptr.*.object.iterator();
+        while (method_it.next()) |method| {
+            if (!isHttpMethod(method.key_ptr.*)) continue;
+            const summary = if (method.value_ptr.* == .object)
+                if (method.value_ptr.*.object.get("summary")) |v| if (v == .string) v.string else "" else ""
+            else
+                "";
+            std.debug.print("{s: <7} {s} {s}\n", .{ method.key_ptr.*, path.key_ptr.*, summary });
+            count += 1;
+        }
+    }
+    std.debug.print("routes: {d} operation(s)\n", .{count});
+}
+
+fn cmdDoctor(_: std.mem.Allocator, args: []const [:0]const u8) !void {
+    var json = false;
+    for (args) |raw| {
+        if (std.mem.eql(u8, std.mem.sliceTo(raw, 0), "--json")) json = true else return error.UsageError;
+    }
+    const build = fileExists("build.zig");
+    const zon = fileExists("build.zig.zon");
+    const source = fileExists("src/main.zig");
+    const workers = fileExists("deploy/wrangler.toml") or fileExists("wrangler.toml");
+    const containers = fileExists("deploy/Dockerfile") or fileExists("Dockerfile");
+    const healthy = build and zon and source;
+    if (json) {
+        std.debug.print("{{\"healthy\":{},\"build_zig\":{},\"build_zon\":{},\"entrypoint\":{},\"workers\":{},\"containers\":{},\"migrations\":{}}}\n", .{ healthy, build, zon, source, workers, containers, countSqlMigrations("migrations") });
+    } else {
+        std.debug.print("{s} build.zig\n{s} build.zig.zon\n{s} src/main.zig\n{s} Workers config\n{s} Container config\ninfo migrations: {d}\n", .{ if (build) "ok " else "ERR", if (zon) "ok " else "ERR", if (source) "ok " else "ERR", if (workers) "ok " else "-- ", if (containers) "ok " else "-- ", countSqlMigrations("migrations") });
+    }
+    if (!healthy) return error.ProjectCheckFailed;
+}
+
+fn cmdConfig(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    if (args.len != 1) return error.UsageError;
+    const sub = std.mem.sliceTo(args[0], 0);
+    if (!std.mem.eql(u8, sub, "show") and !std.mem.eql(u8, sub, "check")) return error.UsageError;
+    const bytes = readFileAlloc(alloc, ".env", 1024 * 1024) catch {
+        if (std.mem.eql(u8, sub, "check")) return error.MissingEnvironmentFile;
+        std.debug.print("configuration: no .env file\n", .{});
+        return;
+    };
+    defer alloc.free(bytes);
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    var count: usize = 0;
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        const key = std.mem.trim(u8, line[0..eq], " \t");
+        const present = std.mem.trim(u8, line[eq + 1 ..], " \t").len != 0;
+        std.debug.print("{s}: {s}\n", .{ key, if (present) "set" else "missing" });
+        if (!present and std.mem.eql(u8, sub, "check")) return error.MissingConfigurationValue;
+        count += 1;
+    }
+    std.debug.print("configuration: {d} key(s), values hidden\n", .{count});
+}
+
 fn yesNo(value: bool) []const u8 {
     return if (value) "yes" else "no";
 }
@@ -1528,8 +1618,80 @@ fn cmdApi(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
             }
         }
     }
+    breaking += diffComponentSchemas(before.value, after.value);
     if (breaking != 0) return error.BreakingApiChange;
-    std.debug.print("api diff: no removed paths or operations\n", .{});
+    std.debug.print("api diff: no breaking path, operation, or schema changes\n", .{});
+}
+
+fn diffComponentSchemas(before: std.json.Value, after: std.json.Value) usize {
+    const old_schemas = nestedObject(before, &.{ "components", "schemas" }) orelse return 0;
+    const new_schemas = nestedObject(after, &.{ "components", "schemas" }) orelse return 0;
+    var breaking: usize = 0;
+    var schemas = old_schemas.iterator();
+    while (schemas.next()) |schema| {
+        const replacement = new_schemas.get(schema.key_ptr.*) orelse {
+            std.debug.print("BREAKING removed schema {s}\n", .{schema.key_ptr.*});
+            breaking += 1;
+            continue;
+        };
+        if (schema.value_ptr.* != .object or replacement != .object) continue;
+        const old_type = schema.value_ptr.*.object.get("type");
+        const new_type = replacement.object.get("type");
+        if (!jsonScalarEqual(old_type, new_type)) {
+            std.debug.print("BREAKING changed type of schema {s}\n", .{schema.key_ptr.*});
+            breaking += 1;
+        }
+        const old_props = schema.value_ptr.*.object.get("properties");
+        const new_props = replacement.object.get("properties");
+        if (old_props != null and old_props.? == .object) {
+            var props = old_props.?.object.iterator();
+            while (props.next()) |prop| {
+                const next = if (new_props != null and new_props.? == .object) new_props.?.object.get(prop.key_ptr.*) else null;
+                if (next == null) {
+                    std.debug.print("BREAKING removed property {s}.{s}\n", .{ schema.key_ptr.*, prop.key_ptr.* });
+                    breaking += 1;
+                } else if (prop.value_ptr.* == .object and next.? == .object and !jsonScalarEqual(prop.value_ptr.*.object.get("type"), next.?.object.get("type"))) {
+                    std.debug.print("BREAKING changed property type {s}.{s}\n", .{ schema.key_ptr.*, prop.key_ptr.* });
+                    breaking += 1;
+                }
+            }
+        }
+        const old_required = schema.value_ptr.*.object.get("required");
+        const new_required = replacement.object.get("required");
+        if (new_required != null and new_required.? == .array) for (new_required.?.array.items) |name| {
+            if (name == .string and !arrayContainsString(old_required, name.string)) {
+                std.debug.print("BREAKING added required property {s}.{s}\n", .{ schema.key_ptr.*, name.string });
+                breaking += 1;
+            }
+        };
+    }
+    return breaking;
+}
+
+fn nestedObject(root: std.json.Value, keys: []const []const u8) ?std.json.ObjectMap {
+    var current = root;
+    for (keys) |key| {
+        if (current != .object) return null;
+        current = current.object.get(key) orelse return null;
+    }
+    return if (current == .object) current.object else null;
+}
+
+fn jsonScalarEqual(a: ?std.json.Value, b: ?std.json.Value) bool {
+    if (a == null and b == null) return true;
+    if (a == null or b == null) return false;
+    if (a.? == .string and b.? == .string) return std.mem.eql(u8, a.?.string, b.?.string);
+    if (a.? == .null and b.? == .null) return true;
+    if (a.? == .bool and b.? == .bool) return a.?.bool == b.?.bool;
+    if (a.? == .integer and b.? == .integer) return a.?.integer == b.?.integer;
+    if (a.? == .float and b.? == .float) return a.?.float == b.?.float;
+    return false;
+}
+
+fn arrayContainsString(value: ?std.json.Value, needle: []const u8) bool {
+    if (value == null or value.? != .array) return false;
+    for (value.?.array.items) |item| if (item == .string and std.mem.eql(u8, item.string, needle)) return true;
+    return false;
 }
 
 fn validIdentifier(value: []const u8) bool {
