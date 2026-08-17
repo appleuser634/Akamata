@@ -1,7 +1,8 @@
-name: release
+name: publish-v0.0.2
+
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
 permissions:
   contents: write
@@ -10,6 +11,7 @@ jobs:
   artifact:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         target: [x86_64-linux-musl, aarch64-linux-musl, x86_64-macos, aarch64-macos]
     steps:
@@ -27,4 +29,9 @@ jobs:
           tar -czf dist/akamata-chat-${{ matrix.target }}.tar.gz -C zig-out/bin chat
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
+          tag_name: v0.0.2
+          name: Akamata v0.0.2
+          body_path: docs/releases/v0.0.2.md
+          draft: false
+          prerelease: false
           files: dist/*.tar.gz

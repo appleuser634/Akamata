@@ -39,6 +39,7 @@ jobs:
       - uses: mlugg/setup-zig@7dccf5e6d09267c55f815f2db29495f30ba2ebca # v2.0.1
         with:
           version: 0.16.0
+          use-cache: false
       - run: ./third_party/sqlite/fetch.sh
       - run: ${{ matrix.job.cmd }}
 
@@ -50,6 +51,7 @@ jobs:
       - uses: mlugg/setup-zig@7dccf5e6d09267c55f815f2db29495f30ba2ebca # v2.0.1
         with:
           version: 0.16.0
+          use-cache: false
       - run: ./third_party/sqlite/fetch.sh
       - run: zig build test
       - run: zig build -Dexample=bench
@@ -63,6 +65,7 @@ jobs:
       - uses: mlugg/setup-zig@7dccf5e6d09267c55f815f2db29495f30ba2ebca # v2.0.1
         with:
           version: 0.16.0
+          use-cache: false
       - run: ./third_party/sqlite/fetch.sh
       - run: zig build cli
       - run: |
@@ -81,6 +84,7 @@ jobs:
       - uses: mlugg/setup-zig@7dccf5e6d09267c55f815f2db29495f30ba2ebca # v2.0.1
         with:
           version: 0.16.0
+          use-cache: false
       - run: ./third_party/sqlite/fetch.sh
       - run: zig build -Dexample=chat -Dtarget=x86_64-linux-musl -Doptimize=ReleaseFast
       - run: docker build -f deploy/Dockerfile -t akamata-chat .
@@ -93,6 +97,7 @@ jobs:
       - uses: mlugg/setup-zig@7dccf5e6d09267c55f815f2db29495f30ba2ebca # v2.0.1
         with:
           version: 0.16.0
+          use-cache: false
       - run: ./third_party/sqlite/fetch.sh
       - run: zig build -Dexample=bench -Doptimize=ReleaseSafe
       - run: |
