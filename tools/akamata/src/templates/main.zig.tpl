@@ -127,13 +127,13 @@ pub fn buildState(alloc: std.mem.Allocator) !State {
     return .{ .db = database };
 }
 
-fn migrateUp(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+fn migrateCommand(alloc: std.mem.Allocator, mode: []const u8, args: []const [:0]const u8) !void {
     var dir: []const u8 = "migrations";
     var target: ?[]const u8 = null;
     for (args) |raw| {
         const arg = std.mem.sliceTo(raw, 0);
         if (std.mem.startsWith(u8, arg, "--dir=")) dir = arg[6..] else if (std.mem.startsWith(u8, arg, "--target=")) target = arg[9..] else {
-            std.debug.print("migrate-up: unknown option `{s}`\n", .{arg});
+            std.debug.print("{s}: unknown option `{s}`\n", .{ mode, arg });
             return error.InvalidMigrationOption;
         }
     }
@@ -156,6 +156,40 @@ fn migrateUp(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     };
     const migrator: am.model.migrate.Migrator = .{ .arena = arena, .db = database };
     const pending = try migrator.pending(all);
+
+    if (std.mem.eql(u8, mode, "migrate-status")) {
+        const applied = try migrator.appliedVersions();
+        for (all) |migration| {
+            var done = false;
+            for (applied) |version| if (std.mem.eql(u8, version, migration.version)) {
+                done = true;
+            };
+            std.debug.print("{s} {s}\n", .{ if (done) "up  " else "down", migration.name });
+        }
+        return;
+    }
+    if (std.mem.eql(u8, mode, "migrate-plan")) {
+        for (pending) |migration| std.debug.print("apply {s}\n", .{migration.name});
+        if (pending.len == 0) std.debug.print("nothing pending\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, mode, "migrate-rollback") or std.mem.eql(u8, mode, "migrate-redo")) {
+        if (comptime @hasDecl(am.model.migrate.Migrator, "rollbackLast")) {
+            const rolled_back = try migrator.rollbackLast(all);
+            if (rolled_back == null) {
+                std.debug.print("nothing to roll back\n", .{});
+                return;
+            }
+            std.debug.print("rolled back {s}\n", .{rolled_back.?.name});
+            if (std.mem.eql(u8, mode, "migrate-rollback")) return;
+            try migrator.applyAll(&.{rolled_back.?});
+            std.debug.print("reapplied {s}\n", .{rolled_back.?.name});
+            return;
+        } else {
+            std.debug.print("rollback requires a newer Akamata revision; update the dependency first\n", .{});
+            return error.FrameworkUpgradeRequired;
+        }
+    }
 
     var selected: std.ArrayList(am.model.migrate.Migration) = .empty;
     for (pending) |migration| {
@@ -181,8 +215,10 @@ pub fn main(init: std.process.Init) !void {
     var args_arena: std.heap.ArenaAllocator = .init(alloc);
     defer args_arena.deinit();
     const args = try init.minimal.args.toSlice(args_arena.allocator());
-    if (args.len >= 2 and std.mem.eql(u8, std.mem.sliceTo(args[1], 0), "migrate-up")) {
-        return migrateUp(alloc, args[2..]);
+    const migrate_up_mode = "migrate-up";
+    _ = migrate_up_mode; // documents the runner contract used by the CLI
+    if (args.len >= 2 and std.mem.startsWith(u8, std.mem.sliceTo(args[1], 0), "migrate-")) {
+        return migrateCommand(alloc, std.mem.sliceTo(args[1], 0), args[2..]);
     }
 
     var app = am.App(State).init(alloc, try buildState(alloc));

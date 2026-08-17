@@ -61,6 +61,16 @@ pub fn main(init: std.process.Init) !void {
         try cmdDb(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "migrate")) {
         try cmdMigrate(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "check")) {
+        try cmdCheck(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "inspect")) {
+        try cmdInspect(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "generate")) {
+        try cmdGenerate(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "destroy")) {
+        try cmdDestroy(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "api")) {
+        try cmdApi(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "-h")) {
         try usage();
     } else if (std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "-v") or std.mem.eql(u8, cmd, "version")) {
@@ -83,7 +93,7 @@ fn isHelpArg(arg: []const u8) bool {
 }
 
 const known_commands = [_][]const u8{
-    "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "help", "version",
+    "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "check", "inspect", "generate", "destroy", "api", "help", "version",
 };
 
 /// Lightweight nearest-match — if the user typed something within 2 edits
@@ -166,6 +176,16 @@ fn usage() !void {
         \\      Apply all pending migrations against the active database.
         \\      Reads DATABASE_URL from env/.env (same as your app). Records
         \\      each applied version in the `schema_migrations` table.
+        \\  check [--quick]
+        \\      Validate project structure and run the full test suite.
+        \\  inspect [--json]
+        \\      Print targets, migrations, environment, and project health.
+        \\  generate resource <name> [field:type ...] [--pretend]
+        \\      Generate a typed model/handler/test plus SQL migration.
+        \\  destroy resource <name> [--force]
+        \\      Remove files previously created by the resource generator.
+        \\  api diff <before.json> <after.json>
+        \\      Detect removed OpenAPI paths and operations (non-zero on breakage).
         \\
     ;
     std.debug.print("{s}", .{msg});
@@ -217,16 +237,36 @@ fn commandUsage(command: []const u8) !void {
         \\  -h, --help                Show this help
         \\
     else if (std.mem.eql(u8, command, "migrate"))
-        \\Usage: akamata migrate <generate|up> [options]
+        \\Usage: akamata migrate <generate|up|status|plan|rollback|redo> [options]
         \\
         \\Commands:
         \\  generate <name>           Create a timestamped SQL migration
         \\  up                        Apply pending migrations through the generated app runner
+        \\  status                    Show applied/pending state for every migration
+        \\  plan                      Preview migrations that `up` would apply
+        \\  rollback                  Revert the latest migration using its down section
+        \\  redo                      Roll back and reapply the latest migration
         \\
         \\Options:
         \\  --dir=PATH                Migration directory (default: migrations)
         \\  --target=VERSION          Stop after VERSION when applying
         \\  -h, --help                Show this help
+        \\
+    else if (std.mem.eql(u8, command, "check"))
+        \\Usage: akamata check [--quick]
+        \\Validate build files and source layout; without --quick also run `zig build test`.
+        \\
+    else if (std.mem.eql(u8, command, "inspect"))
+        \\Usage: akamata inspect [--json]
+        \\Show a deterministic project summary suitable for humans or tooling.
+        \\
+    else if (std.mem.eql(u8, command, "generate") or std.mem.eql(u8, command, "destroy"))
+        \\Usage: akamata generate resource <name> [field:type ...] [--pretend]
+        \\       akamata destroy resource <name> [--force]
+        \\
+    else if (std.mem.eql(u8, command, "api"))
+        \\Usage: akamata api diff <before.json> <after.json>
+        \\Reports removed paths and HTTP operations; exits with an error on breaking changes.
         \\
     else {
         std.debug.print("akamata: unknown help topic `{s}`\n\n", .{command});
@@ -483,7 +523,7 @@ fn cmdDev(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     const bin_path_z = try alloc.dupeZ(u8, bin_path);
     defer alloc.free(bin_path_z);
 
-    std.debug.print("==> akamata dev: watching ./src (and build.zig, .env). Ctrl-C to stop.\n", .{});
+    std.debug.print("==> akamata dev: watching ./src, ./migrations, build files, and .env ({d} migration(s)). Ctrl-C to stop.\n", .{countSqlMigrations("migrations")});
     dev_install_sigint();
 
     // The app runs in its own process group; `child` is the leader pid (-1 when
@@ -604,6 +644,7 @@ fn stopChild(pid: c_int) void {
 fn watchSignature(alloc: std.mem.Allocator) u64 {
     var h: u64 = 1469598103934665603; // FNV-1a offset basis
     walkMtimes("src", &h);
+    walkMtimes("migrations", &h);
     for ([_][]const u8{ "build.zig", "build.zig.zon", ".env" }) |f| {
         var st: stat_t = undefined;
         const fz = alloc.dupeZ(u8, f) catch continue;
@@ -1279,6 +1320,181 @@ fn captureCmd(alloc: std.mem.Allocator, argv: []const []const u8) ![]u8 {
     return out.toOwnedSlice(alloc);
 }
 
+// ---- project intelligence / generators ----
+
+fn cmdCheck(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    var quick = false;
+    for (args) |raw| {
+        const arg = std.mem.sliceTo(raw, 0);
+        if (std.mem.eql(u8, arg, "--quick")) quick = true else return error.UsageError;
+    }
+    var failures: usize = 0;
+    const required = [_][]const u8{ "build.zig", "build.zig.zon", "src" };
+    for (required) |path| {
+        const exists = fileExists(path) or directoryExists(path);
+        std.debug.print("{s} {s}\n", .{ if (exists) "ok " else "ERR", path });
+        if (!exists) failures += 1;
+    }
+    if (failures != 0) return error.ProjectCheckFailed;
+    if (!quick) try runChild(alloc, &.{ "zig", "build", "test" }, null);
+    std.debug.print("check: project is healthy\n", .{});
+}
+
+fn cmdInspect(_: std.mem.Allocator, args: []const [:0]const u8) !void {
+    var json = false;
+    for (args) |raw| {
+        const arg = std.mem.sliceTo(raw, 0);
+        if (std.mem.eql(u8, arg, "--json")) json = true else return error.UsageError;
+    }
+    const native = fileExists("build.zig");
+    const workers = fileExists("deploy/wrangler.toml") or fileExists("wrangler.toml");
+    const containers = fileExists("deploy/Dockerfile") or fileExists("Dockerfile");
+    const migrations = countSqlMigrations("migrations");
+    const dotenv = fileExists(".env");
+    if (json) {
+        std.debug.print("{{\"akamata\":\"{s}\",\"targets\":{{\"native\":{},\"workers\":{},\"containers\":{}}},\"migrations\":{},\"dotenv\":{}}}\n", .{ VERSION, native, workers, containers, migrations, dotenv });
+    } else {
+        std.debug.print("Akamata {s}\ntargets: native={s}, workers={s}, containers={s}\nmigrations: {d}\n.env: {s}\n", .{ VERSION, yesNo(native), yesNo(workers), yesNo(containers), migrations, yesNo(dotenv) });
+    }
+}
+
+fn yesNo(value: bool) []const u8 {
+    return if (value) "yes" else "no";
+}
+
+fn cmdGenerate(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    if (args.len < 2 or !std.mem.eql(u8, std.mem.sliceTo(args[0], 0), "resource")) return error.UsageError;
+    try resourceGenerate(alloc, std.mem.sliceTo(args[1], 0), args[2..]);
+}
+
+fn resourceGenerate(alloc: std.mem.Allocator, name: []const u8, args: []const [:0]const u8) !void {
+    if (!validIdentifier(name)) return error.InvalidResourceName;
+    var pretend = false;
+    var fields: std.ArrayList([]const u8) = .empty;
+    defer fields.deinit(alloc);
+    for (args) |raw| {
+        const arg = std.mem.sliceTo(raw, 0);
+        if (std.mem.eql(u8, arg, "--pretend")) pretend = true else try fields.append(alloc, arg);
+    }
+    if (fields.items.len == 0) try fields.appendSlice(alloc, &.{ "name:[]const u8", "created_at:?i64" });
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(alloc);
+    var aw: std.Io.Writer.Allocating = .fromArrayList(alloc, &body);
+    defer body = aw.toArrayList();
+    try aw.writer.print("const am = @import(\"akamata\");\n\npub const {s} = struct {{\n    id: ?i64 = null,\n", .{name});
+    for (fields.items) |field| {
+        const colon = std.mem.indexOfScalar(u8, field, ':') orelse return error.InvalidField;
+        if (!validIdentifier(field[0..colon]) or colon + 1 == field.len) return error.InvalidField;
+        try aw.writer.print("    {s}: {s},\n", .{ field[0..colon], field[colon + 1 ..] });
+    }
+    try aw.writer.print("\n    pub const __schema = .{{ .table = \"{s}s\", .primary_key = \"id\" }};\n}};\n\npub const Repo = am.model.repo({s});\n", .{ name, name });
+    try aw.writer.flush();
+    const model_path = try std.fmt.allocPrint(alloc, "src/{s}.zig", .{name});
+    defer alloc.free(model_path);
+    const test_path = try std.fmt.allocPrint(alloc, "src/{s}_test.zig", .{name});
+    defer alloc.free(test_path);
+    const test_body = try std.fmt.allocPrint(alloc, "const std = @import(\"std\");\nconst Resource = @import(\"{s}.zig\").{s};\n\ntest \"{s} factory\" {{\n    const value = @import(\"akamata\").testing.factory(Resource, .{{}}).build();\n    try std.testing.expect(value.id == null);\n}}\n", .{ name, name, name });
+    defer alloc.free(test_body);
+    if (pretend) {
+        std.debug.print("create {s}\ncreate {s}\ncreate migrations/<timestamp>_create_{s}s.sql\n", .{ model_path, test_path, name });
+        return;
+    }
+    if (fileExists(model_path) or fileExists(test_path)) return error.ResourceAlreadyExists;
+    try writeFileBytes(model_path, aw.writer.buffered());
+    try writeFileBytes(test_path, test_body);
+    const migration_name = try std.fmt.allocPrint(alloc, "create_{s}s", .{name});
+    defer alloc.free(migration_name);
+    const generated_args = [_][:0]const u8{try alloc.dupeZ(u8, migration_name)};
+    defer alloc.free(generated_args[0]);
+    try migrateGenerate(alloc, &generated_args);
+    std.debug.print("generated resource `{s}`; import it from your app and register its routes\n", .{name});
+}
+
+fn cmdDestroy(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    if (args.len < 2 or !std.mem.eql(u8, std.mem.sliceTo(args[0], 0), "resource")) return error.UsageError;
+    const name = std.mem.sliceTo(args[1], 0);
+    if (!validIdentifier(name)) return error.InvalidResourceName;
+    var force = false;
+    for (args[2..]) |raw| {
+        if (std.mem.eql(u8, std.mem.sliceTo(raw, 0), "--force")) force = true else return error.UsageError;
+    }
+    if (!force) {
+        std.debug.print("destroy is destructive; repeat with --force\n", .{});
+        return error.ConfirmationRequired;
+    }
+    const model_path = try std.fmt.allocPrint(alloc, "src/{s}.zig", .{name});
+    defer alloc.free(model_path);
+    const test_path = try std.fmt.allocPrint(alloc, "src/{s}_test.zig", .{name});
+    defer alloc.free(test_path);
+    try removeFileIfExists(alloc, model_path);
+    try removeFileIfExists(alloc, test_path);
+    std.debug.print("removed generated source files for `{s}`; migrations are retained for data safety\n", .{name});
+}
+
+fn cmdApi(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    if (args.len != 3 or !std.mem.eql(u8, std.mem.sliceTo(args[0], 0), "diff")) return error.UsageError;
+    const before_bytes = try readFileAlloc(alloc, std.mem.sliceTo(args[1], 0), 16 * 1024 * 1024);
+    defer alloc.free(before_bytes);
+    const after_bytes = try readFileAlloc(alloc, std.mem.sliceTo(args[2], 0), 16 * 1024 * 1024);
+    defer alloc.free(after_bytes);
+    var before = try std.json.parseFromSlice(std.json.Value, alloc, before_bytes, .{});
+    defer before.deinit();
+    var after = try std.json.parseFromSlice(std.json.Value, alloc, after_bytes, .{});
+    defer after.deinit();
+    const bp = if (before.value == .object) before.value.object.get("paths") else null;
+    const ap = if (after.value == .object) after.value.object.get("paths") else null;
+    if (bp == null or ap == null or bp.? != .object or ap.? != .object) return error.InvalidOpenApi;
+    var breaking: usize = 0;
+    var paths = bp.?.object.iterator();
+    while (paths.next()) |entry| {
+        const new_path = ap.?.object.get(entry.key_ptr.*) orelse {
+            std.debug.print("BREAKING removed path {s}\n", .{entry.key_ptr.*});
+            breaking += 1;
+            continue;
+        };
+        if (entry.value_ptr.* != .object or new_path != .object) continue;
+        var methods = entry.value_ptr.*.object.iterator();
+        while (methods.next()) |method| {
+            if (isHttpMethod(method.key_ptr.*) and new_path.object.get(method.key_ptr.*) == null) {
+                std.debug.print("BREAKING removed operation {s} {s}\n", .{ method.key_ptr.*, entry.key_ptr.* });
+                breaking += 1;
+            }
+        }
+    }
+    if (breaking != 0) return error.BreakingApiChange;
+    std.debug.print("api diff: no removed paths or operations\n", .{});
+}
+
+fn validIdentifier(value: []const u8) bool {
+    if (value.len == 0 or !(std.ascii.isAlphabetic(value[0]) or value[0] == '_')) return false;
+    for (value[1..]) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_')) return false;
+    return true;
+}
+fn isHttpMethod(value: []const u8) bool {
+    return std.mem.eql(u8, value, "get") or std.mem.eql(u8, value, "post") or std.mem.eql(u8, value, "put") or std.mem.eql(u8, value, "patch") or std.mem.eql(u8, value, "delete") or std.mem.eql(u8, value, "head") or std.mem.eql(u8, value, "options");
+}
+fn countSqlMigrations(path: []const u8) usize {
+    var path_buf: [4096]u8 = undefined;
+    if (path.len >= path_buf.len) return 0;
+    @memcpy(path_buf[0..path.len], path);
+    path_buf[path.len] = 0;
+    const dir = opendir(@ptrCast(&path_buf)) orelse return 0;
+    defer _ = closedir(dir);
+    var count: usize = 0;
+    while (readdir(dir)) |entry| {
+        const name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(&entry.name)), 0);
+        if (std.mem.endsWith(u8, name, ".sql")) count += 1;
+    }
+    return count;
+}
+fn removeFileIfExists(alloc: std.mem.Allocator, path: []const u8) !void {
+    if (!fileExists(path)) return;
+    const z = try alloc.dupeZ(u8, path);
+    defer alloc.free(z);
+    if (unlink(z.ptr) != 0) return error.RemoveFailed;
+}
+extern "c" fn unlink(path: [*:0]const u8) c_int;
+
 // ---- migrate ----
 
 fn cmdMigrate(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
@@ -1290,7 +1506,11 @@ fn cmdMigrate(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     if (isHelpArg(sub)) return commandUsage("migrate");
     if (args.len >= 2 and isHelpArg(std.mem.sliceTo(args[1], 0))) return commandUsage("migrate");
     if (std.mem.eql(u8, sub, "generate")) return migrateGenerate(alloc, args[1..]);
-    if (std.mem.eql(u8, sub, "up")) return migrateUp(alloc, args[1..]);
+    if (std.mem.eql(u8, sub, "up")) return migrateRun(alloc, "migrate-up", args[1..]);
+    if (std.mem.eql(u8, sub, "status")) return migrateRun(alloc, "migrate-status", args[1..]);
+    if (std.mem.eql(u8, sub, "plan")) return migrateRun(alloc, "migrate-plan", args[1..]);
+    if (std.mem.eql(u8, sub, "rollback")) return migrateRun(alloc, "migrate-rollback", args[1..]);
+    if (std.mem.eql(u8, sub, "redo")) return migrateRun(alloc, "migrate-redo", args[1..]);
     std.debug.print("unknown migrate subcommand: {s}\n", .{sub});
     return error.UsageError;
 }
@@ -1300,8 +1520,11 @@ const migration_file_template =
     \\-- Generated: {s}
     \\-- Name: {s}
     \\
-    \\-- Write SQL statements here, separated by SQL terminators. Statements run in the
-    \\-- order they appear. Recommend each is idempotent (IF NOT EXISTS).
+    \\-- migrate:up
+    \\-- Write forward SQL here. Statements run in the order they appear.
+    \\
+    \\-- migrate:down
+    \\-- Write rollback SQL here. Leave empty only for an intentionally irreversible migration.
     \\
 ;
 
@@ -1361,7 +1584,7 @@ fn nowVersion(arena: std.mem.Allocator) []const u8 {
 /// `akamata migrate up` is a thin wrapper that delegates to the app binary's
 /// `migrate-up` subcommand (cargo-style). The app sets up its DB url, loads
 /// the migration directory, and runs `am.model.migrate.Migrator.applyAll`.
-fn migrateUp(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+fn migrateRun(alloc: std.mem.Allocator, mode: []const u8, args: []const [:0]const u8) !void {
     var dir: []const u8 = "migrations";
     for (args) |raw| {
         const arg = std.mem.sliceTo(raw, 0);
@@ -1373,7 +1596,7 @@ fn migrateUp(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     }
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(alloc);
-    try argv.appendSlice(alloc, &.{ "zig", "build", "run", "--", "migrate-up" });
+    try argv.appendSlice(alloc, &.{ "zig", "build", "run", "--", mode });
     for (args) |raw| try argv.append(alloc, std.mem.sliceTo(raw, 0));
     runChild(alloc, argv.items, null) catch |err| {
         std.debug.print("migrate: application runner failed. Ensure `zig build run -- migrate-up` works in this project and DATABASE_URL is valid.\n", .{});

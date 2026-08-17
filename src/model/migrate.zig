@@ -345,7 +345,12 @@ pub const Migrator = struct {
         const transactional = self.db.backend != .d1;
         if (transactional) try self.db.exec("BEGIN IMMEDIATE");
         errdefer if (transactional) self.db.exec("ROLLBACK") catch {};
-        try self.db.execAll(m.sql);
+        // Reversible files keep rollback statements after this marker. Never
+        // execute that section while migrating forward. Legacy files without
+        // a marker continue to execute in full.
+        const down_marker = "-- migrate:down";
+        const up_sql = if (std.mem.indexOf(u8, m.sql, down_marker)) |at| m.sql[0..at] else m.sql;
+        try self.db.execAll(up_sql);
         var record = try self.db.prepare(
             "INSERT INTO schema_migrations(version, applied_at) VALUES(?, unixepoch())",
         );
@@ -368,6 +373,32 @@ pub const Migrator = struct {
             if (!seen) try out.append(self.arena, m);
         }
         return out.toOwnedSlice(self.arena);
+    }
+
+    /// Roll back the most recently applied migration. Reversible migration
+    /// files put their down SQL after a `-- migrate:down` marker.
+    pub fn rollbackLast(self: Migrator, all: []const Migration) !?Migration {
+        const applied = try self.appliedVersions();
+        if (applied.len == 0) return null;
+        const version = applied[applied.len - 1];
+        for (all) |m| {
+            if (!std.mem.eql(u8, m.version, version)) continue;
+            const marker = "-- migrate:down";
+            const at = std.mem.indexOf(u8, m.sql, marker) orelse return error.IrreversibleMigration;
+            const down = std.mem.trim(u8, m.sql[at + marker.len ..], " \t\r\n");
+            if (down.len == 0) return error.IrreversibleMigration;
+            const transactional = self.db.backend != .d1;
+            if (transactional) try self.db.exec("BEGIN IMMEDIATE");
+            errdefer if (transactional) self.db.exec("ROLLBACK") catch {};
+            try self.db.execAll(down);
+            var remove = try self.db.prepare("DELETE FROM schema_migrations WHERE version = ?");
+            defer remove.deinit();
+            try remove.bindAll(.{version});
+            _ = try remove.step();
+            if (transactional) try self.db.exec("COMMIT");
+            return m;
+        }
+        return error.AppliedMigrationFileMissing;
     }
 };
 
@@ -580,6 +611,34 @@ test "Migrator rolls back a failed SQLite migration" {
     );
     defer stmt.deinit();
     try testing.expectEqual(db_mod.StepResult.done, try stmt.step());
+}
+
+test "Migrator executes only up section and can roll it back" {
+    if (builtin.cpu.arch == .wasm32) return error.SkipZigTest;
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var database = try Sqlite.open(testing.allocator, ":memory:");
+    defer database.close();
+    const migration = Migration{
+        .version = "20260817000000",
+        .name = "20260817000000_widgets.sql",
+        .sql =
+        \\-- migrate:up
+        \\CREATE TABLE widgets (id INTEGER PRIMARY KEY) STRICT;
+        \\-- migrate:down
+        \\DROP TABLE widgets;
+        ,
+    };
+    const m: Migrator = .{ .arena = arena, .db = database };
+    try m.applyAll(&.{migration});
+    var exists = try database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='widgets'");
+    try testing.expectEqual(db_mod.StepResult.row, try exists.step());
+    exists.deinit();
+    const rolled_back = try m.rollbackLast(&.{migration});
+    try testing.expect(rolled_back != null);
+    const applied = try m.appliedVersions();
+    try testing.expectEqual(@as(usize, 0), applied.len);
 }
 
 test "migrate: schema evolution (add column + new index)" {
