@@ -26,6 +26,8 @@ TUIは検出したendpoint一覧、編集可能なrequest、整形済みresponse
 
 endpoint検出では最初に`zig build run -- akamata-openapi`を実行します。現在のAkamata scaffoldはroute登録後にこのlocal inspection protocolへ応答し、serverを起動せず終了します。そのため、web APIに`/openapi.json`等を追加しなくても、登録された全routeをTUIから参照できます。旧applicationでは`/openapi.json`取得へfallbackし、どちらも利用できない場合はmanual requestで開始します。
 
+runnerを起動するのは、現在のprojectの`src/main.zig`にinspection markerが明示されている場合だけです。そのためAkamata framework repository自体からTUIを実行しても、example serverを誤って起動せずmanual modeで開始します。
+
 request実行時にはapplication serverが起動している必要があります。inspectionとservingを分離することで、public API surfaceを変更しません。
 
 ## 直接request
