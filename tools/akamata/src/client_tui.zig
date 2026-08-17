@@ -32,12 +32,13 @@ pub fn run(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     var arena_state: std.heap.ArenaAllocator = .init(alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    enterScreen();
+    defer leaveScreen();
+    std.debug.print("\x1b[H\x1b[2J\x1b[1;36m AKAMATA API CLIENT \x1b[0m\n\nDiscovering endpoints…\n", .{});
     var endpoints = discover(arena, base_url) catch &.{};
     if (endpoints.len == 0) endpoints = try arena.dupe(Endpoint, &.{.{ .method = .GET, .path = "/", .summary = "Manual request", .operation_id = "" }});
 
     var state: State = .{ .endpoints = endpoints, .base_url = base_url, .request_method = endpoints[0].method, .request_path = endpoints[0].path };
-    enterScreen();
-    defer leaveScreen();
     while (true) {
         draw(&state);
         const key = readKey() catch return error.TerminalReadFailed;
@@ -79,15 +80,31 @@ pub fn run(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
 
 fn discover(alloc: std.mem.Allocator, base_url: []const u8) ![]const Endpoint {
     // Preferred path: application runner inspection. No HTTP route is exposed.
-    const local = capture(alloc, "'zig' 'build' 'run' '--' 'akamata-openapi' 2>/dev/null") catch null;
-    if (local) |bytes| {
-        if (parseEndpoints(alloc, bytes)) |routes| return routes else |_| {}
+    // Only invoke the runner when this application explicitly implements the
+    // protocol. Running an arbitrary `zig build run` could start a web server
+    // and block the TUI forever (notably from the Akamata framework repo).
+    if (supportsLocalInspection()) {
+        const local = capture(alloc, "'zig' 'build' 'run' '--' 'akamata-openapi' 2>/dev/null") catch null;
+        if (local) |bytes| {
+            if (parseEndpoints(alloc, bytes)) |routes| return routes else |_| {}
+        }
     }
     // Compatibility fallback for applications that already expose OpenAPI.
     const url = try std.fmt.allocPrint(alloc, "{s}/openapi.json", .{base_url});
     const response = am.http_client.send(alloc, .{ .method = .GET, .url = url }) catch return error.DiscoveryFailed;
     if (response.status < 200 or response.status >= 300) return error.DiscoveryFailed;
     return parseEndpoints(alloc, response.body);
+}
+
+fn supportsLocalInspection() bool {
+    var source_buf: [2 * 1024 * 1024]u8 = undefined;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const source = std.Io.Dir.cwd().readFile(io, "src/main.zig", &source_buf) catch return false;
+    return hasInspectionMarker(source);
+}
+
+fn hasInspectionMarker(source: []const u8) bool {
+    return std.mem.indexOf(u8, source, "akamata-openapi") != null;
 }
 
 fn parseEndpoints(alloc: std.mem.Allocator, bytes: []const u8) ![]const Endpoint {
@@ -299,4 +316,9 @@ test "TUI parses route metadata without an exposed endpoint" {
     const routes = try parseEndpoints(arena_state.allocator(), spec);
     try std.testing.expectEqual(@as(usize, 1), routes.len);
     try std.testing.expectEqualStrings("/notes/{id}", routes[0].path);
+}
+
+test "inspection runner is only used by applications that opt in" {
+    try std.testing.expect(hasInspectionMarker("if (arg == \"akamata-openapi\") {}"));
+    try std.testing.expect(!hasInspectionMarker("pub fn main() void {}"));
 }
