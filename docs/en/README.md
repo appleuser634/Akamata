@@ -42,6 +42,8 @@ Benchmark numbers are snapshots of the recorded environment, commands, and Akama
 
 ## Architecture and design history
 
+- [Compile-time architecture](comptime-architecture.md) — static route graphs, typed contracts, capabilities, DI, and specialization trade-offs
+- [Compile-time routing benchmark](comptime-benchmarks-2026-08-17.md) — route/middleware scaling and artifact-size comparison
 - [Architecture](architecture.md)
 - [v0.2 design record](v0.2-design.md)
 - [Historical API redesign record](hono-style-redesign.md)

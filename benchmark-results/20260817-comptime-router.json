@@ -1,0 +1,37 @@
+{
+  "environment": {
+    "hardware": "Apple M2, 8 cores, 16 GB",
+    "os": "macOS 26.5 arm64",
+    "zig": "0.16.0",
+    "load_generator": "oha 1.15.0",
+    "profile": "ReleaseFast, HTTP loopback, concurrency 16, duration 3s, median of 3"
+  },
+  "runtime": {
+    "static_routes": {
+      "1": {"rps":153721.25,"p50_ms":0.091,"p95_ms":0.178,"p99_ms":0.336,"rss_kb":1824,"binary_bytes":494320,"startup_ms":350},
+      "10":{"rps":151394.28,"p50_ms":0.091,"p95_ms":0.183,"p99_ms":0.341,"rss_kb":1808,"binary_bytes":495984,"startup_ms":352},
+      "100":{"rps":149445.71,"p50_ms":0.090,"p95_ms":0.191,"p99_ms":0.388,"rss_kb":1904,"binary_bytes":527184,"startup_ms":360},
+      "500":{"rps":151495.21,"p50_ms":0.090,"p95_ms":0.185,"p99_ms":0.344,"rss_kb":2288,"binary_bytes":725664,"startup_ms":352}
+    },
+    "routes_100": {"parameter_rps":144574.87,"wildcard_rps":142714.15,"middleware_3_rps":149402.55,"middleware_6_rps":148557.55}
+  },
+  "static": {
+    "static_routes": {
+      "1": {"rps":148966.97,"p50_ms":0.089,"p95_ms":0.197,"p99_ms":0.385,"rss_kb":1808,"binary_bytes":494480,"startup_ms":261},
+      "10":{"rps":151159.83,"p50_ms":0.091,"p95_ms":0.192,"p99_ms":0.348,"rss_kb":1808,"binary_bytes":496320,"startup_ms":190},
+      "100":{"rps":145194.52,"p50_ms":0.090,"p95_ms":0.206,"p99_ms":0.404,"rss_kb":1888,"binary_bytes":527392,"startup_ms":189},
+      "500":{"rps":147870.80,"p50_ms":0.090,"p95_ms":0.210,"p99_ms":0.442,"rss_kb":2304,"binary_bytes":781056,"startup_ms":201}
+    },
+    "routes_100": {"parameter_rps":140844.52,"wildcard_rps":144006.70,"middleware_3_rps":146601.37,"middleware_6_rps":145992.73}
+  },
+  "artifact_regression": {
+    "baseline_commit": "c7b08116502c5ae8e4f9de58aa881959c6e4da0b",
+    "native_bench_before_bytes":1850776,
+    "native_bench_after_bytes":1850584,
+    "workers_chat_before_bytes":98894,
+    "workers_chat_after_bytes":99104,
+    "runtime_hello_before_rps":171809.49,
+    "runtime_hello_after_rps":171455.07,
+    "runtime_hello_delta_percent":-0.21
+  }
+}

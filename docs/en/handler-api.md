@@ -1,5 +1,8 @@
 # Handler API Reference
 
+For compile-time route graphs, reflected typed handlers, typed error mappings,
+and static/runtime trade-offs, see [Compile-time architecture](comptime-architecture.md).
+
 Handlers have one signature:
 
 ```zig

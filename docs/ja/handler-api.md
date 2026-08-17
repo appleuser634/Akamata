@@ -1,5 +1,8 @@
 # Handler API reference
 
+compile-time route graph、reflectionによるtyped handler、typed error mapping、
+static/runtimeのtrade-offは[Compile-time architecture](comptime-architecture.md)を参照してください。
+
 ハンドラは 1 種類のシグネチャに統一:
 
 ```zig

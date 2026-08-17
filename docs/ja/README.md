@@ -42,6 +42,8 @@ benchmark値は、記載された環境、command、Akamata revisionでの測定
 
 ## Architectureと設計資料
 
+- [Compile-time architecture](comptime-architecture.md) — static route graph、typed contract、capability、DI、specializationのtrade-off
+- [Compile-time routing benchmark](comptime-benchmarks-2026-08-17.md) — route/middleware scalingとartifact size比較
 - [Architecture](architecture.md)
 - [v0.2 design record](v0.2-design.md)
 - [過去のAPI redesign記録](hono-style-redesign.md)
