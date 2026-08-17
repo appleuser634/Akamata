@@ -49,7 +49,7 @@ fn dispatch(app: *am.App(State), path: []const u8, cookie: ?[]const u8, arena: s
     const headers: []const am.http.RequestHeader = if (cookie) |value| &.{.{ .name = "cookie", .value = value }} else &.{};
     var req: am.Request = .{ .method = .GET, .raw_method = "GET", .path = path, .query = "", .version = "HTTP/1.1", .headers = headers, .body = "", .keep_alive = false };
     var res = am.Response.init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
     return .{ .status = res.status_code, .body = res.body.items, .cookie = cookieValue(&res) };
 }
 
@@ -111,7 +111,7 @@ fn rateRequest(app: *am.App(State), value: []const u8) !u16 {
     defer arena_state.deinit();
     var req: am.Request = .{ .method = .GET, .raw_method = "GET", .path = "/", .query = "", .version = "HTTP/1.1", .headers = &.{.{ .name = "x-key", .value = value }}, .body = "", .keep_alive = false };
     var res = am.Response.init(arena_state.allocator());
-    try app.dispatch(arena_state.allocator(), &req, &res, null, null);
+    try app.dispatchWithPeer(arena_state.allocator(), &req, &res, null, null, null);
     return res.status_code;
 }
 

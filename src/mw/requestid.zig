@@ -4,20 +4,11 @@
 // links logs across an outage.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
-
-const is_wasm = builtin.cpu.arch == .wasm32 and builtin.os.tag == .freestanding;
-
-extern "c" fn arc4random_buf(buf: [*]u8, n: usize) void;
-extern "akamata_env" fn akamata_random_bytes(buf: [*]u8, len: usize) void;
+const random = @import("../crypto/random.zig");
 
 fn fillRandom(buf: []u8) void {
-    if (is_wasm) {
-        akamata_random_bytes(buf.ptr, buf.len);
-    } else {
-        arc4random_buf(buf.ptr, buf.len);
-    }
+    random.fill(buf);
 }
 
 pub const RequestIdSlot = struct {

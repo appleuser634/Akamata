@@ -81,6 +81,21 @@ pub fn rateLimit(comptime State: type, comptime opts: Options(State)) app_mod.Mi
     };
 
     const Impl = struct {
+        fn cleanup(_: *app_mod.App(State)) void {
+            if (State_.inited.load(.acquire) != 2) return;
+            State_.mu.lock();
+            if (State_.entries) |*entries| {
+                var it = entries.iterator();
+                while (it.next()) |item| State_.gpa.free(item.key_ptr.*);
+                entries.deinit();
+            }
+            State_.entries = null;
+            State_.requests = 0;
+            State_.mu.unlock();
+            State_.mu.deinit();
+            State_.inited.store(0, .release);
+        }
+
         fn call(c: *app_mod.App(State).Ctx, next: app_mod.Next(State)) anyerror!void {
             State_.ensureInit();
             const key = opts.key_fn(c);
@@ -139,5 +154,5 @@ pub fn rateLimit(comptime State: type, comptime opts: Options(State)) app_mod.Mi
             return c.json(.{ .error_kind = "rate_limited" }, 429);
         }
     };
-    return .{ .name = "rateLimit", .call = Impl.call };
+    return .{ .name = "rateLimit", .call = Impl.call, .cleanup = Impl.cleanup };
 }

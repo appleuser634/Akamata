@@ -232,6 +232,13 @@ fn columnBlobFn(ptr: *anyopaque, idx: usize) anyerror![]const u8 {
     return columnTextFn(ptr, idx);
 }
 
+fn columnIsNullFn(ptr: *anyopaque, idx: usize) anyerror!bool {
+    const s: *StmtBackend = @ptrCast(@alignCast(ptr));
+    const row = currentRow(s) orelse return TursoError.InvalidResponse;
+    if (idx >= row.len) return TursoError.InvalidResponse;
+    return row[idx] == .null_value;
+}
+
 fn columnCountFn(ptr: *anyopaque) usize {
     const s: *StmtBackend = @ptrCast(@alignCast(ptr));
     if (s.rows.items.len == 0) return 0;
@@ -259,6 +266,7 @@ const stmt_vtable: db_mod.StmtVTable = .{
     .column_float = columnFloatFn,
     .column_text = columnTextFn,
     .column_blob = columnBlobFn,
+    .column_is_null = columnIsNullFn,
     .column_count = columnCountFn,
     .reset = resetStmt,
     .deinit = deinitStmt,

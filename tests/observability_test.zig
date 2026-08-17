@@ -36,7 +36,7 @@ test "request id, route template, DB timing, span, metrics and Server-Timing" {
     const arena = arena_state.allocator();
     var req: am.Request = .{ .method = .GET, .raw_method = "GET", .path = "/items/1", .query = "", .version = "HTTP/1.1", .headers = &.{}, .body = "", .keep_alive = false };
     var res: am.Response = .init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
 
     try std.testing.expectEqualStrings("ok", res.body.items);
     try std.testing.expectEqual(@as(u64, 1), counters.requests_total.load(.monotonic));
@@ -71,6 +71,6 @@ test "disabled Server-Timing emits no header" {
     const arena = arena_state.allocator();
     var req: am.Request = .{ .method = .GET, .raw_method = "GET", .path = "/items/1", .query = "", .version = "HTTP/1.1", .headers = &.{}, .body = "", .keep_alive = false };
     var res: am.Response = .init(arena);
-    app.dispatch(arena, &req, &res, null, null) catch {};
+    app.dispatchWithPeer(arena, &req, &res, null, null, null) catch {};
     for (res.headers.items) |h| try std.testing.expect(!std.ascii.eqlIgnoreCase(h.name, "server-timing"));
 }

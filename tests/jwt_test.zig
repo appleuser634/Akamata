@@ -43,7 +43,7 @@ fn dispatchJwt(token: []const u8, comptime require_exp: bool) !u16 {
     const authorization = try std.fmt.allocPrint(arena_state.allocator(), "Bearer {s}", .{token});
     var req: am.Request = .{ .method = .GET, .raw_method = "GET", .path = "/", .query = "", .version = "HTTP/1.1", .headers = &.{.{ .name = "authorization", .value = authorization }}, .body = "", .keep_alive = false };
     var res = am.Response.init(arena_state.allocator());
-    try app.dispatch(arena_state.allocator(), &req, &res, null, null);
+    try app.dispatchWithPeer(arena_state.allocator(), &req, &res, null, null, null);
     return res.status_code;
 }
 

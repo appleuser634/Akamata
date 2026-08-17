@@ -133,6 +133,10 @@ async function instantiate(env) {
       if (e.currentRow) return e.currentRow.length;
       return 0;
     },
+    d1_column_is_null(h, idx) {
+      const e = d1stmts.get(h);
+      return !e || !e.currentRow || e.currentRow[idx] == null ? 1 : 0;
+    },
     d1_reset(h) { const e = d1stmts.get(h); if (!e) return; e.rows = null; e.cursor = 0; e.currentRow = null; },
     d1_finalize(h) { d1stmts.delete(h); },
     // Use .prepare().run() rather than .exec(). D1's .exec() requires every

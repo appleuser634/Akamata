@@ -249,8 +249,9 @@ pub fn Repo(comptime T: type) type {
                 const enum_mapping_present = comptime schema_mod.enumStringsLookup(T, f.name) != null;
                 switch (fi) {
                     .optional => |o| {
-                        const ChildI = @typeInfo(o.child);
-                        switch (ChildI) {
+                        if (try stmt.columnIsNull(i)) {
+                            @field(out, f.name) = null;
+                        } else switch (@typeInfo(o.child)) {
                             .int => @field(out, f.name) = @intCast(try stmt.columnInt(i)),
                             .float => @field(out, f.name) = @floatCast(try stmt.columnFloat(i)),
                             .bool => @field(out, f.name) = (try stmt.columnInt(i)) != 0,
@@ -483,7 +484,9 @@ test "Repo.queryRaw: arbitrary SQL maps back to T" {
     _ = try Users.create(database, arena, .{ .email = "b@x", .name = "bob", .age = 25 });
 
     // Custom query: WHERE age > ? LIMIT 1
-    const rows = try Users.queryRaw(database, arena,
+    const rows = try Users.queryRaw(
+        database,
+        arena,
         "SELECT id, email, name, age, created_at FROM test_users WHERE age > ? ORDER BY age DESC LIMIT 1",
         .{27},
     );

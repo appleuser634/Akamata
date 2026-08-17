@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const app_mod = @import("../app.zig");
+const random = @import("../crypto/random.zig");
 const cookie_mod = @import("../http/cookie.zig");
 
 const b64url = std.base64.url_safe_no_pad;
@@ -84,10 +85,7 @@ pub fn csrf(comptime State: type, comptime opts: Options) app_mod.Middleware(Sta
 
         fn mintToken(arena: std.mem.Allocator) ![]u8 {
             var raw: [24]u8 = undefined;
-            const Rand = struct {
-                extern "c" fn arc4random_buf(buf: [*]u8, n: usize) void;
-            };
-            Rand.arc4random_buf(&raw, raw.len);
+            random.fill(&raw);
             const enc_len = b64url.Encoder.calcSize(raw.len);
             const out = try arena.alloc(u8, enc_len);
             _ = b64url.Encoder.encode(out, &raw);

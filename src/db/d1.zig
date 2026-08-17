@@ -64,6 +64,7 @@ extern "akamata_d1" fn d1_column_double(stmt: i32, idx: i32) f64;
 extern "akamata_d1" fn d1_column_text_len(stmt: i32, idx: i32) usize;
 extern "akamata_d1" fn d1_column_text_copy(stmt: i32, idx: i32, out_ptr: [*]u8, out_len: usize) usize;
 extern "akamata_d1" fn d1_column_count(stmt: i32) i32;
+extern "akamata_d1" fn d1_column_is_null(stmt: i32, idx: i32) i32;
 extern "akamata_d1" fn d1_reset(stmt: i32) void;
 extern "akamata_d1" fn d1_finalize(stmt: i32) void;
 extern "akamata_d1" fn d1_exec(sql_ptr: [*]const u8, sql_len: usize) i32;
@@ -171,6 +172,11 @@ fn columnBlobFn(ptr: *anyopaque, idx: usize) anyerror![]const u8 {
     return columnTextFn(ptr, idx);
 }
 
+fn columnIsNullFn(ptr: *anyopaque, idx: usize) anyerror!bool {
+    const self: *StmtBackend = @ptrCast(@alignCast(ptr));
+    return d1_column_is_null(self.handle, @intCast(idx)) != 0;
+}
+
 fn columnCountFn(ptr: *anyopaque) usize {
     const self: *StmtBackend = @ptrCast(@alignCast(ptr));
     const n = d1_column_count(self.handle);
@@ -197,6 +203,7 @@ const stmt_vtable: db_mod.StmtVTable = .{
     .column_float = columnFloatFn,
     .column_text = columnTextFn,
     .column_blob = columnBlobFn,
+    .column_is_null = columnIsNullFn,
     .column_count = columnCountFn,
     .reset = resetStmt,
     .deinit = deinitStmt,

@@ -263,6 +263,7 @@ pub const Once = struct {
         // Use cmpxchgStrong (no spurious failures) to claim the work.
         const prev = self.done.cmpxchgStrong(0, 1, .acquire, .monotonic);
         if (prev == null) {
+            errdefer self.done.store(0, .release);
             const plan = try diff(arena, database, models);
             try apply(arena, database, plan);
             self.done.store(2, .release);
@@ -270,7 +271,12 @@ pub const Once = struct {
         }
         // Someone else won the race. Spin briefly until they publish 2.
         // On Workers (single-threaded JS), this branch is unreachable.
-        while (self.done.load(.acquire) != 2) std.atomic.spinLoopHint();
+        while (true) {
+            const state = self.done.load(.acquire);
+            if (state == 2) return;
+            if (state == 0) return self.run(arena, database, models);
+            std.atomic.spinLoopHint();
+        }
     }
 };
 
@@ -281,15 +287,12 @@ pub const Once = struct {
 // the directory in name order, looks up `schema_migrations.version`, and
 // applies any files whose version is not yet recorded.
 //
-// File contents are run as a single SQL script — separate statements with
-// `;`. The runner uses `Db.execAll` which already splits on `;`, so the
-// same files work against SQLite, Turso, and D1 (via the JSPI `d1_exec`
-// bridge — which is why we route DDL through `prepare().run()`).
+// File contents are run through `Db.execAll`. SQLite delegates scripts to its
+// own parser; portable backends use a quote/comment-aware splitter.
 //
-// Inside the runner we don't try to detect partial failures or roll back;
-// SQLite/D1/Turso each have different transaction semantics for DDL.
-// Practical guidance: keep each migration small and idempotent (`IF NOT
-// EXISTS`, etc.) so re-running after a crash is safe.
+// SQLite and Turso apply each file and its version record in one transaction
+// and roll back on failure. D1 does not expose equivalent transaction control
+// through this bridge, so D1 migrations should remain small and idempotent.
 
 pub const Migration = struct {
     /// Version identifier (the timestamp prefix of the filename, e.g.
@@ -334,15 +337,22 @@ pub const Migrator = struct {
     pub fn applyAll(self: Migrator, to_apply: []const Migration) !void {
         try self.ensureTable();
         for (to_apply) |m| {
-            try self.db.execAll(m.sql);
-            // Record the version (separate INSERT — single-statement, fine).
-            const sql = try std.fmt.allocPrint(
-                self.arena,
-                "INSERT INTO schema_migrations(version, applied_at) VALUES('{s}', unixepoch())",
-                .{m.version},
-            );
-            try self.db.exec(sql);
+            try self.applyOne(m);
         }
+    }
+
+    fn applyOne(self: Migrator, m: Migration) !void {
+        const transactional = self.db.backend != .d1;
+        if (transactional) try self.db.exec("BEGIN IMMEDIATE");
+        errdefer if (transactional) self.db.exec("ROLLBACK") catch {};
+        try self.db.execAll(m.sql);
+        var record = try self.db.prepare(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES(?, unixepoch())",
+        );
+        defer record.deinit();
+        try record.bindAll(.{m.version});
+        _ = try record.step();
+        if (transactional) try self.db.exec("COMMIT");
     }
 
     /// Filter `all` down to migrations not yet recorded in
@@ -549,6 +559,27 @@ test "Migrator: applies versioned files in order and tracks them" {
     try testing.expectEqual(@as(usize, 2), av.len);
     try testing.expectEqualStrings("20260101000001", av[0]);
     try testing.expectEqualStrings("20260101000002", av[1]);
+}
+
+test "Migrator rolls back a failed SQLite migration" {
+    if (builtin.cpu.arch == .wasm32) return error.SkipZigTest;
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var database = try Sqlite.open(testing.allocator, ":memory:");
+    defer database.close();
+    const m: Migrator = .{ .arena = arena, .db = database };
+    const broken = [_]Migration{.{
+        .version = "quoted'value",
+        .name = "broken.sql",
+        .sql = "CREATE TABLE must_rollback (id INTEGER); THIS IS NOT SQL;",
+    }};
+    try testing.expectError(error.ExecFailed, m.applyAll(&broken));
+    var stmt = try database.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='must_rollback'",
+    );
+    defer stmt.deinit();
+    try testing.expectEqual(db_mod.StepResult.done, try stmt.step());
 }
 
 test "migrate: schema evolution (add column + new index)" {

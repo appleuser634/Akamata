@@ -221,6 +221,10 @@ async function instantiate(env) {
       if (e.currentRow) return e.currentRow.length;
       return 0;
     },
+    d1_column_is_null(h, idx) {
+      const e = d1stmts.get(h);
+      return !e || !e.currentRow || e.currentRow[idx] == null ? 1 : 0;
+    },
     d1_reset(h) {
       const e = d1stmts.get(h);
       if (!e) return;

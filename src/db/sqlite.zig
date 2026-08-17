@@ -124,6 +124,11 @@ fn columnBlobFn(ptr: *anyopaque, idx: usize) anyerror![]const u8 {
     return @as([*]const u8, @ptrCast(blob))[0..@intCast(len)];
 }
 
+fn columnIsNullFn(ptr: *anyopaque, idx: usize) anyerror!bool {
+    const self: *StmtBackend = @ptrCast(@alignCast(ptr));
+    return c.sqlite3_column_type(self.stmt, @intCast(idx)) == c.SQLITE_NULL;
+}
+
 fn columnCountFn(ptr: *anyopaque) usize {
     const self: *StmtBackend = @ptrCast(@alignCast(ptr));
     return @intCast(c.sqlite3_column_count(self.stmt));
@@ -148,6 +153,7 @@ const stmt_vtable: db_mod.StmtVTable = .{
     .column_float = columnFloatFn,
     .column_text = columnTextFn,
     .column_blob = columnBlobFn,
+    .column_is_null = columnIsNullFn,
     .column_count = columnCountFn,
     .reset = resetStmt,
     .deinit = deinitStmt,

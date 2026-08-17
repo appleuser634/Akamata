@@ -24,6 +24,7 @@ pub const StmtVTable = struct {
     column_float: *const fn (ptr: *anyopaque, idx: usize) anyerror!f64,
     column_text: *const fn (ptr: *anyopaque, idx: usize) anyerror![]const u8,
     column_blob: *const fn (ptr: *anyopaque, idx: usize) anyerror![]const u8,
+    column_is_null: *const fn (ptr: *anyopaque, idx: usize) anyerror!bool,
     column_count: *const fn (ptr: *anyopaque) usize,
     reset: *const fn (ptr: *anyopaque) anyerror!void,
     deinit: *const fn (ptr: *anyopaque) void,
@@ -74,6 +75,9 @@ pub const Stmt = struct {
     }
     pub fn columnBlob(self: Stmt, idx: usize) ![]const u8 {
         return self.vt.column_blob(self.ptr, idx);
+    }
+    pub fn columnIsNull(self: Stmt, idx: usize) !bool {
+        return self.vt.column_is_null(self.ptr, idx);
     }
     pub fn columnCount(self: Stmt) usize {
         return self.vt.column_count(self.ptr);
@@ -151,13 +155,55 @@ pub const Db = struct {
         self.trace.?.recordDb(self.backend, .exec, clock.elapsedNs(t0), false);
     }
     pub fn execAll(self: Db, script: []const u8) !void {
-        // Simple semicolon-split executor for migrations.
-        var it = std.mem.splitScalar(u8, script, ';');
-        while (it.next()) |raw| {
-            const s = std.mem.trim(u8, raw, " \t\r\n");
-            if (s.len == 0) continue;
-            try self.exec(s);
+        // sqlite3_exec is a real script engine and correctly handles trigger
+        // bodies whose internal statements are also semicolon-terminated.
+        if (self.backend == .sqlite) return self.exec(script);
+        // Split only on statement terminators outside SQL strings/comments.
+        // A raw split corrupts triggers and values such as 'a;b'.
+        var start: usize = 0;
+        var i: usize = 0;
+        var quote: ?u8 = null;
+        var line_comment = false;
+        var block_comment = false;
+        while (i < script.len) : (i += 1) {
+            const ch = script[i];
+            const next = if (i + 1 < script.len) script[i + 1] else 0;
+            if (line_comment) {
+                if (ch == '\n') line_comment = false;
+                continue;
+            }
+            if (block_comment) {
+                if (ch == '*' and next == '/') {
+                    block_comment = false;
+                    i += 1;
+                }
+                continue;
+            }
+            if (quote) |q| {
+                if (ch == q) {
+                    if (next == q) {
+                        i += 1;
+                    } else quote = null;
+                }
+                continue;
+            }
+            if (ch == '-' and next == '-') {
+                line_comment = true;
+                i += 1;
+            } else if (ch == '/' and next == '*') {
+                block_comment = true;
+                i += 1;
+            } else if (ch == '\'' or ch == '"' or ch == '`') {
+                quote = ch;
+            } else if (ch == ';') {
+                const statement = std.mem.trim(u8, script[start..i], " \t\r\n");
+                if (statement.len > 0) try self.exec(statement);
+                start = i + 1;
+            }
         }
+        if (quote != null or block_comment) return error.InvalidSqlScript;
+        const tail = std.mem.trim(u8, script[start..], " \t\r\n");
+        if (tail.len > 0) try self.exec(tail);
     }
     pub fn close(self: Db) void {
         self.vt.close(self.ptr);

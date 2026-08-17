@@ -9,6 +9,7 @@ const app_mod = @import("../app.zig");
 const cookie_mod = @import("../http/cookie.zig");
 const sync = @import("../sync.zig");
 const clock = @import("../observability/clock.zig");
+const random = @import("../crypto/random.zig");
 
 const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 const b64url = std.base64.url_safe_no_pad;
@@ -225,6 +226,7 @@ pub const Session = struct {
 pub fn session(comptime State: type, comptime opts: Options) app_mod.Middleware(State) {
     const Impl = struct {
         var store_slot: ?Store = null;
+        var owned_memory_store: ?*MemoryStore = null;
         var inited: std.atomic.Value(u8) = .init(0);
 
         fn ensureStore(c: *app_mod.App(State).Ctx) !Store {
@@ -246,6 +248,7 @@ pub fn session(comptime State: type, comptime opts: Options) app_mod.Middleware(
                     return e;
                 };
                 ms.* = MemoryStore.init(std.heap.smp_allocator);
+                owned_memory_store = ms;
                 store_slot = ms.store();
                 inited.store(2, .release);
             } else {
@@ -253,6 +256,16 @@ pub fn session(comptime State: type, comptime opts: Options) app_mod.Middleware(
             }
             _ = c;
             return store_slot.?;
+        }
+
+        fn cleanup(_: *app_mod.App(State)) void {
+            if (owned_memory_store) |ms| {
+                ms.deinit();
+                std.heap.smp_allocator.destroy(ms);
+                owned_memory_store = null;
+            }
+            store_slot = null;
+            inited.store(0, .release);
         }
 
         fn call(c: *app_mod.App(State).Ctx, next: app_mod.Next(State)) anyerror!void {
@@ -306,15 +319,12 @@ pub fn session(comptime State: type, comptime opts: Options) app_mod.Middleware(
             return mintSessionId(c.arena);
         }
     };
-    return .{ .name = "session", .call = Impl.call };
+    return .{ .name = "session", .call = Impl.call, .cleanup = Impl.cleanup };
 }
 
 fn mintSessionId(arena: std.mem.Allocator) ![]u8 {
     var raw: [16]u8 = undefined;
-    const Rand = struct {
-        extern "c" fn arc4random_buf(buf: [*]u8, nbytes: usize) void;
-    };
-    Rand.arc4random_buf(&raw, raw.len);
+    random.fill(&raw);
     const enc_len = b64url.Encoder.calcSize(raw.len);
     const out = try arena.alloc(u8, enc_len);
     _ = b64url.Encoder.encode(out, &raw);
