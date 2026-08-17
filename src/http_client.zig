@@ -96,9 +96,20 @@ fn parseUrl(url: []const u8) HttpClientError!ParsedUrl {
     const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
     const host_port = rest[0..slash];
     const path: []const u8 = if (slash == rest.len) "/" else rest[slash..];
+    if (host_port.len == 0 or std.mem.indexOfScalar(u8, host_port, '@') != null or
+        std.mem.indexOfScalar(u8, path, '#') != null)
+        return HttpClientError.InvalidUrl;
     var host = host_port;
     var port: u16 = if (scheme == .https) 443 else 80;
-    if (std.mem.lastIndexOfScalar(u8, host_port, ':')) |colon_idx| {
+    if (host_port[0] == '[') {
+        const close = std.mem.indexOfScalar(u8, host_port, ']') orelse return HttpClientError.InvalidUrl;
+        host = host_port[1..close];
+        if (close + 1 < host_port.len) {
+            if (host_port[close + 1] != ':') return HttpClientError.InvalidUrl;
+            port = std.fmt.parseInt(u16, host_port[close + 2 ..], 10) catch return HttpClientError.InvalidUrl;
+        }
+    } else if (std.mem.lastIndexOfScalar(u8, host_port, ':')) |colon_idx| {
+        if (std.mem.indexOfScalar(u8, host_port[0..colon_idx], ':') != null) return HttpClientError.InvalidUrl;
         host = host_port[0..colon_idx];
         port = std.fmt.parseInt(u16, host_port[colon_idx + 1 ..], 10) catch return HttpClientError.InvalidUrl;
     }
@@ -178,6 +189,7 @@ fn initCaOnce(io: Io, gpa: std.mem.Allocator) !void {
 fn nativeSend(arena: std.mem.Allocator, request: Request) HttpClientError!Response {
     if (!is_native) return HttpClientError.UnsupportedOnTarget;
     const url = try parseUrl(request.url);
+    if (!validRequestTarget(url.path) or !validHost(url.host)) return HttpClientError.InvalidUrl;
 
     // Build raw HTTP/1.1 request bytes.
     var req_buf: std.ArrayList(u8) = .empty;
@@ -187,6 +199,9 @@ fn nativeSend(arena: std.mem.Allocator, request: Request) HttpClientError!Respon
     var has_content_length = false;
     var has_content_type = false;
     for (request.headers) |h| {
+        if (!validHeaderName(h.name) or !validHeaderValue(h.value)) return HttpClientError.HttpProtocolError;
+        if (eqlIgnoreCase(h.name, "host") or eqlIgnoreCase(h.name, "transfer-encoding"))
+            return HttpClientError.HttpProtocolError;
         if (eqlIgnoreCase(h.name, "content-length")) has_content_length = true;
         if (eqlIgnoreCase(h.name, "content-type")) has_content_type = true;
         try req_buf.print(arena, "{s}: {s}\r\n", .{ h.name, h.value });
@@ -243,7 +258,7 @@ fn nativePlainSend(
     var tmp: [4096]u8 = undefined;
     while (true) {
         var vec: [1][]u8 = .{&tmp};
-        const n = sr.interface.readVec(&vec) catch break;
+        const n = sr.interface.readVec(&vec) catch return HttpClientError.ReadFailed;
         if (n == 0) break;
         if (all.items.len + n > max_resp) return HttpClientError.ResponseTooLarge;
         try all.appendSlice(arena, tmp[0..n]);
@@ -264,7 +279,9 @@ fn nativeTlsSend(
     defer io_impl.deinit();
     const io = io_impl.io();
 
-    initCaOnce(io, arena) catch return HttpClientError.TlsHandshakeFailed;
+    // The bundle is process-global, so its backing storage must outlive every
+    // request arena that calls this function.
+    initCaOnce(io, std.heap.smp_allocator) catch return HttpClientError.TlsHandshakeFailed;
 
     var stream = try dialHost(io, url.host, url.port);
     defer stream.close(io);
@@ -290,7 +307,7 @@ fn nativeTlsSend(
     var client = std.crypto.tls.Client.init(&sr.interface, &sw.interface, .{
         .host = .{ .explicit = url.host },
         .ca = .{ .bundle = .{
-            .gpa = arena,
+            .gpa = std.heap.smp_allocator,
             .io = io,
             .lock = &ca_lock,
             .bundle = &ca_bundle,
@@ -331,22 +348,30 @@ fn parseResponse(arena: std.mem.Allocator, bytes: []const u8) HttpClientError!Re
     const status = std.fmt.parseInt(u16, code_str, 10) catch return HttpClientError.HttpProtocolError;
 
     var chunked = false;
+    var transfer_encoding_seen = false;
     var content_length: ?usize = null;
+    var content_length_seen = false;
     while (lines.next()) |line| {
         const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
         const name = std.mem.trim(u8, line[0..colon], " \t");
         const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
-        if (eqlIgnoreCase(name, "transfer-encoding") and containsIgnoreCase(value, "chunked")) {
+        if (eqlIgnoreCase(name, "transfer-encoding")) {
+            if (transfer_encoding_seen or !eqlIgnoreCase(value, "chunked")) return HttpClientError.HttpProtocolError;
+            transfer_encoding_seen = true;
             chunked = true;
         } else if (eqlIgnoreCase(name, "content-length")) {
-            content_length = std.fmt.parseInt(usize, value, 10) catch null;
+            if (content_length_seen) return HttpClientError.HttpProtocolError;
+            content_length = std.fmt.parseInt(usize, value, 10) catch return HttpClientError.HttpProtocolError;
+            content_length_seen = true;
         }
     }
+    if (transfer_encoding_seen and content_length_seen) return HttpClientError.HttpProtocolError;
 
     if (chunked) {
         body = try decodeChunked(arena, body);
     } else if (content_length) |cl| {
-        if (cl <= body.len) body = body[0..cl];
+        if (cl > body.len) return HttpClientError.HttpProtocolError;
+        body = body[0..cl];
     }
 
     return .{
@@ -360,15 +385,44 @@ fn decodeChunked(arena: std.mem.Allocator, buf: []const u8) HttpClientError![]u8
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     while (i < buf.len) {
-        const le = std.mem.indexOfPos(u8, buf, i, "\r\n") orelse break;
-        const size = std.fmt.parseInt(usize, std.mem.trim(u8, buf[i..le], " \t"), 16) catch return HttpClientError.HttpProtocolError;
+        const le = std.mem.indexOfPos(u8, buf, i, "\r\n") orelse return HttpClientError.HttpProtocolError;
+        const size_text = std.mem.trim(u8, buf[i..le], " \t");
+        if (size_text.len == 0 or std.mem.indexOfScalar(u8, size_text, ';') != null) return HttpClientError.HttpProtocolError;
+        const size = std.fmt.parseInt(usize, size_text, 16) catch return HttpClientError.HttpProtocolError;
         i = le + 2;
-        if (size == 0) break;
-        if (i + size > buf.len) return HttpClientError.HttpProtocolError;
+        if (size == 0) {
+            if (i + 2 > buf.len or !std.mem.eql(u8, buf[i .. i + 2], "\r\n")) return HttpClientError.HttpProtocolError;
+            return out.toOwnedSlice(arena);
+        }
+        const end = std.math.add(usize, i, size) catch return HttpClientError.HttpProtocolError;
+        if (end + 2 > buf.len or !std.mem.eql(u8, buf[end .. end + 2], "\r\n")) return HttpClientError.HttpProtocolError;
         try out.appendSlice(arena, buf[i .. i + size]);
-        i += size + 2;
+        i = end + 2;
     }
-    return out.toOwnedSlice(arena);
+    return HttpClientError.HttpProtocolError;
+}
+
+fn validRequestTarget(s: []const u8) bool {
+    if (s.len == 0 or s[0] != '/') return false;
+    for (s) |b| if (b <= 0x20 or b == 0x7f) return false;
+    return true;
+}
+
+fn validHost(s: []const u8) bool {
+    if (s.len == 0) return false;
+    for (s) |b| if (b <= 0x20 or b == 0x7f or b == '/' or b == '\\') return false;
+    return true;
+}
+
+fn validHeaderName(s: []const u8) bool {
+    if (s.len == 0) return false;
+    for (s) |b| if (!(std.ascii.isAlphanumeric(b) or std.mem.indexOfScalar(u8, "!#$%&'*+-.^_`|~", b) != null)) return false;
+    return true;
+}
+
+fn validHeaderValue(s: []const u8) bool {
+    for (s) |b| if (b == '\r' or b == '\n' or b == 0 or b == 0x7f) return false;
+    return true;
 }
 
 fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
@@ -384,4 +438,19 @@ fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
         if (eqlIgnoreCase(hay[i .. i + needle.len], needle)) return true;
     }
     return false;
+}
+
+test "response parser rejects truncated and ambiguous framing" {
+    const t = std.testing;
+    try t.expectError(error.HttpProtocolError, parseResponse(t.allocator, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nabc"));
+    try t.expectError(error.HttpProtocolError, parseResponse(t.allocator, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 1\r\n\r\na"));
+    try t.expectError(error.HttpProtocolError, parseResponse(t.allocator, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n0\r\n\r\n"));
+    try t.expectError(error.HttpProtocolError, decodeChunked(t.allocator, "3\r\nabc"));
+}
+
+test "outbound request fields reject CRLF injection" {
+    const t = std.testing;
+    try t.expect(!validRequestTarget("/ok\r\nx: y"));
+    try t.expect(!validHeaderName("x bad"));
+    try t.expect(!validHeaderValue("ok\r\nx: injected"));
 }

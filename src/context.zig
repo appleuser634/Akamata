@@ -235,6 +235,11 @@ pub fn Context(comptime State: type) type {
         trace: trace_mod.TraceContext = .{},
         /// Reserved for middleware-to-handler data passing (e.g. JWT claims).
         user_data: ?*anyopaque = null,
+        auth_data: ?*anyopaque = null,
+        session_data: ?*anyopaque = null,
+        /// State owned by the currently executing middleware registration.
+        /// Middleware factories use this to keep mutable state App-local.
+        middleware_data: ?*anyopaque = null,
         /// WS upgrade plumbing — populated by the server.
         stream_ptr: ?*anyopaque = null,
         io_ptr: ?*anyopaque = null,

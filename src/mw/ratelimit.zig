@@ -38,28 +38,15 @@ pub fn Options(comptime State: type) type {
 
 pub fn rateLimit(comptime State: type, comptime opts: Options(State)) app_mod.Middleware(State) {
     const State_ = struct {
-        var gpa: std.mem.Allocator = undefined;
-        var mu: sync.Mutex = .{};
-        var entries: ?std.StringHashMap(Entry) = null;
-        var inited: std.atomic.Value(u8) = .init(0);
-        var requests: u64 = 0;
+        gpa: std.mem.Allocator,
+        mu: sync.Mutex,
+        entries: std.StringHashMap(Entry),
+        requests: u64 = 0,
 
-        fn ensureInit() void {
-            if (inited.load(.acquire) == 2) return;
-            if (inited.cmpxchgStrong(0, 1, .acq_rel, .monotonic) == null) {
-                gpa = std.heap.smp_allocator;
-                mu = sync.Mutex.init();
-                entries = std.StringHashMap(Entry).init(gpa);
-                inited.store(2, .release);
-            } else {
-                while (inited.load(.acquire) != 2) std.atomic.spinLoopHint();
-            }
-        }
-
-        fn evictOne(now: i64, expired_only: bool) bool {
+        fn evictOne(self: *@This(), now: i64, expired_only: bool) bool {
             var candidate: ?[]const u8 = null;
             var oldest: i64 = std.math.maxInt(i64);
-            var it = entries.?.iterator();
+            var it = self.entries.iterator();
             while (it.next()) |item| {
                 const expired = now -| item.value_ptr.window_start >= @as(i64, @intCast(opts.window_secs));
                 if (expired) {
@@ -72,8 +59,8 @@ pub fn rateLimit(comptime State: type, comptime opts: Options(State)) app_mod.Mi
                 }
             }
             const key = candidate orelse return false;
-            if (entries.?.fetchRemove(key)) |removed| {
-                gpa.free(removed.key);
+            if (self.entries.fetchRemove(key)) |removed| {
+                self.gpa.free(removed.key);
                 return true;
             }
             return false;
@@ -81,38 +68,38 @@ pub fn rateLimit(comptime State: type, comptime opts: Options(State)) app_mod.Mi
     };
 
     const Impl = struct {
-        fn cleanup(_: *app_mod.App(State)) void {
-            if (State_.inited.load(.acquire) != 2) return;
-            State_.mu.lock();
-            if (State_.entries) |*entries| {
-                var it = entries.iterator();
-                while (it.next()) |item| State_.gpa.free(item.key_ptr.*);
-                entries.deinit();
-            }
-            State_.entries = null;
-            State_.requests = 0;
-            State_.mu.unlock();
-            State_.mu.deinit();
-            State_.inited.store(0, .release);
+        fn setup(gpa: std.mem.Allocator) !*anyopaque {
+            const state = try gpa.create(State_);
+            state.* = .{ .gpa = gpa, .mu = sync.Mutex.init(), .entries = .init(gpa) };
+            return state;
+        }
+
+        fn cleanup(gpa: std.mem.Allocator, data: *anyopaque) void {
+            const state: *State_ = @ptrCast(@alignCast(data));
+            var it = state.entries.iterator();
+            while (it.next()) |item| state.gpa.free(item.key_ptr.*);
+            state.entries.deinit();
+            state.mu.deinit();
+            gpa.destroy(state);
         }
 
         fn call(c: *app_mod.App(State).Ctx, next: app_mod.Next(State)) anyerror!void {
-            State_.ensureInit();
+            const state: *State_ = @ptrCast(@alignCast(c.middleware_data orelse return error.MiddlewareNotInitialized));
             const key = opts.key_fn(c);
             if (key.len == 0 or key.len > opts.max_key_bytes or opts.max_entries == 0) return reject(c, opts.window_secs);
             const now = opts.now_fn();
 
-            State_.mu.lock();
-            State_.requests +%= 1;
-            if (opts.cleanup_interval > 0 and State_.requests % opts.cleanup_interval == 0) _ = State_.evictOne(now, true);
-            if (State_.entries.?.getPtr(key) == null and State_.entries.?.count() >= opts.max_entries) _ = State_.evictOne(now, false);
-            const gop = State_.entries.?.getOrPut(key) catch {
-                State_.mu.unlock();
+            state.mu.lock();
+            state.requests +%= 1;
+            if (opts.cleanup_interval > 0 and state.requests % opts.cleanup_interval == 0) _ = state.evictOne(now, true);
+            if (state.entries.getPtr(key) == null and state.entries.count() >= opts.max_entries) _ = state.evictOne(now, false);
+            const gop = state.entries.getOrPut(key) catch {
+                state.mu.unlock();
                 return next.run(c);
             };
             if (!gop.found_existing) {
-                gop.key_ptr.* = State_.gpa.dupe(u8, key) catch {
-                    State_.mu.unlock();
+                gop.key_ptr.* = state.gpa.dupe(u8, key) catch {
+                    state.mu.unlock();
                     return next.run(c);
                 };
                 gop.value_ptr.* = .{ .window_start = now, .count = 0 };
@@ -126,7 +113,7 @@ pub fn rateLimit(comptime State: type, comptime opts: Options(State)) app_mod.Mi
             entry.count += 1;
             const count = entry.count;
             const reset_in = window_secs_i - (now - entry.window_start);
-            State_.mu.unlock();
+            state.mu.unlock();
 
             if (opts.emit_headers) {
                 var buf: [32]u8 = undefined;
@@ -154,5 +141,5 @@ pub fn rateLimit(comptime State: type, comptime opts: Options(State)) app_mod.Mi
             return c.json(.{ .error_kind = "rate_limited" }, 429);
         }
     };
-    return .{ .name = "rateLimit", .call = Impl.call, .cleanup = Impl.cleanup };
+    return .{ .name = "rateLimit", .call = Impl.call, .setup = Impl.setup, .cleanup = Impl.cleanup };
 }

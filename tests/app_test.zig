@@ -150,6 +150,9 @@ test "route registration rejects conflicts and freezes after dispatch" {
     try std.testing.expectError(error.WildcardMustBeLast, app.get("/files/*rest/more", helloHandler));
     try app.prepare();
     try std.testing.expectError(error.RoutesFrozen, app.get("/late", helloHandler));
+    try std.testing.expectError(error.RoutesFrozen, app.useAll(am.mw.logger(State)));
+    try std.testing.expectError(error.RoutesFrozen, app.basePath("/late"));
+    try std.testing.expectError(error.RoutesFrozen, app.notFound(helloHandler));
 }
 
 test "HEAD falls back to GET and unsupported methods return 405 Allow" {
@@ -206,7 +209,13 @@ test "client IP ignores forwarding headers unless explicitly trusted" {
     try app.dispatchWithPeer(arena_state.allocator(), &req, &res, null, null, "127.0.0.1");
     try std.testing.expectEqualStrings("127.0.0.1", res.body.items);
 
+    const trustLocal = struct {
+        fn call(peer: ?[]const u8) bool {
+            return peer != null and std.mem.eql(u8, peer.?, "127.0.0.1");
+        }
+    }.call;
     app.trust_proxy_headers = true;
+    app.trusted_proxy_fn = trustLocal;
     var trusted_res: am.Response = .init(arena_state.allocator());
     try app.dispatchWithPeer(arena_state.allocator(), &req, &trusted_res, null, null, "127.0.0.1");
     try std.testing.expectEqualStrings("203.0.113.9", trusted_res.body.items);

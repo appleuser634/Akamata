@@ -129,3 +129,21 @@ test "rate limiter bounds high-cardinality keys and evicts oldest" {
     try std.testing.expectEqual(@as(u16, 200), try rateRequest(&app, "a"));
     try std.testing.expectEqual(@as(u16, 429), try rateRequest(&app, "a"));
 }
+
+test "rate limiter state is isolated between App instances" {
+    rate_now = 100;
+    var first = am.App(State).init(std.testing.allocator, .{});
+    var second = am.App(State).init(std.testing.allocator, .{});
+    defer second.deinit();
+    const limiter = am.mw.rateLimit(State, .{ .key_fn = key, .max_requests = 1, .now_fn = rateNow });
+    _ = try first.useAll(limiter);
+    _ = try second.useAll(limiter);
+    _ = try first.get("/", ok);
+    _ = try second.get("/", ok);
+    try std.testing.expectEqual(@as(u16, 200), try rateRequest(&first, "same"));
+    try std.testing.expectEqual(@as(u16, 429), try rateRequest(&first, "same"));
+    try std.testing.expectEqual(@as(u16, 200), try rateRequest(&second, "same"));
+    first.deinit();
+    // Destroying the first App must not invalidate the second instance.
+    try std.testing.expectEqual(@as(u16, 429), try rateRequest(&second, "same"));
+}

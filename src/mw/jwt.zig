@@ -11,6 +11,9 @@ pub const Options = struct {
     require_exp: bool = true,
     leeway_seconds: u32 = 0,
     reject_future_iat: bool = false,
+    /// Query-string bearer tokens leak through URLs and logs. Disabled by
+    /// default; enable only for a constrained WebSocket handshake flow.
+    allow_query_token: bool = false,
     now_fn: *const fn () i64 = clock.unixSeconds,
 };
 
@@ -33,7 +36,7 @@ pub fn jwtAuth(comptime State: type, comptime opts: Options) app_mod.Middleware(
             if (opts.stash_claims) {
                 const slot = try c.arena.create(Claims);
                 slot.* = .{ .sub = sub };
-                c.user_data = @ptrCast(slot);
+                c.auth_data = @ptrCast(slot);
             }
             try next.run(c);
         }
@@ -43,7 +46,7 @@ pub fn jwtAuth(comptime State: type, comptime opts: Options) app_mod.Middleware(
                 if (std.mem.startsWith(u8, h, "Bearer ")) return h[7..];
             }
             // ?token= query param (useful for WebSocket upgrades).
-            if (c.req.query("token")) |t| return t;
+            if (opts.allow_query_token) if (c.req.query("token")) |t| return t;
             return null;
         }
 
@@ -56,6 +59,6 @@ pub fn jwtAuth(comptime State: type, comptime opts: Options) app_mod.Middleware(
 
 /// Convenience to read claims that the middleware stashed.
 pub fn currentClaims(comptime State: type, c: *app_mod.App(State).Ctx) ?*Claims {
-    const p = c.user_data orelse return null;
+    const p = c.auth_data orelse return null;
     return @ptrCast(@alignCast(p));
 }

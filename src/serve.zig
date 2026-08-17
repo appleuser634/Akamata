@@ -17,12 +17,11 @@ pub fn serve(comptime State: type, app: *app_mod.App(State), opts: app_mod.Serve
     if (is_native) {
         switch (opts.runtime) {
             .threaded => return serveNative(State, app, opts),
-            .reactor => {
-                if (comptime @import("builtin").os.tag == .linux) {
-                    return @import("runtime/reactor_epoll.zig").serve(State, app, opts);
-                }
-                return @import("runtime/reactor_kqueue.zig").serve(State, app, opts);
-            },
+            // The reactor implementations do not yet enforce the production
+            // parser, deadline, connection, peer-IP, and backpressure
+            // contracts of the threaded runtime. Fail closed until parity is
+            // proven by the shared integration suite.
+            .reactor => return error.ExperimentalRuntimeDisabled,
         }
     }
     return serveWorkers(State, app, opts);
@@ -35,6 +34,7 @@ pub fn serve(comptime State: type, app: *app_mod.App(State), opts: app_mod.Serve
 fn serveNative(comptime State: type, app: *app_mod.App(State), opts: app_mod.ServeOptions) !void {
     if (!is_native) return;
     app.trust_proxy_headers = opts.trust_proxy_headers;
+    app.trusted_proxy_fn = opts.trusted_proxy_fn;
     try app.prepare();
     var io_impl: Io.Threaded = .init(app.gpa, .{});
     defer io_impl.deinit();
@@ -535,6 +535,7 @@ const runtime_workers = if (build_options.backend == .workers) @import("runtime/
 fn serveWorkers(comptime State: type, app: *app_mod.App(State), opts: app_mod.ServeOptions) !void {
     if (is_native) return;
     app.trust_proxy_headers = opts.trust_proxy_headers;
+    app.trusted_proxy_fn = opts.trusted_proxy_fn;
     try app.prepare();
     const Wrap = struct {
         var app_ref: *app_mod.App(State) = undefined;

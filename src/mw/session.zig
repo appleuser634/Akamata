@@ -225,53 +225,38 @@ pub const Session = struct {
 /// and a signed cookie is emitted on the response.
 pub fn session(comptime State: type, comptime opts: Options) app_mod.Middleware(State) {
     const Impl = struct {
-        var store_slot: ?Store = null;
-        var owned_memory_store: ?*MemoryStore = null;
-        var inited: std.atomic.Value(u8) = .init(0);
+        const Runtime = struct {
+            store: Store,
+            owned_memory_store: ?*MemoryStore,
+        };
 
-        fn ensureStore(c: *app_mod.App(State).Ctx) !Store {
-            // Fast path: already initialised
-            if (inited.load(.acquire) == 2) return store_slot.?;
+        fn setup(gpa: std.mem.Allocator) !*anyopaque {
+            const runtime = try gpa.create(Runtime);
+            errdefer gpa.destroy(runtime);
             if (opts.store) |s| {
-                if (inited.cmpxchgStrong(0, 1, .acq_rel, .monotonic) == null) {
-                    store_slot = s.*;
-                    inited.store(2, .release);
-                }
-                return store_slot.?;
+                runtime.* = .{ .store = s.*, .owned_memory_store = null };
+                return runtime;
             }
-            // Build an in-memory store on first hit. We leak the MemoryStore
-            // for the process lifetime — sessions are gone on restart anyway.
-            if (inited.cmpxchgStrong(0, 1, .acq_rel, .monotonic) == null) {
-                const ms = std.heap.smp_allocator.create(MemoryStore) catch |e| {
-                    // Allow another thread to retry by resetting the CAS slot.
-                    inited.store(0, .release);
-                    return e;
-                };
-                ms.* = MemoryStore.init(std.heap.smp_allocator);
-                owned_memory_store = ms;
-                store_slot = ms.store();
-                inited.store(2, .release);
-            } else {
-                while (inited.load(.acquire) != 2) std.atomic.spinLoopHint();
-            }
-            _ = c;
-            return store_slot.?;
+            const ms = try gpa.create(MemoryStore);
+            ms.* = MemoryStore.init(gpa);
+            runtime.* = .{ .store = ms.store(), .owned_memory_store = ms };
+            return runtime;
         }
 
-        fn cleanup(_: *app_mod.App(State)) void {
-            if (owned_memory_store) |ms| {
+        fn cleanup(gpa: std.mem.Allocator, data: *anyopaque) void {
+            const runtime: *Runtime = @ptrCast(@alignCast(data));
+            if (runtime.owned_memory_store) |ms| {
                 ms.deinit();
-                std.heap.smp_allocator.destroy(ms);
-                owned_memory_store = null;
+                gpa.destroy(ms);
             }
-            store_slot = null;
-            inited.store(0, .release);
+            gpa.destroy(runtime);
         }
 
         fn call(c: *app_mod.App(State).Ctx, next: app_mod.Next(State)) anyerror!void {
             if (opts.secret.len < 32) return error.SessionSecretTooShort;
             if (opts.cookie_max_age_secs <= 0) return error.InvalidSessionLifetime;
-            const st = try ensureStore(c);
+            const runtime: *Runtime = @ptrCast(@alignCast(c.middleware_data orelse return error.MiddlewareNotInitialized));
+            const st = runtime.store;
             const sid_opt = readSid(c, st);
             const sid = if (sid_opt) |s| s else try mintSid(c);
             const sess = try c.arena.create(Session);
@@ -288,7 +273,7 @@ pub fn session(comptime State: type, comptime opts: Options) app_mod.Middleware(
                 .cookie_same_site = opts.cookie_same_site,
                 .now_fn = opts.now_fn,
             };
-            c.user_data = @ptrCast(sess);
+            c.session_data = @ptrCast(sess);
 
             if (sid_opt == null or opts.sliding_expiration) {
                 const expires_at = std.math.add(i64, opts.now_fn(), opts.cookie_max_age_secs) catch return error.InvalidSessionLifetime;
@@ -319,7 +304,7 @@ pub fn session(comptime State: type, comptime opts: Options) app_mod.Middleware(
             return mintSessionId(c.arena);
         }
     };
-    return .{ .name = "session", .call = Impl.call, .cleanup = Impl.cleanup };
+    return .{ .name = "session", .call = Impl.call, .setup = Impl.setup, .cleanup = Impl.cleanup };
 }
 
 fn mintSessionId(arena: std.mem.Allocator) ![]u8 {
@@ -332,7 +317,7 @@ fn mintSessionId(arena: std.mem.Allocator) ![]u8 {
 }
 
 pub fn currentSession(comptime State: type, c: *app_mod.App(State).Ctx) ?*Session {
-    const p = c.user_data orelse return null;
+    const p = c.session_data orelse return null;
     return @ptrCast(@alignCast(p));
 }
 

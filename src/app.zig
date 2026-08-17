@@ -28,8 +28,12 @@ pub fn Middleware(comptime State: type) type {
     return struct {
         name: []const u8 = "anon",
         call: *const fn (c: *ctx_mod.Context(State), next: Next(State)) anyerror!void,
-        /// Optional teardown for middleware-owned process resources.
-        cleanup: ?*const fn (app: *App(State)) void = null,
+        /// Per-registration state. `setup` is called by `use`/`useAll`, so
+        /// identical middleware factories used by different Apps never share
+        /// mutable storage.
+        data: ?*anyopaque = null,
+        setup: ?*const fn (gpa: std.mem.Allocator) anyerror!*anyopaque = null,
+        cleanup: ?*const fn (gpa: std.mem.Allocator, data: *anyopaque) void = null,
     };
 }
 
@@ -51,6 +55,9 @@ pub fn Next(comptime State: type) type {
             while (i < self.chain.len) : (i += 1) {
                 const entry = self.chain[i];
                 if (entry.pattern.len == 0 or patternMatches(entry.pattern, c.req.path())) {
+                    const previous_data = c.middleware_data;
+                    defer c.middleware_data = previous_data;
+                    c.middleware_data = entry.mw.data;
                     const next: Self = .{
                         .chain = self.chain,
                         .terminal = self.terminal,
@@ -161,9 +168,9 @@ pub const Runtime = enum {
     /// Default — std.Io.Threaded + one accept loop per worker. Solid,
     /// portable, but bounded by `accept_thread_count` for concurrency.
     threaded,
-    /// Prototype kqueue-based reactor (PERF2). macOS / BSD only for now.
-    /// Better keep-alive density, single-thread event loop. Opt-in until
-    /// the full A/B benchmark suite says we should flip the default.
+    /// Reserved experimental reactor. `serve()` currently fails closed with
+    /// `error.ExperimentalRuntimeDisabled` because it has not reached the
+    /// threaded runtime's security and backpressure guarantees.
     reactor,
 };
 
@@ -197,6 +204,10 @@ pub const ServeOptions = struct {
     /// Honor forwarding headers only when the immediate peer is a trusted
     /// reverse proxy. Off by default to prevent client-controlled IP spoofing.
     trust_proxy_headers: bool = false,
+    /// Required policy callback when forwarding headers are enabled. It sees
+    /// the direct peer (`null` on targets without socket metadata) and must
+    /// explicitly authorize that hop.
+    trusted_proxy_fn: ?*const fn (peer_ip: ?[]const u8) bool = null,
 };
 
 pub fn App(comptime State: type) type {
@@ -225,6 +236,7 @@ pub fn App(comptime State: type) type {
         routes_frozen: bool = false,
         index_mu: sync.Mutex,
         trust_proxy_headers: bool = false,
+        trusted_proxy_fn: ?*const fn (peer_ip: ?[]const u8) bool = null,
         /// Set by `requestShutdown()`. Read by the accept loop on every
         /// iteration; once true, the listener is closed and the loop returns.
         shutdown_flag: std.atomic.Value(bool) = .init(false),
@@ -254,7 +266,7 @@ pub fn App(comptime State: type) type {
             handler: H,
             /// Optional OpenAPI metadata, populated by `app.endpoint(...)`.
             /// Routes registered via `app.get/post/...` leave this null and
-            /// are simply omitted from the generated spec.
+            /// are included as untyped operations in the generated spec.
             meta: ?*const @import("openapi.zig").EndpointMeta = null,
         };
 
@@ -324,7 +336,7 @@ pub fn App(comptime State: type) type {
             }
             self.routes.deinit(self.gpa);
             for (self.middlewares.items) |entry| {
-                if (entry.mw.cleanup) |cleanup| cleanup(self);
+                if (entry.mw.cleanup) |cleanup| if (entry.mw.data) |data| cleanup(self.gpa, data);
                 if (entry.pattern.len > 0) self.gpa.free(entry.pattern);
             }
             self.middlewares.deinit(self.gpa);
@@ -364,7 +376,7 @@ pub fn App(comptime State: type) type {
                         switch (info.@"fn".params.len) {
                             1 => p.deinit(),
                             2 => p.deinit(gpa),
-                            else => {}, // unknown signature; skip
+                            else => @compileError("app.own deinit must accept (*Self) or (*Self, Allocator)"),
                         }
                     }
                     gpa.destroy(p);
@@ -504,14 +516,21 @@ pub fn App(comptime State: type) type {
 
         /// Path-scoped middleware. Use trailing `*` for prefix matches.
         pub fn use(self: *Self, pattern: []const u8, mw: Mw) !*Self {
+            if (self.routes_frozen) return error.RoutesFrozen;
             const full = try concatPath(self.gpa, self.base_prefix, pattern);
-            try self.middlewares.append(self.gpa, .{ .mw = mw, .pattern = full });
+            errdefer self.gpa.free(full);
+            const instance = try instantiateMiddleware(self.gpa, mw);
+            errdefer cleanupMiddleware(self.gpa, instance);
+            try self.middlewares.append(self.gpa, .{ .mw = instance, .pattern = full });
             return self;
         }
 
         /// Global middleware (runs before every handler).
         pub fn useAll(self: *Self, mw: Mw) !*Self {
-            try self.middlewares.append(self.gpa, .{ .mw = mw, .pattern = "" });
+            if (self.routes_frozen) return error.RoutesFrozen;
+            const instance = try instantiateMiddleware(self.gpa, mw);
+            errdefer cleanupMiddleware(self.gpa, instance);
+            try self.middlewares.append(self.gpa, .{ .mw = instance, .pattern = "" });
             return self;
         }
 
@@ -549,8 +568,12 @@ pub fn App(comptime State: type) type {
                 return g.add(.GET, .ws, path, h);
             }
             pub fn use(g: *Group, pattern: []const u8, mw: Mw) !*Group {
+                if (g.app.routes_frozen) return error.RoutesFrozen;
                 const full = try concatPath(g.app.gpa, g.prefix, pattern);
-                try g.app.middlewares.append(g.app.gpa, .{ .mw = mw, .pattern = full });
+                errdefer g.app.gpa.free(full);
+                const instance = try instantiateMiddleware(g.app.gpa, mw);
+                errdefer cleanupMiddleware(g.app.gpa, instance);
+                try g.app.middlewares.append(g.app.gpa, .{ .mw = instance, .pattern = full });
                 return g;
             }
             pub fn basePath(g: *Group, prefix: []const u8) !Group {
@@ -569,6 +592,7 @@ pub fn App(comptime State: type) type {
         }
 
         fn makeGroup(self: *Self, base: []const u8, prefix: []const u8) !Group {
+            if (self.routes_frozen) return error.RoutesFrozen;
             const full = try concatPath(self.gpa, base, prefix);
             errdefer self.gpa.free(full);
             try self.group_prefixes.append(self.gpa, full);
@@ -577,11 +601,13 @@ pub fn App(comptime State: type) type {
 
         // ===== Hooks =====
 
-        pub fn notFound(self: *Self, h: H) void {
+        pub fn notFound(self: *Self, h: H) !void {
+            if (self.routes_frozen) return error.RoutesFrozen;
             self.not_found_handler = h;
         }
 
-        pub fn onError(self: *Self, h: EH) void {
+        pub fn onError(self: *Self, h: EH) !void {
+            if (self.routes_frozen) return error.RoutesFrozen;
             self.err_handler = h;
         }
 
@@ -655,7 +681,8 @@ pub fn App(comptime State: type) type {
                     .inner = request,
                     .params_ref = undefined,
                     .arena = arena,
-                    .trust_proxy_headers = self.trust_proxy_headers,
+                    .trust_proxy_headers = self.trust_proxy_headers and
+                        (if (self.trusted_proxy_fn) |trust| trust(peer_ip) else false),
                     .peer_ip = peer_ip,
                 },
                 .res = response,
@@ -771,6 +798,16 @@ pub fn App(comptime State: type) type {
             return serve_mod.serve(State, self, opts);
         }
     };
+}
+
+fn instantiateMiddleware(gpa: std.mem.Allocator, mw: anytype) !@TypeOf(mw) {
+    var out = mw;
+    if (mw.setup) |setup| out.data = try setup(gpa);
+    return out;
+}
+
+fn cleanupMiddleware(gpa: std.mem.Allocator, mw: anytype) void {
+    if (mw.cleanup) |cleanup| if (mw.data) |data| cleanup(gpa, data);
 }
 
 fn concatPath(gpa: std.mem.Allocator, base: []const u8, sub: []const u8) ![]u8 {
