@@ -86,6 +86,8 @@ pub const mw = struct {
     pub const AccessLogOptions = @import("mw/accesslog.zig").Options;
     pub const serverTiming = @import("mw/server_timing.zig").serverTiming;
     pub const ServerTimingOptions = @import("mw/server_timing.zig").Options;
+    pub const nPlusOne = @import("mw/nplusone.zig").nPlusOne;
+    pub const NPlusOneOptions = @import("mw/nplusone.zig").Options;
 };
 
 pub const observability = struct {
