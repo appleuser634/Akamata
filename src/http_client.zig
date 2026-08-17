@@ -21,7 +21,7 @@ pub const HttpClientError = error{
     OutOfMemory,
 };
 
-pub const Method = enum { GET, POST, PUT, DELETE };
+pub const Method = enum { GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS };
 
 pub const Header = struct {
     name: []const u8,
@@ -258,7 +258,10 @@ fn nativePlainSend(
     var tmp: [4096]u8 = undefined;
     while (true) {
         var vec: [1][]u8 = .{&tmp};
-        const n = sr.interface.readVec(&vec) catch return HttpClientError.ReadFailed;
+        const n = sr.interface.readVec(&vec) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return HttpClientError.ReadFailed,
+        };
         if (n == 0) break;
         if (all.items.len + n > max_resp) return HttpClientError.ResponseTooLarge;
         try all.appendSlice(arena, tmp[0..n]);

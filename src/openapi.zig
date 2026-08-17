@@ -186,7 +186,8 @@ pub fn printToStdout(comptime AppT: type, app: *AppT, gpa: std.mem.Allocator, in
     const spec = try generate(AppT, app, gpa, info);
     defer gpa.free(spec);
     var stdout_buf: [4096]u8 = undefined;
-    var sw = std.fs.File.stdout().writer(&stdout_buf);
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var sw = std.Io.File.stdout().writer(io, &stdout_buf);
     try sw.interface.writeAll(spec);
     try sw.interface.writeAll("\n");
     try sw.interface.flush();
