@@ -2,6 +2,8 @@ const std = @import("std");
 
 pub const Backend = enum { native, workers };
 pub const Example = enum { chat, guestbook, bench, tasks };
+pub const BenchRouter = enum { runtime, static };
+pub const BenchRouteKind = enum { static, parameter, wildcard };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
@@ -11,6 +13,10 @@ pub fn build(b: *std.Build) void {
     // client and Turso path now use std.crypto.tls — no OpenSSL needed.
     // Enable with `-Dopenssl=true` if you build the FCM push example.
     const with_openssl = b.option(bool, "openssl", "link OpenSSL (only needed for FCM RS256 signing)") orelse false;
+    const bench_route_count = b.option(usize, "bench-routes", "router benchmark route count") orelse 100;
+    const bench_router = b.option(BenchRouter, "bench-router", "router benchmark implementation") orelse .runtime;
+    const bench_route_kind = b.option(BenchRouteKind, "bench-route-kind", "router benchmark route kind") orelse .static;
+    const bench_middleware_count = b.option(usize, "bench-middlewares", "router benchmark middleware count") orelse 0;
 
     const native_target = b.standardTargetOptions(.{});
     const target = switch (backend) {
@@ -120,6 +126,26 @@ pub fn build(b: *std.Build) void {
     const install_cli = b.addInstallArtifact(cli_exe, .{});
     b.step("cli", "build the akamata CLI binary").dependOn(&install_cli.step);
 
+    // Compile-time/runtime router scaling benchmark. Kept separate from the
+    // example selector so its specialization matrix is explicit in CI/scripts.
+    const router_bench_opts = b.addOptions();
+    router_bench_opts.addOption(usize, "route_count", bench_route_count);
+    router_bench_opts.addOption(BenchRouter, "router", bench_router);
+    router_bench_opts.addOption(BenchRouteKind, "route_kind", bench_route_kind);
+    router_bench_opts.addOption(usize, "middleware_count", bench_middleware_count);
+    const router_bench_mod = b.createModule(.{
+        .root_source_file = b.path("examples/router_bench/src/main.zig"),
+        .target = native_target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "akamata", .module = am_mod },
+            .{ .name = "router_bench_options", .module = router_bench_opts.createModule() },
+        },
+    });
+    const router_bench_exe = b.addExecutable(.{ .name = "router-bench", .root_module = router_bench_mod });
+    const install_router_bench = b.addInstallArtifact(router_bench_exe, .{});
+    b.step("router-bench", "build the route/middleware scaling benchmark").dependOn(&install_router_bench.step);
+
     // End-to-end scaffold regression test. Kept as an explicit step because
     // the default scaffold resolves its commit-pinned dependency over HTTPS.
     const scaffold_smoke = b.addSystemCommand(&.{ "sh", "tests/scaffold_smoke.sh" });
@@ -128,6 +154,9 @@ pub fn build(b: *std.Build) void {
 
     // === Tests ===
     const test_step = b.step("test", "run unit tests");
+    const compile_fail_command = b.addSystemCommand(&.{ "bash", "tests/compile_fail.sh" });
+    const compile_fail_step = b.step("compile-fail-test", "verify compile-time diagnostics");
+    compile_fail_step.dependOn(&compile_fail_command.step);
     const test_targets = [_][]const u8{
         "tests/http_parser_test.zig",
         "tests/ws_frame_test.zig",
@@ -151,6 +180,7 @@ pub fn build(b: *std.Build) void {
         "tests/observability_test.zig",
         "tests/security_middleware_test.zig",
         "tests/docs_examples_test.zig",
+        "tests/comptime_framework_test.zig",
     };
 
     const integration_step = b.step("integration", "build integration test (manual run)");

@@ -29,6 +29,75 @@ pub fn validate(comptime providers: []const type) void {
                 @compileError("application-scoped providers cannot depend on request-scoped values");
         }
     }
+    inline for (providers, 0..) |_, i| {
+        comptime var visiting = [_]bool{false} ** providers.len;
+        comptime var visited = [_]bool{false} ** providers.len;
+        detectCycle(providers, i, &visiting, &visited);
+    }
+}
+
+fn detectCycle(
+    comptime providers: []const type,
+    comptime index: usize,
+    comptime visiting: *[providers.len]bool,
+    comptime visited: *[providers.len]bool,
+) void {
+    if (visiting[index]) @compileError("dependency cycle includes " ++ @typeName(providers[index].Value));
+    if (visited[index]) return;
+    visiting[index] = true;
+    inline for (providers[index].deps) |Dep| {
+        comptime var dependency_index: ?usize = null;
+        inline for (providers, 0..) |Candidate, candidate_index| {
+            if (Candidate.Value == Dep) dependency_index = candidate_index;
+        }
+        if (dependency_index) |next| detectCycle(providers, next, visiting, visited);
+    }
+    visiting[index] = false;
+    visited[index] = true;
+}
+
+/// A validated dependency graph. `order` is a dependency-first topological
+/// order generated at comptime and can drive explicit application/request
+/// construction without a runtime service locator.
+pub fn Graph(comptime providers: []const type) type {
+    comptime validate(providers);
+    return struct {
+        pub const provider_count = providers.len;
+        pub const order = topologicalOrder(providers);
+        pub const Services = Registry(valueTypes(providers));
+    };
+}
+
+fn valueTypes(comptime providers: []const type) [providers.len]type {
+    var result: [providers.len]type = undefined;
+    for (providers, 0..) |P, i| result[i] = P.Value;
+    return result;
+}
+
+fn topologicalOrder(comptime providers: []const type) [providers.len]usize {
+    var result: [providers.len]usize = undefined;
+    var emitted = [_]bool{false} ** providers.len;
+    var count: usize = 0;
+    while (count < providers.len) {
+        var progress = false;
+        for (providers, 0..) |P, i| {
+            if (emitted[i]) continue;
+            var ready = true;
+            for (P.deps) |Dep| {
+                for (providers, 0..) |Candidate, candidate_index| if (Candidate.Value == Dep and !emitted[candidate_index]) {
+                    ready = false;
+                };
+            }
+            if (ready) {
+                result[count] = i;
+                emitted[i] = true;
+                count += 1;
+                progress = true;
+            }
+        }
+        if (!progress) unreachable; // validate() emitted the useful cycle diagnostic.
+    }
+    return result;
 }
 
 /// A zero-allocation typed registry. Values remain owned by the caller.

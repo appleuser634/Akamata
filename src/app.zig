@@ -235,6 +235,9 @@ pub fn App(comptime State: type) type {
         static_index: std.StringHashMap(usize) = undefined,
         index_built: bool = false,
         routes_frozen: bool = false,
+        static_route_offset: usize = 0,
+        static_route_count: usize = 0,
+        static_match_fn: ?*const fn (Method, []const u8, [][]const u8, [][]const u8) ?usize = null,
         index_mu: sync.Mutex,
         trust_proxy_headers: bool = false,
         trusted_proxy_fn: ?*const fn (peer_ip: ?[]const u8) bool = null,
@@ -550,6 +553,39 @@ pub fn App(comptime State: type) type {
             return self.addWithMeta(method, .http, path, h, meta);
         }
 
+        /// Mount a validated compile-time route graph. Route views still use
+        /// the existing table for OpenAPI/client compatibility, while request
+        /// matching bypasses the hash map and runtime pattern parser.
+        /// Mount this after any dynamic registrations; registration freezes.
+        pub fn mountStatic(self: *Self, comptime GraphType: type) !*Self {
+            if (self.routes_frozen) return error.RoutesFrozen;
+            const offset = self.routes.items.len;
+            try GraphType.register(self);
+            self.static_route_offset = offset;
+            self.static_route_count = GraphType.route_count;
+            if (comptime GraphType.prefer_specialized_matcher) {
+                self.static_match_fn = struct {
+                    fn call(method: Method, path: []const u8, names: [][]const u8, values: [][]const u8) ?usize {
+                        const found = GraphType.match(method, path) orelse return null;
+                        if (found.params.len > names.len or found.params.len > values.len) return null;
+                        for (0..found.params.len) |i| {
+                            names[i] = found.params.names[i];
+                            values[i] = found.params.values[i];
+                        }
+                        return found.index;
+                    }
+                }.call;
+                // No lazy StringHashMap is needed for a specialized graph.
+                self.index_built = true;
+                self.routes_frozen = true;
+            } else {
+                // Preserve compile-time validation but select the shared,
+                // compact runtime matcher when specialization would bloat.
+                try self.prepare();
+            }
+            return self;
+        }
+
         // ===== Middlewares =====
 
         /// Path-scoped middleware. Use trailing `*` for prefix matches.
@@ -688,12 +724,24 @@ pub fn App(comptime State: type) type {
             var matched: ?*const Route = null;
             var matched_params: ctx_mod.Params = .{};
             const norm_path = normPath(request.path);
+            if (self.static_match_fn) |static_match| {
+                if (static_match(request.method, request.path, &name_buf, &value_buf)) |relative_index| {
+                    if (relative_index < self.static_route_count) {
+                        matched = &self.routes.items[self.static_route_offset + relative_index];
+                        var count: usize = 0;
+                        for (self.routes.items[self.static_route_offset + relative_index].segments) |segment| {
+                            if (segment.kind != .static) count += 1;
+                        }
+                        matched_params = .{ .names = name_buf[0..count], .values = value_buf[0..count] };
+                    }
+                }
+            }
             var key_buf: [256]u8 = undefined;
-            if (formatStaticKey(&key_buf, request.method, norm_path)) |key| {
+            if (matched == null) if (formatStaticKey(&key_buf, request.method, norm_path)) |key| {
                 if (self.static_index.get(key)) |idx| {
                     matched = &self.routes.items[idx];
                 }
-            }
+            };
             // RFC semantics: HEAD uses an explicit HEAD route when present,
             // otherwise it falls back to the matching GET handler.
             if (matched == null and request.method == .HEAD) {

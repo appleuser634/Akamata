@@ -104,20 +104,31 @@ pub const Stmt = struct {
         var out: T = undefined;
         inline for (info.@"struct".fields, 0..) |f, i| {
             const FT = f.type;
-            const fi = @typeInfo(FT);
-            switch (fi) {
-                .int => @field(out, f.name) = @intCast(try self.columnInt(i)),
-                .float => @field(out, f.name) = @floatCast(try self.columnFloat(i)),
-                .bool => @field(out, f.name) = (try self.columnInt(i)) != 0,
-                .pointer => |p| {
-                    if (p.size == .slice and p.child == u8) {
-                        @field(out, f.name) = try self.columnText(i);
-                    } else @compileError("readRow: unsupported pointer type for field " ++ f.name);
-                },
-                else => @compileError("readRow: unsupported field type " ++ @typeName(FT)),
+            if (@typeInfo(FT) == .optional) {
+                if (try self.columnIsNull(i)) {
+                    @field(out, f.name) = null;
+                } else {
+                    @field(out, f.name) = try readColumn(self, @typeInfo(FT).optional.child, i, f.name);
+                }
+            } else {
+                if (try self.columnIsNull(i)) return DbError.InvalidType;
+                @field(out, f.name) = try readColumn(self, FT, i, f.name);
             }
         }
         return out;
+    }
+
+    fn readColumn(self: Stmt, comptime T: type, index: usize, comptime field_name: []const u8) !T {
+        return switch (@typeInfo(T)) {
+            .int => @intCast(try self.columnInt(index)),
+            .float => @floatCast(try self.columnFloat(index)),
+            .bool => (try self.columnInt(index)) != 0,
+            .pointer => |p| if (p.size == .slice and p.child == u8)
+                try self.columnText(index)
+            else
+                @compileError("readRow: unsupported pointer type for field " ++ field_name),
+            else => @compileError("readRow: unsupported field type " ++ @typeName(T)),
+        };
     }
 };
 

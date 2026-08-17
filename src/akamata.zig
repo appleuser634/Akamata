@@ -29,8 +29,11 @@ const ctx_mod = @import("context.zig");
 pub const Context = ctx_mod.Context;
 pub const Params = ctx_mod.Params;
 pub const contract = @import("contract.zig");
-pub const di = @import("di.zig");
+pub const static_router = @import("static_router.zig");
+pub const Routes = static_router.Graph;
+pub const static_middleware = @import("static_middleware.zig");
 pub const capability = @import("capability.zig");
+pub const di = @import("di.zig");
 pub const diagnostics = @import("diagnostics.zig");
 
 // Built-in middlewares (new API: take comptime State)
@@ -179,6 +182,8 @@ pub const db = struct {
     pub const VTable = db_mod.VTable;
     pub const StmtVTable = db_mod.StmtVTable;
     pub const StepResult = db_mod.StepResult;
+    pub const Static = @import("db/static.zig").Database;
+    pub const Query = @import("db/static.zig").Query;
     pub const Pool = @import("db/pool.zig").Pool;
     pub const PoolLease = @import("db/pool.zig").Lease;
 

@@ -253,6 +253,18 @@ pub fn Context(comptime State: type) type {
             return self.app_state;
         }
 
+        /// Explicit name for the allocator whose allocations live until the
+        /// end of this request. `arena` remains public for compatibility.
+        pub fn requestAllocator(self: *Self) std.mem.Allocator {
+            return self.arena;
+        }
+
+        /// Copy borrowed request bytes into request-owned storage when data
+        /// must survive parsing or mutation within the handler pipeline.
+        pub fn ownRequestBytes(self: *Self, borrowed: []const u8) ![]u8 {
+            return self.arena.dupe(u8, borrowed);
+        }
+
         /// Return the framework's `*am.App(State)`. Useful for handlers
         /// that need to introspect the route table at request time —
         /// `am.openapi.generate(...)` and `am.client_gen.generate(...)`
