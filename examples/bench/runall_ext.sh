@@ -13,10 +13,15 @@
 set -uo pipefail
 
 cd "$(dirname "$0")"
-AKAMATA=/Users/musashi.miyagi/Zig/Akamata
+AKAMATA="$(cd ../.. && pwd)"
 
-results_json=/tmp/bench_results.json
-echo "[" > "$results_json"
+OUTDIR="${OUTDIR:-$AKAMATA/benchmark-results}"
+mkdir -p "$OUTDIR"
+commit="$(git -C "$AKAMATA" rev-parse HEAD)"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+results_json="$OUTDIR/${stamp}-${commit:0:12}.json"
+printf '{"metadata":{"commit":"%s","timestamp_utc":"%s","uname":"%s"},"results":[' \
+  "$commit" "$stamp" "$(uname -a | sed 's/"/\\"/g')" > "$results_json"
 first=1
 
 emit_json() {
@@ -86,7 +91,8 @@ bench_one() {
   startup_ms=$(wait_ready "http://127.0.0.1:$port/hello")
   if [ "$startup_ms" = "-1" ]; then
     echo "  FAILED to start within 30s"
-    eval "pkill -9 -f '$cleanup_pattern' 2>/dev/null"
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
     return
   fi
 
@@ -129,7 +135,8 @@ bench_one() {
 }
 EOF
 
-  eval "pkill -9 -f '$cleanup_pattern' 2>/dev/null"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
   sleep 0.5
 }
 
@@ -182,7 +189,7 @@ bench_one "fastify-node" \
   "n/a (interpreted)" \
   "fastify/index.mjs"
 
-echo "]" >> "$results_json"
+echo "]}" >> "$results_json"
 
 echo
 echo "=== Done. JSON saved to $results_json ==="

@@ -14,6 +14,10 @@ jobs:
         job:
           - name: native-test
             cmd: zig build test
+          - name: native-integration
+            cmd: zig build integration
+          - name: tasks-test
+            cmd: zig build tasks-test
           - name: cli-build
             cmd: zig build cli
           - name: chat-native
@@ -24,6 +28,8 @@ jobs:
             cmd: zig build -Dexample=mobus
           - name: mobus-workers
             cmd: zig build -Dexample=mobus -Dbackend=workers -Doptimize=ReleaseSmall
+          - name: guestbook-workers
+            cmd: zig build -Dexample=guestbook -Dbackend=workers -Doptimize=ReleaseSmall
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
@@ -31,6 +37,18 @@ jobs:
           version: 0.16.0
       - run: ./third_party/sqlite/fetch.sh
       - run: ${{ matrix.job.cmd }}
+
+  macos-native:
+    name: macos native + kqueue compile
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: ./third_party/sqlite/fetch.sh
+      - run: zig build test
+      - run: zig build -Dexample=bench
 
   cli-smoke:
     name: cli init smoke test
