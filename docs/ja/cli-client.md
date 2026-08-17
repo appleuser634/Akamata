@@ -12,9 +12,10 @@ akamata client
 akamata client --tui --base-url=http://127.0.0.1:8080
 ```
 
-TUIは検出したendpoint一覧、編集可能なrequest、整形済みresponseを一画面に表示します。
+TUIはterminal sizeに応じてendpoint一覧とresponse領域を調整し、status／shortcutを最下部へ固定します。HTTP method／status classを色分けし、discovered／manual modeも明示します。
 
-- `j`／`k`: endpoint選択
+- `↑`／`↓`または`j`／`k`: endpoint選択
+- `g`／`G`: 最初／最後のendpointへ移動
 - `Enter`: 実行。宣言済み`{path}` parameterは入力promptを表示してencode
 - `m`: HTTP method切り替え
 - `e`: pathまたはabsolute URL編集

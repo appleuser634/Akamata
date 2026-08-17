@@ -12,9 +12,10 @@ akamata client
 akamata client --tui --base-url=http://127.0.0.1:8080
 ```
 
-The TUI shows the discovered endpoint list, editable request, and formatted response in one screen. Keys:
+The TUI adapts its route list and response viewport to the terminal size. It keeps status and shortcuts anchored at the bottom, highlights HTTP methods/status classes, and clearly labels discovered versus manual mode. Keys:
 
-- `j` / `k`: select an endpoint
+- `↑` / `↓` or `j` / `k`: select an endpoint
+- `g` / `G`: jump to the first or last endpoint
 - `Enter`: execute; declared `{path}` parameters are prompted and encoded
 - `m`: cycle the HTTP method
 - `e`: edit the path or absolute URL
