@@ -2,13 +2,17 @@
 const std = @import("std");
 const am = @import("akamata");
 
-const Endpoint = struct {
+pub const Endpoint = struct {
     method: am.http_client.Method,
     path: []const u8,
     summary: []const u8,
     operation_id: []const u8,
     streaming: bool = false,
 };
+
+pub fn discoverForTooling(alloc: std.mem.Allocator) ![]const Endpoint {
+    return discover(alloc, "http://127.0.0.1:8080");
+}
 
 const State = struct {
     endpoints: []const Endpoint,

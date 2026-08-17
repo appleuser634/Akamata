@@ -1451,6 +1451,32 @@ fn cmdRoutes(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
         const arg = std.mem.sliceTo(raw, 0);
         if (std.mem.eql(u8, arg, "--json")) json = true else return error.UsageError;
     }
+    const main_source_owned = readFileAlloc(alloc, "src/main.zig", 2 * 1024 * 1024) catch null;
+    defer {
+        if (main_source_owned) |source| alloc.free(source);
+    }
+    const main_source = main_source_owned orelse "";
+    if (std.mem.indexOf(u8, main_source, "akamata-openapi") == null) {
+        var arena_state: std.heap.ArenaAllocator = .init(alloc);
+        defer arena_state.deinit();
+        const routes = try client_tui.discoverForTooling(arena_state.allocator());
+        if (explain_method) |method| {
+            for (routes) |route| if (std.ascii.eqlIgnoreCase(@tagName(route.method), method) and std.mem.eql(u8, route.path, explain_path.?)) {
+                std.debug.print("{s} {s}\n  source        {s}\n  streaming     {}\n", .{ method, route.path, route.summary, route.streaming });
+                return;
+            };
+            return error.RouteNotFound;
+        }
+        if (json) {
+            var aw: std.Io.Writer.Allocating = .init(arena_state.allocator());
+            try std.json.Stringify.value(routes, .{}, &aw.writer);
+            std.debug.print("{s}\n", .{aw.written()});
+            return;
+        }
+        for (routes) |route| std.debug.print("{s: <7} {s} {s}\n", .{ @tagName(route.method), route.path, route.summary });
+        std.debug.print("routes: {d} operation(s)\n", .{routes.len});
+        return;
+    }
     const bytes = try captureCmd(alloc, &.{ "zig", "build", "run", "--", "akamata-openapi" });
     defer alloc.free(bytes);
     if (json) {
@@ -1512,11 +1538,12 @@ fn cmdDoctor(_: std.mem.Allocator, args: []const [:0]const u8) !void {
     const build = fileExists("build.zig");
     const zon = fileExists("build.zig.zon");
     const source = fileExists("src/main.zig");
+    const workspace_build = fileExists("../../build.zig") and fileExists("../../build.zig.zon");
     const workers = fileExists("deploy/wrangler.toml") or fileExists("wrangler.toml");
     const containers = fileExists("deploy/Dockerfile") or fileExists("Dockerfile");
-    const healthy = build and zon and source;
+    const healthy = source and ((build and zon) or workspace_build);
     if (json) {
-        std.debug.print("{{\"healthy\":{},\"build_zig\":{},\"build_zon\":{},\"entrypoint\":{},\"workers\":{},\"containers\":{},\"migrations\":{}}}\n", .{ healthy, build, zon, source, workers, containers, countSqlMigrations("migrations") });
+        std.debug.print("{{\"healthy\":{},\"build_zig\":{},\"build_zon\":{},\"workspace_build\":{},\"entrypoint\":{},\"workers\":{},\"containers\":{},\"migrations\":{}}}\n", .{ healthy, build, zon, workspace_build, source, workers, containers, countSqlMigrations("migrations") });
     } else {
         std.debug.print("{s} build.zig\n{s} build.zig.zon\n{s} src/main.zig\n{s} Workers config\n{s} Container config\ninfo migrations: {d}\n", .{ if (build) "ok " else "ERR", if (zon) "ok " else "ERR", if (source) "ok " else "ERR", if (workers) "ok " else "-- ", if (containers) "ok " else "-- ", countSqlMigrations("migrations") });
     }
