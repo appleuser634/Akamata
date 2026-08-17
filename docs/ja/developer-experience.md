@@ -47,7 +47,7 @@ akamata destroy resource note --force
 akamata api diff old-openapi.json new-openapi.json
 ```
 
-resource generatorはmodel/repository、factory test、timestamp付きmigrationを作成します。route wiringは暗黙に編集しません。生成resourceを明示的にimportして登録してください。destroyは誤ったdata消失を避けるためmigrationを残します。
+resource generatorはmodel/repository、OpenAPI contract付きの型付きlist/create handler、factory test、timestamp付きmigrationを作成します。route wiringは暗黙に編集しません。`Resource.Routes(State)`をinstantiateして`register`を明示的に呼び出してください。destroyは誤ったdata消失を避けるためmigrationを残します。
 
 `api diff`はpathまたはHTTP operationが削除されると失敗します。現時点では削除を検出し、schema levelの互換性までは推論しません。
 

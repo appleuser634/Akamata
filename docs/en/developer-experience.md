@@ -47,7 +47,7 @@ akamata destroy resource note --force
 akamata api diff old-openapi.json new-openapi.json
 ```
 
-The resource generator creates a model/repository source file, a factory test, and a timestamped migration. It deliberately does not edit route wiring: import and register the generated resource explicitly. Destroy removes generated source files but retains migrations to avoid accidental data loss.
+The resource generator creates a model/repository, typed list/create handlers with OpenAPI contracts, a factory test, and a timestamped migration. It deliberately does not edit route wiring: instantiate `Resource.Routes(State)` and call `register` explicitly. Destroy removes generated source files but retains migrations to avoid accidental data loss.
 
 `api diff` fails when a path or HTTP operation was removed. It currently detects removals; schema-level compatibility is not inferred.
 
