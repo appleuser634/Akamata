@@ -99,4 +99,4 @@ akamata test [--watch]
 akamata runner <command> [args]
 ```
 
-Routes come from the non-HTTP inspection runner. `routes explain` includes operation metadata, the effective middleware chain, and declared budgets. Configuration output reveals keys and presence only, never values. Doctor checks project manifests, the entry point, deployment files, and migrations. Test wraps the project test command, while runner delegates to the generated application's typed management-command protocol; new projects include a `db-check` example.
+Routes prefer the non-HTTP inspection runner and safely fall back to literal source registrations for older applications and repository examples. `routes explain` includes operation metadata, the effective middleware chain, and declared budgets when contract metadata is available. Configuration output reveals keys and presence only, never values. Doctor checks project manifests, the entry point, deployment files, and migrations. Test wraps the project test command, while runner delegates to the generated application's typed management-command protocol; new projects include a `db-check` example.

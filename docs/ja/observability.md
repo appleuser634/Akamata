@@ -128,6 +128,8 @@ span名に使用できるのはASCII letter、digit、`.`、`_`、`-`で、最�
 
 ## Structured access log
 
+開発環境では`am.mw.nPlusOne(State, .{ .threshold = 20 })`により、観測したDB query／exec数がthresholdを超えたrequestを警告できます。信頼できる開発環境だけで`.response_header = true`を指定すると`x-akamata-db-queries`も追加します。既存のbounded trace counterを使うため、SQLやbind valueは保持しません。
+
 `accessLogWithOptions`はrequest aggregateをcompactなJSONで出力します。
 
 ```json

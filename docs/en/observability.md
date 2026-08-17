@@ -151,6 +151,8 @@ Disable named spans or the entire middleware in public production responses.
 
 ## Structured access log
 
+For development, `am.mw.nPlusOne(State, .{ .threshold = 20 })` warns when a request exceeds the configured number of observed DB queries and executions. Set `.response_header = true` only in trusted development environments to add `x-akamata-db-queries`. This uses the existing bounded trace counters and never records SQL or bind values.
+
 `accessLogWithOptions` emits compact request aggregates:
 
 ```json

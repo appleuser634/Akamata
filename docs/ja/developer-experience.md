@@ -101,4 +101,4 @@ akamata test [--watch]
 akamata runner <command> [args]
 ```
 
-`routes`は非HTTP inspection runnerからroute graphを読み、`routes explain`はoperation metadata、適用middleware chain、budgetを表示します。`config`は`.env`のkeyと設定有無だけを表示し、secret値を出力しません。`doctor`はentrypoint、build manifest、deployment config、migrationを検査します。`test`はproject testを実行し、`runner`は生成applicationのtyped management-command protocolへ委譲します。新規projectには`db-check`例が含まれます。`akamata api diff`はschema／property削除、type変更、required property追加もbreaking changeとして検出します。
+`routes`は非HTTP inspection runnerを優先し、旧applicationやrepository exampleではliteralなsource registrationへ安全にfallbackします。contract metadataがある場合、`routes explain`はoperation metadata、適用middleware chain、budgetを表示します。`config`は`.env`のkeyと設定有無だけを表示し、secret値を出力しません。`doctor`はentrypoint、build manifest、deployment config、migrationを検査します。`test`はproject testを実行し、`runner`は生成applicationのtyped management-command protocolへ委譲します。新規projectには`db-check`例が含まれます。`akamata api diff`はschema／property削除、type変更、required property追加もbreaking changeとして検出します。
