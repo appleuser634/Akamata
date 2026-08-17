@@ -459,14 +459,22 @@ fn processConn(
 
         const parsed = parser.parseRequest(arena, conn.recv_buf[0..conn.pending], .{}) catch |e| switch (e) {
             parser.ParseError.Incomplete => break,
-            else => return e,
+            else => {
+                var bad: res_mod.Response = .init(arena);
+                bad.keep_alive = false;
+                bad.setStatus(if (e == error.BodyTooLarge) 413 else if (e == error.HeadersTooLarge) 431 else 400);
+                try bad.json(.{ .error_kind = "bad_request" });
+                try writeResponse(WorkerCtx(State), ctx, conn.fd, &bad, arena);
+                closeConn(State, ctx, conns, conn.fd);
+                return;
+            },
         };
 
         var req_local = parsed.request;
         var res: res_mod.Response = .init(arena);
         res.keep_alive = req_local.keep_alive;
 
-        ctx.app.dispatch(arena, &req_local, &res, null, null) catch {};
+        ctx.app.dispatchWithPeer(arena, &req_local, &res, null, null, null) catch {};
 
         try writeResponse(WorkerCtx(State), ctx, conn.fd, &res, arena);
 

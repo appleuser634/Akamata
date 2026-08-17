@@ -54,7 +54,8 @@ test "openapi.generate produces a spec with documented endpoints" {
     try std.testing.expect(std.mem.indexOf(u8, spec, "\"#/components/schemas/User\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, spec, "Create a new user") != null);
     try std.testing.expect(std.mem.indexOf(u8, spec, "Fetch one user") != null);
-    try std.testing.expect(std.mem.indexOf(u8, spec, "/health") == null);
+    // Bare routes remain visible even without typed request/response schemas.
+    try std.testing.expect(std.mem.indexOf(u8, spec, "/health") != null);
     try std.testing.expect(std.mem.indexOf(u8, spec, "\"openapi\":\"3.1.0\"") != null);
     // Path parameter
     try std.testing.expect(std.mem.indexOf(u8, spec, "\"in\":\"path\"") != null);

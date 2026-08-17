@@ -10,7 +10,7 @@
 //!     for service-to-service calls in the same monorepo.
 //!
 //! Routes registered via the bare `app.get/post/...` helpers (no meta) are
-//! skipped — same rule as the OpenAPI generator.
+//! included with untyped schemas; `endpoint` routes add reflected schemas.
 
 const std = @import("std");
 const openapi = @import("openapi.zig");
@@ -39,7 +39,7 @@ pub fn generate(comptime AppT: type, app: *AppT, gpa: std.mem.Allocator, opts: O
     const route_views = try app.routeViews(arena);
     for (route_views) |r| {
         if (r.kind != .http) continue;
-        const meta = r.meta orelse continue;
+        const meta = r.meta orelse @import("openapi.zig").Spec(.{});
         const refs = try meta.schema_fn(arena, &builder);
         try ops.append(arena, .{
             .method = r.method,

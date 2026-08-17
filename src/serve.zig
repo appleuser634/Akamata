@@ -34,6 +34,8 @@ pub fn serve(comptime State: type, app: *app_mod.App(State), opts: app_mod.Serve
 
 fn serveNative(comptime State: type, app: *app_mod.App(State), opts: app_mod.ServeOptions) !void {
     if (!is_native) return;
+    app.trust_proxy_headers = opts.trust_proxy_headers;
+    try app.prepare();
     var io_impl: Io.Threaded = .init(app.gpa, .{});
     defer io_impl.deinit();
     const io = io_impl.io();
@@ -121,8 +123,8 @@ fn acceptLoop(comptime State: type, ctx: *LoopCtx(State)) void {
         if (!waitAcceptReady(fd, accept_poll_ms)) continue; // timeout/EINTR → re-check flag
         if (ctx.app.shutdown_flag.load(.seq_cst)) return;
 
-        const cfd = rawAccept(fd);
-        if (cfd < 0) {
+        const accepted = rawAccept(fd);
+        if (accepted.fd < 0) {
             // EAGAIN/EWOULDBLOCK: another thread took it, or a spurious wakeup.
             // EINVAL/EBADF: listener was shut down. Either way, loop and let the
             // flag check / next poll handle it. Brief backoff on hard errors.
@@ -137,8 +139,8 @@ fn acceptLoop(comptime State: type, ctx: *LoopCtx(State)) void {
         backoff_us = 0;
         // The connection fd may inherit O_NONBLOCK from the listener; std.Io's
         // read/write path requires blocking fds, so force it back.
-        setBlocking(cfd);
-        const stream: net.Stream = .{ .socket = .{ .handle = cfd, .address = undefined } };
+        setBlocking(accepted.fd);
+        const stream: net.Stream = .{ .socket = .{ .handle = accepted.fd, .address = accepted.address } };
         applyTimeouts(stream, ctx.opts) catch {};
         applyTcpNoDelay(stream) catch {};
         const previous = ctx.active_connections.fetchAdd(1, .acq_rel);
@@ -256,8 +258,16 @@ fn waitAcceptReady(fd: c_int, timeout_ms: c_int) bool {
 
 /// libc accept(2) on the raw listener fd. Returns the connection fd, or a
 /// negative value on error (inspect errnoVal()).
-fn rawAccept(fd: c_int) c_int {
-    return accept(fd, null, null);
+const Accepted = struct { fd: c_int, address: net.IpAddress };
+
+fn rawAccept(fd: c_int) Accepted {
+    var address: std.posix.sockaddr.in = undefined;
+    var len: u32 = @sizeOf(std.posix.sockaddr.in);
+    const accepted_fd = accept(fd, &address, &len);
+    return .{ .fd = accepted_fd, .address = .{ .ip4 = .{
+        .port = std.mem.bigToNative(u16, address.port),
+        .bytes = @bitCast(address.addr),
+    } } };
 }
 
 // === Signal handlers for graceful shutdown ===
@@ -351,7 +361,10 @@ fn handleConnection(comptime State: type, app: *app_mod.App(State), io: Io, stre
         const request_start = clock.monotonicNs();
         var first_header_read = pending_len == 0;
         while (parser.headersEnd(recv_buf.items[0..pending_len]) == null) {
-            if (pending_len >= opts.parse_limits.max_request_bytes + 4) return error.HeadersTooLarge;
+            if (pending_len >= opts.parse_limits.max_request_bytes + 4) {
+                try writeProtocolError(arena, io, stream, 431, "headers_too_large");
+                return;
+            }
             try ensureReadCapacity(&recv_buf, app.gpa, pending_len, opts.parse_limits.max_request_bytes + 4);
             var vec: [1][]u8 = .{recv_buf.allocatedSlice()[pending_len..recv_buf.capacity]};
             const phase_ms = if (first_header_read and request_count > 0) opts.keep_alive_idle_timeout_ms else opts.header_read_timeout_ms;
@@ -373,7 +386,16 @@ fn handleConnection(comptime State: type, app: *app_mod.App(State), io: Io, stre
                     recv_buf.items.len = pending_len;
                     continue;
                 },
-                else => return e,
+                else => {
+                    const mapped: struct { u16, []const u8 } = switch (e) {
+                        error.BodyTooLarge => .{ 413, "payload_too_large" },
+                        error.HeadersTooLarge => .{ 431, "headers_too_large" },
+                        error.UnsupportedTransferEncoding => .{ 501, "unsupported_transfer_encoding" },
+                        else => .{ 400, "bad_request" },
+                    };
+                    try writeProtocolError(arena, io, stream, mapped[0], mapped[1]);
+                    return;
+                },
             };
             break :blk p;
         };
@@ -389,12 +411,13 @@ fn handleConnection(comptime State: type, app: *app_mod.App(State), io: Io, stre
         const w: *Io.Writer = &sw.interface;
         res.socket_writer = w;
 
-        app.dispatch(
+        app.dispatchWithPeer(
             arena,
             &req_local,
             &res,
             @ptrCast(@constCast(&stream)),
             @ptrCast(@constCast(&io)),
+            try formatPeerIp(arena, stream.socket.address),
         ) catch |err| {
             // The middleware chain catches handler errors and turns them
             // into 5xx for *buffered* responses. Streaming responses are
@@ -456,6 +479,28 @@ fn handleConnection(comptime State: type, app: *app_mod.App(State), io: Io, stre
     }
 }
 
+fn formatPeerIp(arena: std.mem.Allocator, address: net.IpAddress) ![]const u8 {
+    var writer: Io.Writer.Allocating = .init(arena);
+    switch (address) {
+        .ip4 => |ip| try writer.writer.print("{d}.{d}.{d}.{d}", .{ ip.bytes[0], ip.bytes[1], ip.bytes[2], ip.bytes[3] }),
+        .ip6 => |ip| try ip.format(&writer.writer),
+    }
+    return writer.writer.buffered();
+}
+
+fn writeProtocolError(arena: std.mem.Allocator, io: Io, stream: net.Stream, code: u16, kind: []const u8) !void {
+    var res: res_mod.Response = .init(arena);
+    res.setStatus(code);
+    res.keep_alive = false;
+    try res.json(.{ .error_kind = kind });
+    var out: Io.Writer.Allocating = .init(arena);
+    try res.writeTo(&out.writer);
+    var buf: [1024]u8 = undefined;
+    var sw = stream.writer(io, &buf);
+    try sw.interface.writeAll(out.writer.buffered());
+    try sw.interface.flush();
+}
+
 fn ensureReadCapacity(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, used: usize, maximum: usize) !void {
     if (buf.capacity > used) return;
     const next = @min(maximum, @max(used +| 1, buf.capacity *| 2));
@@ -489,6 +534,8 @@ const runtime_workers = if (build_options.backend == .workers) @import("runtime/
 
 fn serveWorkers(comptime State: type, app: *app_mod.App(State), opts: app_mod.ServeOptions) !void {
     if (is_native) return;
+    app.trust_proxy_headers = opts.trust_proxy_headers;
+    try app.prepare();
     const Wrap = struct {
         var app_ref: *app_mod.App(State) = undefined;
         var parse_limits: parser.Limits = .{};
@@ -503,7 +550,7 @@ fn serveWorkers(comptime State: type, app: *app_mod.App(State), opts: app_mod.Se
             var res: res_mod.Response = .init(arena);
             res.keep_alive = false;
 
-            try app_ref.dispatch(arena, &req_local, &res, null, null);
+            try app_ref.dispatchWithPeer(arena, &req_local, &res, null, null, null);
 
             var aw: Io.Writer.Allocating = .fromArrayList(gpa, out);
             defer out.* = aw.toArrayList();

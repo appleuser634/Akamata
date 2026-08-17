@@ -198,7 +198,7 @@ pub fn RequestBuilder(comptime AppT: type) type {
                 .keep_alive = false,
             };
             var response: res_mod.Response = .init(arena);
-            try self.app.dispatch(arena, &request, &response, null, null);
+            try self.app.dispatchWithPeer(arena, &request, &response, null, null, null);
 
             return .{
                 .gpa = self.gpa,

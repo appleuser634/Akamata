@@ -193,3 +193,44 @@ test "slow header times out without starving subsequent connections" {
     const n = try reader.interface.readSliceShort(&out);
     try std.testing.expect(std.mem.startsWith(u8, out[0..n], "HTTP/1.1 200"));
 }
+
+const NewState = struct {};
+
+fn newHello(c: *am.Context(NewState)) !void {
+    try c.text("ok");
+}
+
+fn runNewServer(app: *am.App(NewState)) void {
+    app.serve(.{ .address = "127.0.0.1", .port = 18183, .accept_thread_count = 1 }) catch {};
+}
+
+test "new App server maps malformed framing to HTTP 400" {
+    const alloc = std.testing.allocator;
+    var app = am.App(NewState).init(alloc, .{});
+    defer app.deinit();
+    _ = try app.get("/hello", newHello);
+    const thread = try std.Thread.spawn(.{}, runNewServer, .{&app});
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
+
+    var io_impl: std.Io.Threaded = .init(alloc, .{});
+    defer io_impl.deinit();
+    const io = io_impl.io();
+    std.Io.sleep(io, .fromMilliseconds(80), .awake) catch {};
+    var address = std.Io.net.IpAddress.parseIp4("127.0.0.1", 18183) catch unreachable;
+    var stream = try std.Io.net.IpAddress.connect(&address, io, .{ .mode = .stream });
+    defer stream.close(io);
+    var wbuf: [512]u8 = undefined;
+    var writer = stream.writer(io, &wbuf);
+    try writer.interface.writeAll(
+        "POST /hello HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    );
+    try writer.interface.flush();
+    var rbuf: [1024]u8 = undefined;
+    var reader = stream.reader(io, &rbuf);
+    var out: [1024]u8 = undefined;
+    const n = try reader.interface.readSliceShort(&out);
+    try std.testing.expect(std.mem.startsWith(u8, out[0..n], "HTTP/1.1 400"));
+}

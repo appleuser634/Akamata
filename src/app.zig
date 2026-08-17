@@ -11,6 +11,7 @@ const req_mod = @import("http/request.zig");
 const res_mod = @import("http/response.zig");
 const status_mod = @import("http/status.zig");
 const parser = @import("http/parser.zig");
+const sync = @import("sync.zig");
 
 pub const Method = status_mod.Method;
 pub const RouteKind = enum { http, ws };
@@ -27,6 +28,8 @@ pub fn Middleware(comptime State: type) type {
     return struct {
         name: []const u8 = "anon",
         call: *const fn (c: *ctx_mod.Context(State), next: Next(State)) anyerror!void,
+        /// Optional teardown for middleware-owned process resources.
+        cleanup: ?*const fn (app: *App(State)) void = null,
     };
 }
 
@@ -191,6 +194,9 @@ pub const ServeOptions = struct {
     max_requests_per_connection: u32 = 100,
     /// Bounds detached connection workers and their request buffers.
     max_connections: usize = 1024,
+    /// Honor forwarding headers only when the immediate peer is a trusted
+    /// reverse proxy. Off by default to prevent client-controlled IP spoofing.
+    trust_proxy_headers: bool = false,
 };
 
 pub fn App(comptime State: type) type {
@@ -206,6 +212,7 @@ pub fn App(comptime State: type) type {
         base_prefix: []const u8 = "",
         routes: std.ArrayList(Route) = .empty,
         middlewares: std.ArrayList(Next(State).Entry) = .empty,
+        group_prefixes: std.ArrayList([]u8) = .empty,
         not_found_handler: ?H = null,
         err_handler: ?EH = null,
         /// Optimisation: routes with only static segments are stored in a
@@ -215,6 +222,9 @@ pub fn App(comptime State: type) type {
         /// happening up to `serve()`.
         static_index: std.StringHashMap(usize) = undefined,
         index_built: bool = false,
+        routes_frozen: bool = false,
+        index_mu: sync.Mutex,
+        trust_proxy_headers: bool = false,
         /// Set by `requestShutdown()`. Read by the accept loop on every
         /// iteration; once true, the listener is closed and the loop returns.
         shutdown_flag: std.atomic.Value(bool) = .init(false),
@@ -285,6 +295,7 @@ pub fn App(comptime State: type) type {
                 .gpa = gpa,
                 .state_value = initial_state,
                 .static_index = std.StringHashMap(usize).init(gpa),
+                .index_mu = sync.Mutex.init(),
             };
         }
 
@@ -306,15 +317,19 @@ pub fn App(comptime State: type) type {
                 while (it.next()) |entry| self.gpa.free(entry.key_ptr.*);
             }
             self.static_index.deinit();
+            self.index_mu.deinit();
             for (self.routes.items) |r| {
                 self.gpa.free(r.path);
                 self.gpa.free(r.segments);
             }
             self.routes.deinit(self.gpa);
             for (self.middlewares.items) |entry| {
+                if (entry.mw.cleanup) |cleanup| cleanup(self);
                 if (entry.pattern.len > 0) self.gpa.free(entry.pattern);
             }
             self.middlewares.deinit(self.gpa);
+            for (self.group_prefixes.items) |prefix| self.gpa.free(prefix);
+            self.group_prefixes.deinit(self.gpa);
         }
 
         /// Tie a heap-allocated resource's lifetime to this App. On
@@ -404,12 +419,15 @@ pub fn App(comptime State: type) type {
         pub fn options(self: *Self, path: []const u8, h: H) !*Self {
             return self.add(.OPTIONS, .http, path, h);
         }
+        pub fn head(self: *Self, path: []const u8, h: H) !*Self {
+            return self.add(.HEAD, .http, path, h);
+        }
         pub fn ws(self: *Self, path: []const u8, h: H) !*Self {
             return self.add(.GET, .ws, path, h);
         }
         /// Register the same handler for every HTTP method.
         pub fn all(self: *Self, path: []const u8, h: H) !*Self {
-            inline for ([_]Method{ .GET, .POST, .PUT, .DELETE, .PATCH, .OPTIONS }) |m| {
+            inline for ([_]Method{ .GET, .HEAD, .POST, .PUT, .DELETE, .PATCH, .OPTIONS }) |m| {
                 _ = try self.add(m, .http, path, h);
             }
             return self;
@@ -427,9 +445,31 @@ pub fn App(comptime State: type) type {
             h: H,
             meta: ?*const @import("openapi.zig").EndpointMeta,
         ) !*Self {
+            if (self.routes_frozen) return error.RoutesFrozen;
             const full_path = try concatPath(self.gpa, self.base_prefix, path_in);
             errdefer self.gpa.free(full_path);
+            for (self.routes.items) |existing| {
+                if (existing.method == method and pathsEquivalent(existing.path, full_path))
+                    return error.DuplicateRoute;
+            }
             const segs = try parseSegments(self.gpa, full_path);
+            errdefer self.gpa.free(segs);
+            for (self.routes.items) |existing| {
+                if (existing.method == method and routeShapesConflict(existing.segments, segs))
+                    return error.AmbiguousRoute;
+            }
+            var capture_count: usize = 0;
+            for (segs, 0..) |seg, i| {
+                if (seg.kind != .static) {
+                    capture_count += 1;
+                    for (segs[0..i]) |prior| {
+                        if (prior.kind != .static and std.mem.eql(u8, prior.text, seg.text))
+                            return error.DuplicatePathParameter;
+                    }
+                }
+                if (seg.kind == .wildcard and i + 1 != segs.len) return error.WildcardMustBeLast;
+            }
+            if (capture_count > 16) return error.TooManyPathParameters;
             try self.routes.append(self.gpa, .{
                 .method = method,
                 .kind = kind,
@@ -480,21 +520,59 @@ pub fn App(comptime State: type) type {
         /// Returns a borrowed view of `self` that prepends `prefix` to any
         /// subsequently registered routes/middlewares. The view aliases the
         /// underlying storage, so groups share routes and state.
-        pub fn basePath(self: *Self, prefix: []const u8) !*Self {
-            // Allocate a child App on the same arena that aliases routes/state.
-            const child = try self.gpa.create(Self);
-            child.* = .{
-                .gpa = self.gpa,
-                .state_value = undefined, // unused; we'll proxy state()
-                .base_prefix = try concatPath(self.gpa, self.base_prefix, prefix),
-                .routes = self.routes,
-                .middlewares = self.middlewares,
-                .not_found_handler = self.not_found_handler,
-                .err_handler = self.err_handler,
-            };
-            // Provide a back-reference for state access.
-            // (Implementation note: callers should not deinit a basePath result.)
-            return child;
+        pub const Group = struct {
+            app: *Self,
+            prefix: []const u8,
+
+            pub fn get(g: *Group, path: []const u8, h: H) !*Group {
+                return g.add(.GET, .http, path, h);
+            }
+            pub fn post(g: *Group, path: []const u8, h: H) !*Group {
+                return g.add(.POST, .http, path, h);
+            }
+            pub fn put(g: *Group, path: []const u8, h: H) !*Group {
+                return g.add(.PUT, .http, path, h);
+            }
+            pub fn delete(g: *Group, path: []const u8, h: H) !*Group {
+                return g.add(.DELETE, .http, path, h);
+            }
+            pub fn patch(g: *Group, path: []const u8, h: H) !*Group {
+                return g.add(.PATCH, .http, path, h);
+            }
+            pub fn options(g: *Group, path: []const u8, h: H) !*Group {
+                return g.add(.OPTIONS, .http, path, h);
+            }
+            pub fn head(g: *Group, path: []const u8, h: H) !*Group {
+                return g.add(.HEAD, .http, path, h);
+            }
+            pub fn ws(g: *Group, path: []const u8, h: H) !*Group {
+                return g.add(.GET, .ws, path, h);
+            }
+            pub fn use(g: *Group, pattern: []const u8, mw: Mw) !*Group {
+                const full = try concatPath(g.app.gpa, g.prefix, pattern);
+                try g.app.middlewares.append(g.app.gpa, .{ .mw = mw, .pattern = full });
+                return g;
+            }
+            pub fn basePath(g: *Group, prefix: []const u8) !Group {
+                return g.app.makeGroup(g.prefix, prefix);
+            }
+            fn add(g: *Group, method: Method, kind: RouteKind, path: []const u8, h: H) !*Group {
+                const full = try concatPath(g.app.gpa, g.prefix, path);
+                defer g.app.gpa.free(full);
+                _ = try g.app.add(method, kind, full, h);
+                return g;
+            }
+        };
+
+        pub fn basePath(self: *Self, prefix: []const u8) !Group {
+            return self.makeGroup(self.base_prefix, prefix);
+        }
+
+        fn makeGroup(self: *Self, base: []const u8, prefix: []const u8) !Group {
+            const full = try concatPath(self.gpa, base, prefix);
+            errdefer self.gpa.free(full);
+            try self.group_prefixes.append(self.gpa, full);
+            return .{ .app = self, .prefix = full };
         }
 
         // ===== Hooks =====
@@ -519,13 +597,25 @@ pub fn App(comptime State: type) type {
             stream_ptr: ?*anyopaque,
             io_ptr: ?*anyopaque,
         ) !void {
+            return self.dispatchWithPeer(arena, request, response, stream_ptr, io_ptr, null);
+        }
+
+        pub fn dispatchWithPeer(
+            self: *Self,
+            arena: std.mem.Allocator,
+            request: *req_mod.Request,
+            response: *res_mod.Response,
+            stream_ptr: ?*anyopaque,
+            io_ptr: ?*anyopaque,
+            peer_ip: ?[]const u8,
+        ) !void {
             var name_buf: [16][]const u8 = undefined;
             var value_buf: [16][]const u8 = undefined;
 
             // Build the static-route index lazily on first request. If the
             // build fails (OOM), the linear fallback below still works, so
             // we log a warning rather than failing the request.
-            if (!self.index_built) self.buildStaticIndex() catch |e| {
+            if (!self.index_built) self.prepare() catch |e| {
                 std.log.warn("static route index build failed (linear fallback in use): {t}", .{e});
             };
 
@@ -540,12 +630,18 @@ pub fn App(comptime State: type) type {
                     matched = &self.routes.items[idx];
                 }
             }
+            // RFC semantics: HEAD uses an explicit HEAD route when present,
+            // otherwise it falls back to the matching GET handler.
+            if (matched == null and request.method == .HEAD) {
+                if (formatStaticKey(&key_buf, .GET, norm_path)) |key| {
+                    if (self.static_index.get(key)) |idx| matched = &self.routes.items[idx];
+                }
+            }
 
             // Slow path: linear scan over the (typically few) dynamic routes.
             if (matched == null) {
                 for (self.routes.items) |*r| {
-                    if (r.method != request.method) continue;
-                    if (!routeIsDynamic(r.segments)) continue;
+                    if (r.method != request.method and !(request.method == .HEAD and r.method == .GET)) continue;
                     if (matchSegments(r.segments, request.path, &name_buf, &value_buf)) |params| {
                         matched = r;
                         matched_params = params;
@@ -559,6 +655,8 @@ pub fn App(comptime State: type) type {
                     .inner = request,
                     .params_ref = undefined,
                     .arena = arena,
+                    .trust_proxy_headers = self.trust_proxy_headers,
+                    .peer_ip = peer_ip,
                 },
                 .res = response,
                 .arena = arena,
@@ -568,13 +666,41 @@ pub fn App(comptime State: type) type {
                 .io_ptr = io_ptr,
                 .app_ref = @ptrCast(self),
             };
+            response.suppress_body = request.method == .HEAD;
             ctx.trace.route_pattern = if (matched) |r| r.path else null;
             ctx.trace.begin();
             defer ctx.trace.finish();
             ctx.req.params_ref = &ctx.params;
 
+            var method_not_allowed = false;
+            if (matched == null) {
+                var allowed = [_]bool{false} ** @typeInfo(Method).@"enum".fields.len;
+                for (self.routes.items) |r| {
+                    var scratch_names: [16][]const u8 = undefined;
+                    var scratch_values: [16][]const u8 = undefined;
+                    if (matchSegments(r.segments, request.path, &scratch_names, &scratch_values) == null) continue;
+                    allowed[@intFromEnum(r.method)] = true;
+                    if (r.method == .GET) allowed[@intFromEnum(Method.HEAD)] = true;
+                }
+                var allow: std.ArrayList(u8) = .empty;
+                inline for (@typeInfo(Method).@"enum".fields) |field| {
+                    if (allowed[field.value]) {
+                        if (allow.items.len > 0) try allow.appendSlice(arena, ", ");
+                        try allow.appendSlice(arena, field.name);
+                    }
+                }
+                if (allow.items.len != 0) {
+                    method_not_allowed = true;
+                    response.setStatus(405);
+                    try response.header("allow", allow.items);
+                    try response.json(.{ .error_kind = "method_not_allowed" });
+                }
+            }
+
             const term: Handler(State) = if (matched) |r|
                 r.handler
+            else if (method_not_allowed)
+                noOp
             else if (self.not_found_handler) |nf|
                 nf
             else
@@ -596,7 +722,7 @@ pub fn App(comptime State: type) type {
                     });
                     if (response.body.items.len == 0 and response.status_code == 200) {
                         response.setStatus(500);
-                        response.json(.{ .error_kind = "internal", .err = @errorName(err) }) catch |jerr| {
+                        response.json(.{ .error_kind = "internal", .message = "internal server error" }) catch |jerr| {
                             std.log.err("failed to serialize error response: {t}", .{jerr});
                         };
                     }
@@ -608,16 +734,33 @@ pub fn App(comptime State: type) type {
             try c.notFound();
         }
 
+        fn noOp(_: *Ctx) anyerror!void {}
+
         /// Index every fully-static route under `"METHOD /path"`. Called once
         /// before the first dispatch; subsequent registrations after serve()
         /// has started won't appear (callers should register up-front).
-        fn buildStaticIndex(self: *Self) !void {
+        pub fn prepare(self: *Self) !void {
+            self.index_mu.lock();
+            defer self.index_mu.unlock();
+            if (self.index_built) return;
+            var next_index = std.StringHashMap(usize).init(self.gpa);
+            errdefer {
+                var failed_it = next_index.iterator();
+                while (failed_it.next()) |entry| self.gpa.free(entry.key_ptr.*);
+                next_index.deinit();
+            }
             for (self.routes.items, 0..) |*r, idx| {
                 if (routeIsDynamic(r.segments)) continue;
-                const key = try std.fmt.allocPrint(self.gpa, "{s} {s}", .{ @tagName(r.method), r.path });
-                try self.static_index.put(key, idx);
+                const key = try std.fmt.allocPrint(self.gpa, "{s} {s}", .{ @tagName(r.method), normPath(r.path) });
+                next_index.put(key, idx) catch |err| {
+                    self.gpa.free(key);
+                    return err;
+                };
             }
+            self.static_index.deinit();
+            self.static_index = next_index;
             self.index_built = true;
+            self.routes_frozen = true;
         }
 
         /// Start serving HTTP. On native this binds a TCP listener; on Workers
@@ -655,11 +798,28 @@ fn routeIsDynamic(segs: []const Segment) bool {
     return false;
 }
 
+fn routeShapesConflict(a: []const Segment, b: []const Segment) bool {
+    const common = @min(a.len, b.len);
+    for (a[0..common], b[0..common]) |left, right| {
+        if (left.kind == .wildcard or right.kind == .wildcard) return true;
+        if (left.kind == .static and right.kind == .static) {
+            if (!std.mem.eql(u8, left.text, right.text)) return false;
+        } else if (left.kind == .static or right.kind == .static) {
+            return false;
+        }
+    }
+    return a.len == b.len;
+}
+
 /// Normalise an incoming request path by stripping a trailing `/` (so the
 /// indexed key matches both `/users` and `/users/` to the same route).
 fn normPath(path: []const u8) []const u8 {
     if (path.len > 1 and path[path.len - 1] == '/') return path[0 .. path.len - 1];
     return path;
+}
+
+fn pathsEquivalent(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, normPath(a), normPath(b));
 }
 
 /// Format `"METHOD path"` into the caller-provided buffer. Returns null if

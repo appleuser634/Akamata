@@ -66,6 +66,9 @@ pub const Response = struct {
     finalized: bool = false,
     keep_alive: bool = true,
     is_upgrade: bool = false,
+    /// HEAD responses carry the same headers (including the GET body length)
+    /// but never emit payload bytes on the wire.
+    suppress_body: bool = false,
 
     /// Set by the server right before invoking the handler chain. Streaming
     /// uses this to push chunked frames directly to the socket. Stays null
@@ -209,7 +212,7 @@ pub const Response = struct {
             }
         }
         try w.writeAll("\r\n");
-        if (self.body.items.len > 0) try w.writeAll(self.body.items);
+        if (!self.suppress_body and self.body.items.len > 0) try w.writeAll(self.body.items);
     }
 };
 

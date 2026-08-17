@@ -110,6 +110,7 @@ pub fn Req(comptime State: type) type {
         /// Direct peer address (socket-level), populated by the native HTTP
         /// server. Null on Workers, or when the server didn't record one.
         peer_ip: ?[]const u8 = null,
+        trust_proxy_headers: bool = false,
 
         pub fn method(self: Self) []const u8 {
             return @tagName(self.inner.method);
@@ -187,12 +188,11 @@ pub fn Req(comptime State: type) type {
             return cookie_mod.parseHeader(raw, name);
         }
 
-        /// Client IP: prefers `X-Forwarded-For` (first hop, configurable in
-        /// the future via a trusted-proxy list), then falls back to the
-        /// direct peer address recorded by the server. Returns null in
-        /// environments where neither is available (e.g. Workers under
-        /// certain bindings).
+        /// Client IP. Forwarding headers are considered only when explicitly
+        /// trusted by the server; otherwise only the direct peer is used.
+        /// Returns null when the target does not provide peer metadata.
         pub fn ip(self: Self) ?[]const u8 {
+            if (!self.trust_proxy_headers) return self.peer_ip;
             if (self.inner.header("x-forwarded-for")) |xff| {
                 // Take the first non-empty element.
                 var it = std.mem.splitScalar(u8, xff, ',');
@@ -333,6 +333,25 @@ pub fn Context(comptime State: type) type {
                 try self.badRequest("invalid JSON body");
                 return null;
             };
+
+            // Zig's type is authoritative: a non-optional field without a
+            // default is required even when the model omitted an explicit
+            // validation rule. Never manufacture zero values for missing
+            // input, especially for pointers and enums.
+            var missing: std.ArrayList(@import("model/validate.zig").ValidationError) = .empty;
+            inline for (@typeInfo(T).@"struct".fields) |f| {
+                if (@typeInfo(f.type) != .optional and f.defaultValue() == null and @field(proj, f.name) == null) {
+                    try missing.append(self.arena, .{
+                        .field = f.name,
+                        .rule = .required,
+                        .message = "is required",
+                    });
+                }
+            }
+            if (missing.items.len > 0) {
+                try self.unprocessable(missing.items);
+                return null;
+            }
 
             if (@hasDecl(T, "__schema")) {
                 const errs = try @import("model/validate.zig").validateAny(T, proj, self.arena);

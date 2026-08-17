@@ -18,6 +18,20 @@ fn queryHandler(c: *am.Context(State)) !void {
     try c.text(q);
 }
 
+fn failingHandler(_: *am.Context(State)) !void {
+    return error.SecretDatabaseFailure;
+}
+
+fn requiredInputHandler(c: *am.Context(State)) !void {
+    const Input = struct { name: []const u8 };
+    _ = (try c.input(Input)) orelse return;
+    try c.text("accepted");
+}
+
+fn ipHandler(c: *am.Context(State)) !void {
+    try c.text(c.req.ip() orelse "none");
+}
+
 test "App routes match and dispatch" {
     const alloc = std.testing.allocator;
     var app = am.App(State).init(alloc, .{});
@@ -41,7 +55,7 @@ test "App routes match and dispatch" {
         .keep_alive = false,
     };
     var res: am.Response = .init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
     try std.testing.expectEqual(@as(u16, 200), res.status_code);
     try std.testing.expect(std.mem.indexOf(u8, res.body.items, "\"greeting\":\"hi\"") != null);
     try std.testing.expectEqual(@as(u32, 1), app.state().hits.load(.seq_cst));
@@ -68,7 +82,7 @@ test "App resolves :id path parameter" {
         .keep_alive = false,
     };
     var res: am.Response = .init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
     try std.testing.expect(std.mem.indexOf(u8, res.body.items, "\"id\":\"42\"") != null);
 }
 
@@ -93,8 +107,109 @@ test "App returns 404 for unmatched route" {
         .keep_alive = false,
     };
     var res: am.Response = .init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
     try std.testing.expectEqual(@as(u16, 404), res.status_code);
+}
+
+test "basePath registers routes on the parent app" {
+    const alloc = std.testing.allocator;
+    var app = am.App(State).init(alloc, .{});
+    defer app.deinit();
+    var api = try app.basePath("/api/v1");
+    _ = try api.get("/hello", helloHandler);
+    var client = am.testing.Client(@TypeOf(app)).init(alloc, &app);
+    defer client.deinit();
+    var resp = try client.get("/api/v1/hello").send();
+    defer resp.deinit();
+    try std.testing.expectEqual(@as(u16, 200), resp.status);
+}
+
+test "static routing handles trailing slash and paths over 256 bytes" {
+    const alloc = std.testing.allocator;
+    var app = am.App(State).init(alloc, .{});
+    defer app.deinit();
+    _ = try app.get("/trailing/", helloHandler);
+    const long_path = "/" ++ ("x" ** 300);
+    _ = try app.get(long_path, helloHandler);
+    var client = am.testing.Client(@TypeOf(app)).init(alloc, &app);
+    defer client.deinit();
+    var trailing = try client.get("/trailing").send();
+    defer trailing.deinit();
+    try std.testing.expectEqual(@as(u16, 200), trailing.status);
+    var long = try client.get(long_path).send();
+    defer long.deinit();
+    try std.testing.expectEqual(@as(u16, 200), long.status);
+}
+
+test "route registration rejects conflicts and freezes after dispatch" {
+    const alloc = std.testing.allocator;
+    var app = am.App(State).init(alloc, .{});
+    defer app.deinit();
+    _ = try app.get("/same", helloHandler);
+    try std.testing.expectError(error.DuplicateRoute, app.get("/same/", helloHandler));
+    try std.testing.expectError(error.WildcardMustBeLast, app.get("/files/*rest/more", helloHandler));
+    try app.prepare();
+    try std.testing.expectError(error.RoutesFrozen, app.get("/late", helloHandler));
+}
+
+test "HEAD falls back to GET and unsupported methods return 405 Allow" {
+    const alloc = std.testing.allocator;
+    var app = am.App(State).init(alloc, .{});
+    defer app.deinit();
+    _ = try app.get("/resource", helloHandler);
+    var client = am.testing.Client(@TypeOf(app)).init(alloc, &app);
+    defer client.deinit();
+    var head = try client.request(.HEAD, "/resource").send();
+    defer head.deinit();
+    try std.testing.expectEqual(@as(u16, 200), head.status);
+    var post = try client.post("/resource").send();
+    defer post.deinit();
+    try std.testing.expectEqual(@as(u16, 405), post.status);
+    try std.testing.expect(post.header("allow") != null);
+}
+
+test "default 500 response hides internal error names" {
+    const alloc = std.testing.allocator;
+    var app = am.App(State).init(alloc, .{});
+    defer app.deinit();
+    _ = try app.get("/fail", failingHandler);
+    var client = am.testing.Client(@TypeOf(app)).init(alloc, &app);
+    defer client.deinit();
+    var resp = try client.get("/fail").send();
+    defer resp.deinit();
+    try std.testing.expectEqual(@as(u16, 500), resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "SecretDatabaseFailure") == null);
+}
+
+test "input treats non-optional fields as required without schema metadata" {
+    const alloc = std.testing.allocator;
+    var app = am.App(State).init(alloc, .{});
+    defer app.deinit();
+    _ = try app.post("/input", requiredInputHandler);
+    var client = am.testing.Client(@TypeOf(app)).init(alloc, &app);
+    defer client.deinit();
+    var resp = try client.post("/input").body("application/json", "{}").send();
+    defer resp.deinit();
+    try std.testing.expectEqual(@as(u16, 422), resp.status);
+}
+
+test "client IP ignores forwarding headers unless explicitly trusted" {
+    const alloc = std.testing.allocator;
+    var app = am.App(State).init(alloc, .{});
+    defer app.deinit();
+    _ = try app.get("/ip", ipHandler);
+    const headers = [_]am.http.RequestHeader{.{ .name = "x-forwarded-for", .value = "203.0.113.9" }};
+    var req: am.Request = .{ .method = .GET, .raw_method = "GET", .path = "/ip", .query = "", .version = "HTTP/1.1", .headers = &headers, .body = "", .keep_alive = false };
+    var arena_state: std.heap.ArenaAllocator = .init(alloc);
+    defer arena_state.deinit();
+    var res: am.Response = .init(arena_state.allocator());
+    try app.dispatchWithPeer(arena_state.allocator(), &req, &res, null, null, "127.0.0.1");
+    try std.testing.expectEqualStrings("127.0.0.1", res.body.items);
+
+    app.trust_proxy_headers = true;
+    var trusted_res: am.Response = .init(arena_state.allocator());
+    try app.dispatchWithPeer(arena_state.allocator(), &req, &trusted_res, null, null, "127.0.0.1");
+    try std.testing.expectEqualStrings("203.0.113.9", trusted_res.body.items);
 }
 
 test "Query parameter accessor works" {
@@ -118,7 +233,7 @@ test "Query parameter accessor works" {
         .keep_alive = false,
     };
     var res: am.Response = .init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
     try std.testing.expectEqualStrings("zig", res.body.items);
 }
 
@@ -144,7 +259,7 @@ test "secureHeaders middleware injects default API-safe headers" {
         .keep_alive = false,
     };
     var res: am.Response = .init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
 
     // Collect header names for inspection.
     var saw_hsts = false;
@@ -197,7 +312,7 @@ test "compress middleware gzip-encodes large responses" {
         .keep_alive = false,
     };
     var res: am.Response = .init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
 
     var saw_ce_gzip = false;
     for (res.headers.items) |h| {
@@ -236,7 +351,7 @@ test "compress skips below min_bytes" {
         .keep_alive = false,
     };
     var res: am.Response = .init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
 
     // 18-byte "{"greeting":"hi"}" is well below 1 KB → no compression.
     for (res.headers.items) |h| {
@@ -269,7 +384,7 @@ test "secureHeaders honors per-field opt-out" {
         .keep_alive = false,
     };
     var res: am.Response = .init(arena);
-    try app.dispatch(arena, &req, &res, null, null);
+    try app.dispatchWithPeer(arena, &req, &res, null, null, null);
 
     for (res.headers.items) |h| {
         try std.testing.expect(!std.ascii.eqlIgnoreCase(h.name, "strict-transport-security"));

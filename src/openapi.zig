@@ -2,8 +2,8 @@
 //!
 //! Routes registered via `app.endpoint(...)` carry typed request/response
 //! information; `generate(app, info)` walks them and emits an OpenAPI JSON
-//! document. Routes registered via the bare `app.get/post/...` helpers are
-//! treated as undocumented and skipped.
+//! document. Bare `app.get/post/...` routes are included with untyped
+//! request/response metadata.
 //!
 //! The generator only depends on Zig stdlib (std.json, comptime reflection).
 //! No runtime cost is paid by apps that don't call `generate`.
@@ -160,7 +160,7 @@ pub fn printToStdout(comptime AppT: type, app: *AppT, gpa: std.mem.Allocator, in
     try sw.interface.flush();
 }
 
-/// Walk every route on `app` that has metadata attached and emit an
+/// Walk every HTTP route on `app` and emit an
 /// OpenAPI 3.1 document as a JSON string (allocated in `gpa`).
 pub fn generate(comptime AppT: type, app: *AppT, gpa: std.mem.Allocator, info: Info) ![]u8 {
     // All intermediate allocations (paths, refs, schemas) flow through a
@@ -176,7 +176,7 @@ pub fn generate(comptime AppT: type, app: *AppT, gpa: std.mem.Allocator, info: I
     const route_views = try app.routeViews(arena);
     for (route_views) |r| {
         if (r.kind != .http) continue;
-        const meta = r.meta orelse continue;
+        const meta = r.meta orelse Spec(.{});
         const refs = try meta.schema_fn(arena, &builder);
         const op_path = try toOpenApiPath(arena, r.path);
         const gop = try paths.getOrPut(op_path);
