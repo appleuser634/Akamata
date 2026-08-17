@@ -15,6 +15,7 @@ is development-oriented; pin a tagged release for reproducible builds.
 - [Tasks example](example-tasks.md) — guided example application
 - [Upgrade guide](upgrading.md) — behavior changes after v0.0.1
 - [Developer experience](developer-experience.md) — contracts, typed inputs/DI, project inspection, generators, API diff, and migration workflow
+- [CLI API client](cli-client.md) — direct and OpenAPI operation-based requests from `akamata`
 
 ## Guides
 

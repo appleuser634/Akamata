@@ -15,6 +15,7 @@
 - [Tasks example](example-tasks.md) — example applicationを題材に学びます
 - [アップグレードガイド](upgrading.md) — v0.0.1以降の挙動変更
 - [開発体験](developer-experience.md) — contract、型付きinput／DI、project検査、generator、API diff、migration workflow
+- [CLI API client](cli-client.md) — `akamata`から直接またはOpenAPI operation単位でrequestを実行
 
 ## Guide
 

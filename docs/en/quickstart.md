@@ -87,12 +87,10 @@ zig build run
 The server reports that it is listening on port 8080. From another terminal:
 
 ```bash
-curl -sS http://127.0.0.1:8080/
-curl -sS http://127.0.0.1:8080/health
-curl -sS http://127.0.0.1:8080/notes
-curl -sS -X POST -H 'content-type: application/json' \
-  -d '{"title":"hello","body":"first note"}' \
-  http://127.0.0.1:8080/notes
+akamata client /
+akamata client /health
+akamata client /notes
+akamata client POST /notes --json='{"title":"hello","body":"first note"}'
 ```
 
 The local database is `myapp.db` unless `DATABASE_URL` overrides it.

@@ -87,12 +87,10 @@ zig build run
 port 8080でlistenしていることが表示されます。別のterminalから確認します。
 
 ```bash
-curl -sS http://127.0.0.1:8080/
-curl -sS http://127.0.0.1:8080/health
-curl -sS http://127.0.0.1:8080/notes
-curl -sS -X POST -H 'content-type: application/json' \
-  -d '{"title":"hello","body":"first note"}' \
-  http://127.0.0.1:8080/notes
+akamata client /
+akamata client /health
+akamata client /notes
+akamata client POST /notes --json='{"title":"hello","body":"first note"}'
 ```
 
 `DATABASE_URL`を指定しない場合、local databaseは`myapp.db`です。
