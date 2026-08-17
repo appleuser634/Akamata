@@ -6,7 +6,7 @@ run_case() {
   if output="$(zig test --dep akamata -Mroot="tests/compile_fail/$name.zig" \
       --dep build_options -Makamata=src/akamata.zig \
       -Mbuild_options=tests/compile_fail/build_options.zig \
-      --cache-dir .zig-cache --global-cache-dir .zig-global-cache 2>&1)"; then
+      --cache-dir .zig-cache --global-cache-dir /tmp/akamata-compile-fail-zig-cache 2>&1)"; then
     printf 'expected %s to fail compilation\n' "$name" >&2
     return 1
   fi
