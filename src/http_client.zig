@@ -35,6 +35,9 @@ pub const Request = struct {
     body: []const u8 = "",
     /// Max bytes of response to accept.
     max_response_bytes: usize = 4 * 1024 * 1024,
+    /// Optional socket read/write timeout. Null preserves the historical
+    /// unbounded behavior; interactive tooling should always set a limit.
+    timeout_ms: ?u32 = null,
 };
 
 pub const Response = struct {
@@ -216,8 +219,8 @@ fn nativeSend(arena: std.mem.Allocator, request: Request) HttpClientError!Respon
     if (request.body.len > 0) try req_buf.appendSlice(arena, request.body);
 
     return switch (url.scheme) {
-        .http => nativePlainSend(arena, url, req_buf.items, request.max_response_bytes),
-        .https => nativeTlsSend(arena, url, req_buf.items, request.max_response_bytes),
+        .http => nativePlainSend(arena, url, req_buf.items, request.max_response_bytes, request.timeout_ms),
+        .https => nativeTlsSend(arena, url, req_buf.items, request.max_response_bytes, request.timeout_ms),
     };
 }
 
@@ -233,11 +236,23 @@ fn dialHost(io: Io, host: []const u8, port: u16) HttpClientError!net.Stream {
     return hn.connect(io, port, .{ .mode = .stream }) catch HttpClientError.ConnectFailed;
 }
 
+fn setSocketTimeout(handle: std.posix.socket_t, timeout_ms: u32) !void {
+    if (timeout_ms == 0) return error.InvalidTimeout;
+    const timeout: std.posix.timeval = .{
+        .sec = @intCast(timeout_ms / 1000),
+        .usec = @intCast((timeout_ms % 1000) * 1000),
+    };
+    const bytes = std.mem.asBytes(&timeout);
+    try std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, bytes);
+    try std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.SNDTIMEO, bytes);
+}
+
 fn nativePlainSend(
     arena: std.mem.Allocator,
     url: ParsedUrl,
     request_bytes: []const u8,
     max_resp: usize,
+    timeout_ms: ?u32,
 ) HttpClientError!Response {
     var io_impl: Io.Threaded = .init(arena, .{});
     defer io_impl.deinit();
@@ -245,6 +260,7 @@ fn nativePlainSend(
 
     var stream = try dialHost(io, url.host, url.port);
     defer stream.close(io);
+    if (timeout_ms) |ms| setSocketTimeout(stream.socket.handle, ms) catch return HttpClientError.HttpProtocolError;
 
     var w_buf: [4096]u8 = undefined;
     var sw = stream.writer(io, &w_buf);
@@ -274,6 +290,7 @@ fn nativeTlsSend(
     url: ParsedUrl,
     request_bytes: []const u8,
     max_resp: usize,
+    timeout_ms: ?u32,
 ) HttpClientError!Response {
     if (!is_native) return HttpClientError.UnsupportedOnTarget;
 
@@ -288,6 +305,7 @@ fn nativeTlsSend(
 
     var stream = try dialHost(io, url.host, url.port);
     defer stream.close(io);
+    if (timeout_ms) |ms| setSocketTimeout(stream.socket.handle, ms) catch return HttpClientError.HttpProtocolError;
 
     // Underlying socket readers / writers. The TLS client wraps these,
     // doing handshake + record framing in user space. The socket reader
@@ -331,8 +349,7 @@ fn nativeTlsSend(
     // Drain the response. allocRemaining streams until close_notify and
     // respects the size cap via Limit.
     const limit: std.Io.Limit = .limited(max_resp);
-    const body = client.reader.allocRemaining(arena, limit) catch
-        return HttpClientError.ReadFailed;
+    const body = client.reader.allocRemaining(arena, limit) catch return HttpClientError.ReadFailed;
     return parseResponse(arena, body);
 }
 
