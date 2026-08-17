@@ -32,6 +32,7 @@
 
 ## 本番運用とperformance
 
+- [2026-08-17 performance regression report](benchmarks-2026-08-17.md) — 現行revisionと変更前baselineの同一machine A/B測定
 - [Benchmarks](benchmarks.md)
 - [Long-run benchmarks](benchmarks-long-run.md)
 - [Performance follow-ups](perf-followups.md)

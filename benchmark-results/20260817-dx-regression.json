@@ -1,0 +1,55 @@
+{
+  "metadata": {
+    "date": "2026-08-17",
+    "current_commit": "74fbe89ad5aadfaaf0d9644f20bbd6b883935274",
+    "baseline_commit": "3a18d6c",
+    "os": "macOS 26.5 Darwin 25.5.0 arm64",
+    "hardware": "Apple M2, 8 cores (4 performance + 4 efficiency), 16 GB",
+    "zig": "0.16.0",
+    "wrk": "4.2.0_2",
+    "build": "ReleaseFast",
+    "transport": "127.0.0.1 HTTP/1.1"
+  },
+  "c16_t4_5s_median_of_3": {
+    "current": {
+      "hello": { "rps": 171639.47, "p50_us": 74, "p99_us": 310 },
+      "echo": { "rps": 169850.78, "p50_us": 75, "p99_us": 543 },
+      "db": { "rps": 86028.22, "p50_us": 148, "p99_us": 1020 }
+    },
+    "baseline": {
+      "hello": { "rps": 171404.26, "p50_us": 74, "p99_us": 380 },
+      "echo": { "rps": 169728.33, "p50_us": 74, "p99_us": 378 },
+      "db": { "rps": 87233.95, "p50_us": 146, "p99_us": 990 }
+    },
+    "throughput_delta_percent": { "hello": 0.14, "echo": 0.07, "db": -1.38 }
+  },
+  "c256_t8_10s_median_of_3": {
+    "current": {
+      "hello": { "rps": 178863.21, "range": [178715.12, 179609.72] },
+      "echo": { "rps": 177665.10, "range": [177538.15, 177883.35] },
+      "db": { "rps": 35339.79, "range": [34194.86, 50918.74] }
+    },
+    "baseline": {
+      "hello": { "rps": 177346.68, "range": [176383.02, 179052.94] },
+      "echo": { "rps": 176262.13, "range": [175593.50, 178301.40] },
+      "db": { "rps": 47205.29, "range": [38570.57, 49871.42] }
+    },
+    "note": "Every connection is intentionally recycled after 100 requests. wrk reports about one read error per 100 successful requests; DB variance is too high for regression classification."
+  },
+  "resources_1hz_single_run": {
+    "current": {
+      "binary_bytes": 1850632,
+      "idle_rss_kb": 3056,
+      "hello_rss_avg_kb": 20859,
+      "echo_rss_avg_kb": 24426,
+      "db_rss_avg_kb": 23062
+    },
+    "baseline": {
+      "binary_bytes": 1850312,
+      "idle_rss_kb": 3056,
+      "hello_rss_avg_kb": 21332,
+      "echo_rss_avg_kb": 23944,
+      "db_rss_avg_kb": 22105
+    }
+  }
+}

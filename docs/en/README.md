@@ -32,6 +32,7 @@ is development-oriented; pin a tagged release for reproducible builds.
 
 ## Production and performance
 
+- [2026-08-17 performance regression report](benchmarks-2026-08-17.md) — same-machine A/B of the current revision and its pre-change baseline
 - [Benchmarks](benchmarks.md)
 - [Long-run benchmarks](benchmarks-long-run.md)
 - [Performance follow-ups](perf-followups.md)

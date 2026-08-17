@@ -1,5 +1,9 @@
 # Benchmarks
 
+> **現行revisionの回帰判定:** 2026-08-17に同一machineで実施したA/B測定は
+> [performance regression report](benchmarks-2026-08-17.md)を参照してください。
+> 現行revisionに明確なperformance劣化は確認されませんでした。
+
 > **履歴資料:** 以下の数値はcommitとraw outputを保存していない過去の測定であり、
 > 現行revisionの性能主張には使用しません。現在の比較は
 > `OUTDIR=./benchmark-results bash examples/bench/runall_ext.sh`で実行し、生成される

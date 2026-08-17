@@ -1,5 +1,9 @@
 # Benchmarks
 
+> **Current regression assessment:** see the same-machine A/B in the
+> [2026-08-17 performance regression report](benchmarks-2026-08-17.md).
+> It found no material performance regression in the current revision.
+
 > **Historical data:** the figures below did not retain an exact commit and
 > raw output, so they are not claims about the current revision. Run
 > `OUTDIR=./benchmark-results bash examples/bench/runall_ext.sh` and retain
