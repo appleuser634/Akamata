@@ -7,6 +7,7 @@ const Endpoint = struct {
     path: []const u8,
     summary: []const u8,
     operation_id: []const u8,
+    streaming: bool = false,
 };
 
 const State = struct {
@@ -18,6 +19,7 @@ const State = struct {
     body: []const u8 = "",
     header: []const u8 = "",
     response_body: []const u8 = "Press Enter to send the selected request.",
+    response_storage: ?[]u8 = null,
     response_status: ?u16 = null,
     manual_mode: bool = false,
     viewport: TerminalSize = .{},
@@ -50,6 +52,9 @@ pub fn run(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
         .viewport = terminalSize(arena),
         .message = if (manual_mode) "Manual mode: no application metadata found in this directory." else "Ready. Select an endpoint and press Enter.",
     };
+    defer {
+        if (state.response_storage) |body| alloc.free(body);
+    }
     while (true) {
         draw(&state);
         const key = readKey() catch return error.TerminalReadFailed;
@@ -193,6 +198,7 @@ fn parseSourceRoutes(alloc: std.mem.Allocator, source: []const u8, file_path: []
             .path = path,
             .summary = try std.fmt.allocPrint(alloc, "source · {s}", .{file_path}),
             .operation_id = "",
+            .streaming = isStreamingHint(raw_path, line),
         });
     }
 }
@@ -250,7 +256,8 @@ fn parseEndpoints(alloc: std.mem.Allocator, bytes: []const u8) ![]const Endpoint
                     operation_id = v.string;
                 };
             }
-            try out.append(alloc, .{ .method = method, .path = path_entry.key_ptr.*, .summary = summary, .operation_id = operation_id });
+            const path = path_entry.key_ptr.*;
+            try out.append(alloc, .{ .method = method, .path = path, .summary = summary, .operation_id = operation_id, .streaming = isStreamingHint(path, summary) });
         }
     }
     if (out.items.len == 0) return error.NoEndpoints;
@@ -264,6 +271,14 @@ fn parseEndpoints(alloc: std.mem.Allocator, bytes: []const u8) ![]const Endpoint
 }
 
 fn execute(alloc: std.mem.Allocator, state: *State) !void {
+    if (state.response_storage) |body| alloc.free(body);
+    state.response_storage = null;
+    if (state.endpoints[state.selected].streaming) {
+        state.response_status = null;
+        state.response_body = "Streaming endpoint detected.\n\nThe request pane intentionally does not consume an unbounded SSE/WebSocket response.\nUse `curl -N <url>` for a live stream.";
+        state.message = "Streaming request was not started, preventing an unbounded wait.";
+        return;
+    }
     var request_arena_state: std.heap.ArenaAllocator = .init(alloc);
     defer request_arena_state.deinit();
     const request_arena = request_arena_state.allocator();
@@ -287,15 +302,27 @@ fn execute(alloc: std.mem.Allocator, state: *State) !void {
         .headers = headers.items,
         .body = state.body,
         .max_response_bytes = 8 * 1024 * 1024,
+        .timeout_ms = 10_000,
     }) catch |err| {
         state.response_status = null;
-        state.response_body = try std.fmt.allocPrint(alloc, "Request failed: {s}", .{@errorName(err)});
+        const body = try std.fmt.allocPrint(alloc, "Request failed: {s}", .{@errorName(err)});
+        state.response_storage = body;
+        state.response_body = body;
         state.message = "Transport error. Check the server and base URL.";
         return;
     };
     state.response_status = response.status;
-    state.response_body = try prettyBody(alloc, response.body);
+    const body = try prettyBody(alloc, response.body);
+    state.response_storage = body;
+    state.response_body = body;
     state.message = if (response.status >= 400) "HTTP error response received." else "Request completed.";
+}
+
+fn isStreamingHint(path: []const u8, context: []const u8) bool {
+    return std.mem.indexOf(u8, path, "events") != null or
+        std.mem.indexOf(u8, context, "stream") != null or
+        std.mem.indexOf(u8, context, "SSE") != null or
+        std.mem.indexOf(u8, context, "sse") != null;
 }
 
 fn fillPathParams(alloc: std.mem.Allocator, state: *State) !bool {
@@ -332,7 +359,7 @@ fn nextMethod(current: am.http_client.Method) am.http_client.Method {
     return .GET;
 }
 
-fn prettyBody(alloc: std.mem.Allocator, body: []const u8) ![]const u8 {
+fn prettyBody(alloc: std.mem.Allocator, body: []const u8) ![]u8 {
     var parsed = std.json.parseFromSlice(std.json.Value, alloc, body, .{}) catch return alloc.dupe(u8, body);
     defer parsed.deinit();
     var out: std.ArrayList(u8) = .empty;
@@ -503,6 +530,12 @@ test "TUI parses route metadata without an exposed endpoint" {
 test "inspection runner is only used by applications that opt in" {
     try std.testing.expect(hasInspectionMarker("if (arg == \"akamata-openapi\") {}"));
     try std.testing.expect(!hasInspectionMarker("pub fn main() void {}"));
+}
+
+test "streaming endpoint hints identify SSE routes" {
+    try std.testing.expect(isStreamingHint("/events", "handlers.streamEvents"));
+    try std.testing.expect(isStreamingHint("/feed", "SSE event stream"));
+    try std.testing.expect(!isStreamingHint("/health", "handlers.health"));
 }
 
 test "source discovery parses typed and bare route registrations" {
