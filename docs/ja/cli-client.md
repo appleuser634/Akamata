@@ -2,6 +2,32 @@
 
 Akamata CLIには、requestごとにcurl optionへ変換せずapplicationを試せるHTTP clientがあります。Akamata自身のnative HTTP／TLS stackを使用するため、applicationから利用できるprotocol実装と同じ経路をCLIでも検証できます。
 
+## Full-screen TUI
+
+request argumentなしでclientを実行します。
+
+```console
+akamata client
+# 明示する場合
+akamata client --tui --base-url=http://127.0.0.1:8080
+```
+
+TUIは検出したendpoint一覧、編集可能なrequest、整形済みresponseを一画面に表示します。
+
+- `j`／`k`: endpoint選択
+- `Enter`: 実行。宣言済み`{path}` parameterは入力promptを表示してencode
+- `m`: HTTP method切り替え
+- `e`: pathまたはabsolute URL編集
+- `h`: request header編集
+- `b`: JSON／raw body編集
+- `u`: base URL変更
+- `r`: endpoint metadata再取得
+- `?`: help、`q`: 終了
+
+endpoint検出では最初に`zig build run -- akamata-openapi`を実行します。現在のAkamata scaffoldはroute登録後にこのlocal inspection protocolへ応答し、serverを起動せず終了します。そのため、web APIに`/openapi.json`等を追加しなくても、登録された全routeをTUIから参照できます。旧applicationでは`/openapi.json`取得へfallbackし、どちらも利用できない場合はmanual requestで開始します。
+
+request実行時にはapplication serverが起動している必要があります。inspectionとservingを分離することで、public API surfaceを変更しません。
+
 ## 直接request
 
 ```console

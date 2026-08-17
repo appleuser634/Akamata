@@ -47,7 +47,7 @@ akamata destroy resource note --force
 akamata api diff old-openapi.json new-openapi.json
 ```
 
-直接HTTP requestには[`akamata client`](cli-client.md)、OpenAPI operation駆動の呼び出しには`akamata api call`を使用できます。
+[`akamata client`](cli-client.md)をargumentなしで実行するとfull-screen endpoint explorer、request argument付きでは直接HTTP request、`akamata api call`ではOpenAPI operation駆動の呼び出しを利用できます。生成applicationはHTTP routeではない`akamata-openapi` runner modeでlocal toolingへroute metadataを提供します。
 
 resource generatorはmodel/repository、OpenAPI contract付きの型付きlist/create handler、factory test、timestamp付きmigrationを作成します。route wiringは暗黙に編集しません。`Resource.Routes(State)`をinstantiateして`register`を明示的に呼び出してください。destroyは誤ったdata消失を避けるためmigrationを残します。
 

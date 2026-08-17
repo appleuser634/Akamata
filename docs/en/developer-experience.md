@@ -47,7 +47,7 @@ akamata destroy resource note --force
 akamata api diff old-openapi.json new-openapi.json
 ```
 
-Use [`akamata client`](cli-client.md) for direct HTTP requests and `akamata api call` for OpenAPI operation-driven calls.
+Use [`akamata client`](cli-client.md) with no arguments for the full-screen endpoint explorer, with request arguments for direct HTTP calls, and `akamata api call` for OpenAPI operation-driven calls. Generated applications expose route metadata to local tooling through the non-HTTP `akamata-openapi` runner mode.
 
 The resource generator creates a model/repository, typed list/create handlers with OpenAPI contracts, a factory test, and a timestamped migration. It deliberately does not edit route wiring: instantiate `Resource.Routes(State)` and call `register` explicitly. Destroy removes generated source files but retains migrations to avoid accidental data loss.
 
