@@ -89,6 +89,9 @@ pub const Options = struct {
     /// Soft cap on rows fetched per poll. Keeps a single worker from
     /// hogging the connection during a backlog.
     batch_size: u32 = 32,
+    /// A worker that disappears after claiming a job leaves it `running`.
+    /// Another worker may reclaim it after this lease expires.
+    lease_timeout_seconds: i64 = 300,
 };
 
 pub const Queue = struct {
@@ -102,6 +105,9 @@ pub const Queue = struct {
     shutdown: std.atomic.Value(bool) = .init(false),
 
     pub fn init(gpa: std.mem.Allocator, db: db_mod.Db, opts: Options) !Queue {
+        if (opts.poll_interval_ms == 0 or opts.batch_size == 0 or opts.lease_timeout_seconds <= 0 or
+            opts.initial_backoff_seconds < 0 or opts.max_backoff_seconds < opts.initial_backoff_seconds)
+            return error.InvalidOptions;
         try db.execAll(schema_sql);
         return .{ .gpa = gpa, .db = db, .opts = opts };
     }
@@ -125,6 +131,7 @@ pub const Queue = struct {
 
     /// Schedule a job. `payload` is copied into the DB row.
     pub fn enqueue(self: *Queue, name: []const u8, payload: []const u8, opts: EnqueueOptions) !i64 {
+        if (opts.delay_seconds < 0 or opts.max_attempts == 0) return error.InvalidEnqueueOptions;
         const now = nowUnix();
         const scheduled = now + opts.delay_seconds;
         var stmt = try self.db.prepare(
@@ -142,6 +149,7 @@ pub const Queue = struct {
     /// is treated as if it were enqueued (with `name`/`payload`) at each
     /// firing — the same handler executes it.
     pub fn cron(self: *Queue, name: []const u8, period_seconds: i64, payload: []const u8) !void {
+        if (period_seconds <= 0) return error.InvalidCronPeriod;
         try self.crons.append(self.gpa, .{
             .name = name,
             .period_seconds = period_seconds,
@@ -220,15 +228,25 @@ pub const Worker = struct {
             batch.deinit(q.gpa);
         }
 
+        // Claim and return a batch in one statement. The conditional UPDATE
+        // is the ownership boundary: concurrent workers cannot both receive
+        // the same row. Expired `running` rows are reclaimed after a crash.
         var sel = try q.db.prepare(
-            \\SELECT id, name, payload, attempts, max_attempts
-            \\FROM akamata_jobs
-            \\WHERE status = 'pending' AND scheduled_for <= ?
-            \\ORDER BY scheduled_for
-            \\LIMIT ?
+            \\UPDATE akamata_jobs
+            \\SET status = 'running', updated_at = unixepoch()
+            \\WHERE id IN (
+            \\  SELECT id FROM akamata_jobs
+            \\  WHERE (status = 'pending' AND scheduled_for <= ?)
+            \\     OR (status = 'running' AND updated_at <= ?)
+            \\  ORDER BY scheduled_for
+            \\  LIMIT ?
+            \\)
+            \\AND (status = 'pending' OR (status = 'running' AND updated_at <= ?))
+            \\RETURNING id, name, payload, attempts, max_attempts
         );
         defer sel.deinit();
-        try sel.bindAll(.{ now, @as(i64, @intCast(q.opts.batch_size)) });
+        const stale_before = now - q.opts.lease_timeout_seconds;
+        try sel.bindAll(.{ now, stale_before, @as(i64, @intCast(q.opts.batch_size)), stale_before });
         const Row = struct {
             id: i64,
             name: []const u8,
@@ -267,11 +285,6 @@ pub const Worker = struct {
             return;
         }
 
-        // Mark running first so a parallel worker can't grab it. (Not a
-        // true lock — SQLite + multiple workers would need SELECT FOR
-        // UPDATE; we ship a single-worker design for now.)
-        try self.setStatus(row.id, "running", row.attempts);
-
         handler_fn.?(q.gpa, row.payload) catch |err| {
             const next_attempts = row.attempts + 1;
             if (next_attempts >= row.max_attempts) {
@@ -283,18 +296,6 @@ pub const Worker = struct {
             return;
         };
         try self.markSucceeded(row.id);
-    }
-
-    fn setStatus(self: *Worker, id: i64, status: []const u8, attempts: i64) !void {
-        const q = self.queue;
-        var stmt = try q.db.prepare(
-            \\UPDATE akamata_jobs
-            \\SET status = ?, attempts = ?, updated_at = unixepoch()
-            \\WHERE id = ?
-        );
-        defer stmt.deinit();
-        try stmt.bindAll(.{ status, attempts, id });
-        _ = try stmt.step();
     }
 
     fn markSucceeded(self: *Worker, id: i64) !void {

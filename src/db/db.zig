@@ -205,7 +205,47 @@ pub const Db = struct {
         const tail = std.mem.trim(u8, script[start..], " \t\r\n");
         if (tail.len > 0) try self.exec(tail);
     }
+
+    /// Start an explicit transaction. D1's JS bridge cannot guarantee a
+    /// transaction across separate calls and therefore fails closed.
+    pub fn begin(self: Db) !Transaction {
+        if (self.backend == .d1) return error.TransactionsUnsupported;
+        try self.exec("BEGIN");
+        return .{ .db = self };
+    }
     pub fn close(self: Db) void {
         self.vt.close(self.ptr);
+    }
+};
+
+pub const Transaction = struct {
+    db: Db,
+    active: bool = true,
+
+    pub fn prepare(self: *Transaction, sql: []const u8) !Stmt {
+        if (!self.active) return error.TransactionClosed;
+        return self.db.prepare(sql);
+    }
+
+    pub fn exec(self: *Transaction, sql: []const u8) !void {
+        if (!self.active) return error.TransactionClosed;
+        return self.db.exec(sql);
+    }
+
+    pub fn commit(self: *Transaction) !void {
+        if (!self.active) return error.TransactionClosed;
+        try self.db.exec("COMMIT");
+        self.active = false;
+    }
+
+    pub fn rollback(self: *Transaction) !void {
+        if (!self.active) return;
+        try self.db.exec("ROLLBACK");
+        self.active = false;
+    }
+
+    /// Roll back unless already committed. Use with `defer tx.deinit()`.
+    pub fn deinit(self: *Transaction) void {
+        if (self.active) self.rollback() catch {};
     }
 };

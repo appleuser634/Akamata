@@ -105,3 +105,32 @@ test "model repository preserves optional NULL values" {
     try std.testing.expect(value_row.s != null);
     try std.testing.expectEqualStrings("", value_row.s.?);
 }
+
+test "explicit transaction rolls back unless committed" {
+    const alloc = std.testing.allocator;
+    var db = try am.db.openSqlite(alloc, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE tx_test (id INTEGER)");
+    {
+        var tx = try db.begin();
+        defer tx.deinit();
+        try tx.exec("INSERT INTO tx_test VALUES (1)");
+    }
+    var count = try db.prepare("SELECT count(*) FROM tx_test");
+    defer count.deinit();
+    _ = try count.step();
+    try std.testing.expectEqual(@as(i64, 0), try count.columnInt(0));
+}
+
+test "database pool leases independent handles" {
+    const alloc = std.testing.allocator;
+    const first = try am.db.openSqlite(alloc, ":memory:");
+    const second = try am.db.openSqlite(alloc, ":memory:");
+    var pool = try am.db.Pool.init(alloc, &.{ first, second });
+    defer pool.deinit();
+    var a = try pool.acquire();
+    var b = try pool.acquire();
+    try std.testing.expect(a.db.ptr != b.db.ptr);
+    a.deinit();
+    b.deinit();
+}

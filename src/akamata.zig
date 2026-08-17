@@ -137,8 +137,8 @@ pub const sse = if (backend == .native) @import("sse.zig") else struct {};
 // on the runtime route table.
 pub const openapi = @import("openapi.zig");
 
-// Type-safe client generator. Emits TypeScript or Zig client code from
-// the same route metadata that openapi.generate uses.
+// Type-safe TypeScript client generator from the same route metadata that
+// openapi.generate uses. The reserved Zig target fails closed for now.
 pub const client_gen = @import("client_gen.zig");
 
 // In-process test client + factories.
@@ -173,6 +173,8 @@ pub const db = struct {
     pub const VTable = db_mod.VTable;
     pub const StmtVTable = db_mod.StmtVTable;
     pub const StepResult = db_mod.StepResult;
+    pub const Pool = @import("db/pool.zig").Pool;
+    pub const PoolLease = @import("db/pool.zig").Lease;
 
     // Backend-specific openers. Use `open(url)` (below) for portable code.
     pub const openSqlite = if (backend == .native) @import("db/sqlite.zig").open else struct {}.@"openSqlite-workers-only";
