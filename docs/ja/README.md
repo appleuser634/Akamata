@@ -14,6 +14,7 @@
 - [Handbook](handbook.md) — model、repository、migration、deployを短時間で確認します
 - [Tasks example](example-tasks.md) — example applicationを題材に学びます
 - [アップグレードガイド](upgrading.md) — v0.0.1以降の挙動変更
+- [開発体験](developer-experience.md) — contract、型付きinput／DI、project検査、generator、API diff、migration workflow
 
 ## Guide
 
