@@ -244,6 +244,9 @@ pub fn App(comptime State: type) type {
         /// Used by `requestShutdown()` to close the fd from another thread
         /// (which makes `accept()` return `error.SocketNotListening`).
         listener_fd: std.atomic.Value(i32) = .init(-1),
+        startup_hook: ?*const fn (*Self) anyerror!void = null,
+        shutdown_hook: ?*const fn (*Self) anyerror!void = null,
+        lifecycle_started: bool = false,
 
         /// Heap resources whose lifetime should match the App's. Most apps
         /// have at least an event channel + a job queue here; using `own`
@@ -278,6 +281,7 @@ pub fn App(comptime State: type) type {
             kind: RouteKind,
             path: []const u8,
             meta: ?*const @import("openapi.zig").EndpointMeta,
+            middleware_names: []const []const u8,
         };
 
         /// Snapshot of every registered route. The returned slice is
@@ -287,11 +291,17 @@ pub fn App(comptime State: type) type {
         pub fn routeViews(self: *const Self, arena: std.mem.Allocator) ![]const RouteView {
             var out = try arena.alloc(RouteView, self.routes.items.len);
             for (self.routes.items, 0..) |r, i| {
+                var names: std.ArrayList([]const u8) = .empty;
+                for (self.middlewares.items) |entry| {
+                    if (entry.pattern.len == 0 or patternMatches(entry.pattern, r.path))
+                        try names.append(arena, entry.mw.name);
+                }
                 out[i] = .{
                     .method = r.method,
                     .kind = r.kind,
                     .path = r.path,
                     .meta = r.meta,
+                    .middleware_names = try names.toOwnedSlice(arena),
                 };
             }
             return out;
@@ -312,6 +322,7 @@ pub fn App(comptime State: type) type {
         }
 
         pub fn deinit(self: *Self) void {
+            self.stopLifecycle() catch |err| std.log.err("application shutdown hook failed: {s}", .{@errorName(err)});
             // Owned resources go first — they may reference the routes
             // table (e.g. a job worker holding the DB used by handlers).
             // Iterate in reverse so destructor order is the inverse of
@@ -405,6 +416,32 @@ pub fn App(comptime State: type) type {
                 };
                 _ = Sys.shutdown(fd, 2);
             }
+        }
+
+        pub const Lifecycle = struct {
+            startup: ?*const fn (*Self) anyerror!void = null,
+            shutdown: ?*const fn (*Self) anyerror!void = null,
+        };
+
+        /// Register application-wide resource setup and teardown. Startup is
+        /// invoked once before serving; shutdown is invoked once by deinit,
+        /// including after a requested graceful stop.
+        pub fn lifecycle(self: *Self, hooks: Lifecycle) !void {
+            if (self.lifecycle_started) return error.LifecycleAlreadyStarted;
+            self.startup_hook = hooks.startup;
+            self.shutdown_hook = hooks.shutdown;
+        }
+
+        pub fn startLifecycle(self: *Self) !void {
+            if (self.lifecycle_started) return;
+            if (self.startup_hook) |hook| try hook(self);
+            self.lifecycle_started = true;
+        }
+
+        pub fn stopLifecycle(self: *Self) !void {
+            if (!self.lifecycle_started) return;
+            self.lifecycle_started = false;
+            if (self.shutdown_hook) |hook| try hook(self);
         }
 
         pub fn state(self: *Self) *State {
@@ -676,6 +713,14 @@ pub fn App(comptime State: type) type {
                 }
             }
 
+            if (matched) |route| if (route.meta) |meta| if (meta.limits.request_bytes) |limit| {
+                if (request.body.len > limit) {
+                    response.setStatus(413);
+                    try response.json(.{ .error_kind = "request_too_large", .limit = limit });
+                    return;
+                }
+            };
+
             var ctx: Ctx = .{
                 .req = .{
                     .inner = request,
@@ -755,6 +800,13 @@ pub fn App(comptime State: type) type {
                     }
                 }
             };
+            if (matched) |route| if (route.meta) |meta| if (meta.limits.response_bytes) |limit| {
+                if (response.streaming == null and response.body.items.len > limit) {
+                    response.body.clearRetainingCapacity();
+                    response.setStatus(500);
+                    try response.json(.{ .error_kind = "response_budget_exceeded", .limit = limit });
+                }
+            };
         }
 
         fn defaultNotFound(c: *Ctx) anyerror!void {
@@ -795,6 +847,7 @@ pub fn App(comptime State: type) type {
         /// (the JS host will drive every subsequent request).
         pub fn serve(self: *Self, opts: ServeOptions) !void {
             const serve_mod = @import("serve.zig");
+            try self.startLifecycle();
             return serve_mod.serve(State, self, opts);
         }
     };
@@ -894,4 +947,26 @@ test "parseSegments and matchSegments round-trip" {
     try t.expect(m != null);
     try t.expectEqualStrings("id", m.?.names[0]);
     try t.expectEqualStrings("42", m.?.values[0]);
+}
+
+test "application lifecycle runs startup and shutdown once" {
+    const State = struct { starts: *usize, stops: *usize };
+    const TestApp = App(State);
+    const hooks = struct {
+        fn start(app: *TestApp) !void {
+            app.state().starts.* += 1;
+        }
+        fn stop(app: *TestApp) !void {
+            app.state().stops.* += 1;
+        }
+    };
+    var starts: usize = 0;
+    var stops: usize = 0;
+    var app = TestApp.init(std.testing.allocator, .{ .starts = &starts, .stops = &stops });
+    try app.lifecycle(.{ .startup = hooks.start, .shutdown = hooks.stop });
+    try app.startLifecycle();
+    try app.startLifecycle();
+    try std.testing.expectEqual(@as(usize, 1), starts);
+    app.deinit();
+    try std.testing.expectEqual(@as(usize, 1), stops);
 }

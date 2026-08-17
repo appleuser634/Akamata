@@ -1,6 +1,7 @@
 //! Compile-time endpoint contracts and typed request inputs.
 const std = @import("std");
 const openapi = @import("openapi.zig");
+const context = @import("context.zig");
 
 /// A route is declared once and can then be registered, inspected, and used
 /// by OpenAPI/client generators through the same metadata pointer.
@@ -15,6 +16,24 @@ pub fn Endpoint(comptime method: anytype, comptime path: []const u8, comptime ha
             _ = try app.endpoint(http_method, route_path, handle, meta);
         }
     };
+}
+
+/// Validate a tuple of Endpoint types at comptime. This is useful for route
+/// modules that want duplicate and operation-id failures before App.init.
+pub fn validateGraph(comptime endpoints: anytype) void {
+    const fields = @typeInfo(@TypeOf(endpoints)).@"struct".fields;
+    inline for (fields, 0..) |field, i| {
+        const endpoint = @field(endpoints, field.name);
+        if (endpoint.route_path.len == 0 or endpoint.route_path[0] != '/')
+            @compileError("endpoint path must start with '/': " ++ endpoint.route_path);
+        inline for (fields[0..i]) |before_field| {
+            const before = @field(endpoints, before_field.name);
+            if (endpoint.http_method == before.http_method and std.mem.eql(u8, endpoint.route_path, before.route_path))
+                @compileError("duplicate endpoint in contract graph: " ++ endpoint.route_path);
+            if (endpoint.meta.operation_id.len > 0 and std.mem.eql(u8, endpoint.meta.operation_id, before.meta.operation_id))
+                @compileError("duplicate operation_id in contract graph: " ++ endpoint.meta.operation_id);
+        }
+    }
 }
 
 pub const Source = enum { path, query, header, cookie, json };
@@ -55,6 +74,31 @@ pub fn Json(comptime T: type) type {
     return Input(T, .json, "body");
 }
 
+/// Adapt a typed input struct to Akamata's zero-allocation handler ABI.
+/// Every field must be an Input wrapper such as Path, Query, Header, Cookie,
+/// or Json. Extraction and conversion are generated at comptime.
+pub fn Bound(
+    comptime State: type,
+    comptime Inputs: type,
+    comptime handler: *const fn (*context.Context(State), Inputs) anyerror!void,
+) type {
+    const info = @typeInfo(Inputs);
+    if (info != .@"struct") @compileError("contract.Bound Inputs must be a struct");
+    inline for (info.@"struct".fields) |field| {
+        if (!@hasDecl(field.type, "input_source") or !@hasDecl(field.type, "read"))
+            @compileError("contract.Bound field `" ++ field.name ++ "` must use Path, Query, Header, Cookie, or Json");
+    }
+    return struct {
+        pub fn handle(c: *context.Context(State)) anyerror!void {
+            var inputs: Inputs = undefined;
+            inline for (@typeInfo(Inputs).@"struct".fields) |field| {
+                @field(inputs, field.name) = try field.type.read(c);
+            }
+            return handler(c, inputs);
+        }
+    };
+}
+
 fn parseScalar(comptime T: type, raw: []const u8) !T {
     if (T == []const u8) return raw;
     if (T == bool) {
@@ -73,4 +117,24 @@ test "typed input metadata is available at comptime" {
     const Id = Path(u64, "id");
     try std.testing.expectEqual(Source.path, Id.input_source);
     try std.testing.expectEqualStrings("id", Id.input_name);
+}
+
+test "Bound exposes the standard context handler shape" {
+    const State = struct {};
+    const Inputs = struct { id: Path(u64, "id") };
+    const example = struct {
+        fn call(_: *context.Context(State), _: Inputs) !void {}
+    }.call;
+    const Adapter = Bound(State, Inputs, example);
+    try std.testing.expect(@typeInfo(@TypeOf(Adapter.handle)) == .@"fn");
+}
+
+test "validateGraph accepts a unique endpoint tuple" {
+    const State = struct {};
+    const handler = struct {
+        fn call(_: *context.Context(State)) !void {}
+    }.call;
+    const One = Endpoint(.GET, "/one", handler, .{ .operation_id = "one" });
+    const Two = Endpoint(.POST, "/two", handler, .{ .operation_id = "two" });
+    comptime validateGraph(.{ One, Two });
 }

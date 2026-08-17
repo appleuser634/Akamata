@@ -35,6 +35,7 @@ pub const EndpointMeta = struct {
     /// Names of security schemes defined by the document consumer.
     security: []const []const u8 = &.{},
     additional_responses: []const ResponseDoc = &.{},
+    limits: Limits = .{},
     /// Render `request` and `response` into the OpenAPI components.schemas
     /// table and return a `$ref` string. Generated per-T at comptime.
     schema_fn: *const fn (gpa: std.mem.Allocator, ctx: *SpecBuilder) anyerror!Refs,
@@ -149,6 +150,7 @@ pub fn Spec(comptime opts: SpecOpts) *const EndpointMeta {
         .response_content_type = opts.response_content_type,
         .security = opts.security,
         .additional_responses = opts.additional_responses,
+        .limits = opts.limits,
         .schema_fn = closure.schemaFn,
         .query_params_fn = if (has_query) closure.queryParamsFn else null,
         .query_ts_fields_fn = if (has_query) closure.queryTsFieldsFn else null,
@@ -178,6 +180,18 @@ pub const SpecOpts = struct {
     response_content_type: []const u8 = "application/json",
     security: []const []const u8 = &.{},
     additional_responses: []const ResponseDoc = &.{},
+    limits: Limits = .{},
+};
+
+/// Operational limits shared by the router, diagnostics, and generated API
+/// tooling. Null delegates to the application-wide server setting.
+pub const Limits = struct {
+    request_bytes: ?usize = null,
+    response_bytes: ?usize = null,
+    timeout_ms: ?u32 = null,
+    max_db_queries: ?u32 = null,
+    max_outbound_requests: ?u32 = null,
+    streaming: bool = false,
 };
 
 /// Write the OpenAPI 3.1 document for `app` to stdout. Convenience wrapper
@@ -370,6 +384,24 @@ fn writeOperation(w: *std.Io.Writer, op: OperationEntry) !void {
         try w.writeAll("]");
     }
 
+    const limits = op.meta.limits;
+    if (limits.request_bytes != null or limits.response_bytes != null or limits.timeout_ms != null or limits.max_db_queries != null or limits.max_outbound_requests != null or limits.streaming) {
+        if (!first) try w.writeAll(",");
+        first = false;
+        try w.writeAll("\"x-akamata-limits\":{");
+        var first_limit = true;
+        if (limits.request_bytes) |value| try writeNumberField(w, &first_limit, "requestBytes", value);
+        if (limits.response_bytes) |value| try writeNumberField(w, &first_limit, "responseBytes", value);
+        if (limits.timeout_ms) |value| try writeNumberField(w, &first_limit, "timeoutMs", value);
+        if (limits.max_db_queries) |value| try writeNumberField(w, &first_limit, "maxDbQueries", value);
+        if (limits.max_outbound_requests) |value| try writeNumberField(w, &first_limit, "maxOutboundRequests", value);
+        if (limits.streaming) {
+            if (!first_limit) try w.writeAll(",");
+            try w.writeAll("\"streaming\":true");
+        }
+        try w.writeAll("}");
+    }
+
     if (!first) try w.writeAll(",");
     first = false;
     try w.writeAll("\"responses\":{");
@@ -400,6 +432,13 @@ fn writeOperation(w: *std.Io.Writer, op: OperationEntry) !void {
     try w.writeAll("}");
 
     try w.writeAll("}");
+}
+
+fn writeNumberField(w: *std.Io.Writer, first: *bool, key: []const u8, value: anytype) !void {
+    if (!first.*) try w.writeAll(",");
+    first.* = false;
+    try writeJsonString(w, key);
+    try w.print(":{d}", .{value});
 }
 
 fn writeKv(w: *std.Io.Writer, first: *bool, key: []const u8, val: []const u8) !void {
