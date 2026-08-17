@@ -233,6 +233,7 @@ pub fn generate(comptime AppT: type, app: *AppT, gpa: std.mem.Allocator, info: I
             .meta = meta,
             .refs = refs,
             .raw_path = r.path,
+            .middleware_names = r.middleware_names,
         });
     }
 
@@ -298,6 +299,7 @@ const OperationEntry = struct {
     meta: *const EndpointMeta,
     refs: EndpointMeta.Refs,
     raw_path: []const u8,
+    middleware_names: []const []const u8,
 };
 
 fn writeOperation(w: *std.Io.Writer, op: OperationEntry) !void {
@@ -323,6 +325,16 @@ fn writeOperation(w: *std.Io.Writer, op: OperationEntry) !void {
         for (op.meta.tags, 0..) |t, i| {
             if (i > 0) try w.writeAll(",");
             try writeJsonString(w, t);
+        }
+        try w.writeAll("]");
+    }
+    if (op.middleware_names.len > 0) {
+        if (!first) try w.writeAll(",");
+        first = false;
+        try w.writeAll("\"x-akamata-middleware\":[");
+        for (op.middleware_names, 0..) |name, i| {
+            if (i > 0) try w.writeAll(",");
+            try writeJsonString(w, name);
         }
         try w.writeAll("]");
     }

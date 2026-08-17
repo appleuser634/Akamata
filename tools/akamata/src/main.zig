@@ -73,6 +73,10 @@ pub fn main(init: std.process.Init) !void {
         try cmdDoctor(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "config")) {
         try cmdConfig(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "test")) {
+        try cmdTest(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "runner")) {
+        try cmdRunner(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "generate")) {
         try cmdGenerate(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "destroy")) {
@@ -108,7 +112,7 @@ fn isHelpArg(arg: []const u8) bool {
 }
 
 const known_commands = [_][]const u8{
-    "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "check", "inspect", "routes", "doctor", "config", "generate", "destroy", "api", "client", "help", "version",
+    "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "check", "inspect", "routes", "doctor", "config", "test", "runner", "generate", "destroy", "api", "client", "help", "version",
 };
 
 /// Lightweight nearest-match — if the user typed something within 2 edits
@@ -201,6 +205,10 @@ fn usage() !void {
         \\      Diagnose the local project and deployment toolchain.
         \\  config <show|check>
         \\      Inspect configuration keys without exposing secret values.
+        \\  test [--watch]
+        \\      Run the application test suite once or continuously.
+        \\  runner <command> [args]
+        \\      Execute an application-defined typed management command.
         \\  generate resource <name> [field:type ...] [--pretend]
         \\      Generate a typed model/handler/test plus SQL migration.
         \\  destroy resource <name> [--force]
@@ -284,6 +292,27 @@ fn commandUsage(command: []const u8) !void {
     else if (std.mem.eql(u8, command, "inspect"))
         \\Usage: akamata inspect [--json]
         \\Show a deterministic project summary suitable for humans or tooling.
+        \\
+    else if (std.mem.eql(u8, command, "routes"))
+        \\Usage: akamata routes [--json]
+        \\       akamata routes explain METHOD /path
+        \\Inspect routes, effective middleware, and endpoint budgets.
+        \\
+    else if (std.mem.eql(u8, command, "doctor"))
+        \\Usage: akamata doctor [--json]
+        \\Check project manifests, entry point, deployment files, and migrations.
+        \\
+    else if (std.mem.eql(u8, command, "config"))
+        \\Usage: akamata config <show|check>
+        \\Print configuration keys and presence without revealing values.
+        \\
+    else if (std.mem.eql(u8, command, "test"))
+        \\Usage: akamata test [--watch]
+        \\Run `zig build test`, optionally in watch mode.
+        \\
+    else if (std.mem.eql(u8, command, "runner"))
+        \\Usage: akamata runner <command> [args]
+        \\Delegate to the application's typed management-command runner.
         \\
     else if (std.mem.eql(u8, command, "generate") or std.mem.eql(u8, command, "destroy"))
         \\Usage: akamata generate resource <name> [field:type ...] [--pretend]
@@ -1162,6 +1191,11 @@ test "generated app exposes the migration runner expected by the CLI" {
     try std.testing.expect(std.mem.indexOf(u8, tmpl_main, "loadMigrationsFromDir") != null);
 }
 
+test "generated app exposes typed management runner protocol" {
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_main, "akamata-runner") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_main, "runnerCommand") != null);
+}
+
 test "generated migration comments do not contain statement separators" {
     var lines = std.mem.splitScalar(u8, migration_file_template, '\n');
     while (lines.next()) |line| {
@@ -1407,7 +1441,13 @@ fn cmdInspect(_: std.mem.Allocator, args: []const [:0]const u8) !void {
 
 fn cmdRoutes(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     var json = false;
-    for (args) |raw| {
+    var explain_method: ?[]const u8 = null;
+    var explain_path: ?[]const u8 = null;
+    if (args.len > 0 and std.mem.eql(u8, std.mem.sliceTo(args[0], 0), "explain")) {
+        if (args.len != 3) return error.UsageError;
+        explain_method = std.mem.sliceTo(args[1], 0);
+        explain_path = std.mem.sliceTo(args[2], 0);
+    } else for (args) |raw| {
         const arg = std.mem.sliceTo(raw, 0);
         if (std.mem.eql(u8, arg, "--json")) json = true else return error.UsageError;
     }
@@ -1421,6 +1461,31 @@ fn cmdRoutes(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     defer parsed.deinit();
     const paths = if (parsed.value == .object) parsed.value.object.get("paths") else null;
     if (paths == null or paths.? != .object) return error.InvalidOpenApi;
+    if (explain_method) |wanted_method| {
+        const wanted_path = explain_path.?;
+        const path = paths.?.object.get(wanted_path) orelse return error.RouteNotFound;
+        if (path != .object) return error.InvalidOpenApi;
+        var lower_buf: [16]u8 = undefined;
+        if (wanted_method.len > lower_buf.len) return error.InvalidMethod;
+        for (wanted_method, 0..) |c, i| lower_buf[i] = std.ascii.toLower(c);
+        const operation = path.object.get(lower_buf[0..wanted_method.len]) orelse return error.RouteNotFound;
+        if (operation != .object) return error.InvalidOpenApi;
+        std.debug.print("{s} {s}\n", .{ wanted_method, wanted_path });
+        if (operation.object.get("operationId")) |v| if (v == .string) std.debug.print("  operation     {s}\n", .{v.string});
+        if (operation.object.get("summary")) |v| if (v == .string) std.debug.print("  summary       {s}\n", .{v.string});
+        if (operation.object.get("x-akamata-middleware")) |v| if (v == .array) {
+            std.debug.print("  middleware    ", .{});
+            for (v.array.items, 0..) |item, i| if (item == .string) std.debug.print("{s}{s}", .{ if (i == 0) "" else " -> ", item.string });
+            std.debug.print("\n", .{});
+        };
+        if (operation.object.get("x-akamata-limits")) |v| if (v == .object) {
+            std.debug.print("  budgets       ", .{});
+            var limits = v.object.iterator();
+            while (limits.next()) |entry| std.debug.print("{s} ", .{entry.key_ptr.*});
+            std.debug.print("\n", .{});
+        };
+        return;
+    }
     var count: usize = 0;
     var path_it = paths.?.object.iterator();
     while (path_it.next()) |path| {
@@ -1481,6 +1546,22 @@ fn cmdConfig(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
         count += 1;
     }
     std.debug.print("configuration: {d} key(s), values hidden\n", .{count});
+}
+
+fn cmdTest(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    if (args.len == 0) return runChild(alloc, &.{ "zig", "build", "test" }, null);
+    if (args.len == 1 and std.mem.eql(u8, std.mem.sliceTo(args[0], 0), "--watch"))
+        return runChild(alloc, &.{ "zig", "build", "--watch", "test" }, null);
+    return error.UsageError;
+}
+
+fn cmdRunner(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    if (args.len == 0) return error.UsageError;
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(alloc);
+    try argv.appendSlice(alloc, &.{ "zig", "build", "run", "--", "akamata-runner" });
+    for (args) |arg| try argv.append(alloc, std.mem.sliceTo(arg, 0));
+    return runChild(alloc, argv.items, null);
 }
 
 fn yesNo(value: bool) []const u8 {

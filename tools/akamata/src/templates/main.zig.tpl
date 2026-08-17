@@ -207,6 +207,22 @@ fn migrateCommand(alloc: std.mem.Allocator, mode: []const u8, args: []const [:0]
     std.log.info("applied {d} migration(s)", .{selected.items.len});
 }
 
+/// Application management commands invoked by `akamata runner <name>`.
+/// Add branches here; arguments arrive without the protocol prefix.
+fn runnerCommand(app: *am.App(State), args: []const [:0]const u8) !void {
+    if (args.len == 0) return error.MissingRunnerCommand;
+    const name = std.mem.sliceTo(args[0], 0);
+    if (std.mem.eql(u8, name, "db-check")) {
+        var stmt = try app.state().db.prepare("SELECT 1");
+        defer stmt.deinit();
+        _ = try stmt.step();
+        std.debug.print("database: ok\n", .{});
+        return;
+    }
+    std.debug.print("unknown application command: {s}\n", .{name});
+    return error.UnknownRunnerCommand;
+}
+
 pub fn main(init: std.process.Init) !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
@@ -225,6 +241,10 @@ pub fn main(init: std.process.Init) !void {
     defer app.deinit();
     defer app.state().db.close();
     try registerRoutes(&app);
+
+    if (args.len >= 2 and std.mem.eql(u8, std.mem.sliceTo(args[1], 0), "akamata-runner")) {
+        return runnerCommand(&app, args[2..]);
+    }
 
     // Local tooling protocol: lets `akamata client --tui` inspect every
     // registered route without exposing an OpenAPI endpoint over HTTP.
