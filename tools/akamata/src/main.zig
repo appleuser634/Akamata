@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const api_client = @import("api_client.zig");
 
 const tmpl_build_zig = @embedFile("templates/build.zig.tpl");
 const tmpl_build_zon = @embedFile("templates/build.zig.zon.tpl");
@@ -71,6 +72,11 @@ pub fn main(init: std.process.Init) !void {
         try cmdDestroy(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "api")) {
         try cmdApi(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "client")) {
+        api_client.run(alloc, args[2..]) catch |err| {
+            std.debug.print("akamata client: {s}\n", .{@errorName(err)});
+            std.process.exit(1);
+        };
     } else if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "-h")) {
         try usage();
     } else if (std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "-v") or std.mem.eql(u8, cmd, "version")) {
@@ -93,7 +99,7 @@ fn isHelpArg(arg: []const u8) bool {
 }
 
 const known_commands = [_][]const u8{
-    "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "check", "inspect", "generate", "destroy", "api", "help", "version",
+    "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "check", "inspect", "generate", "destroy", "api", "client", "help", "version",
 };
 
 /// Lightweight nearest-match — if the user typed something within 2 edits
@@ -186,6 +192,10 @@ fn usage() !void {
         \\      Remove files previously created by the resource generator.
         \\  api diff <before.json> <after.json>
         \\      Detect removed OpenAPI paths and operations (non-zero on breakage).
+        \\  client [METHOD] <path-or-url> [options]
+        \\      Call an Akamata API (default: GET, http://127.0.0.1:8080).
+        \\  api call <operation-id> [options]
+        \\      Resolve an operation from /openapi.json and call it.
         \\
     ;
     std.debug.print("{s}", .{msg});
@@ -266,7 +276,25 @@ fn commandUsage(command: []const u8) !void {
         \\
     else if (std.mem.eql(u8, command, "api"))
         \\Usage: akamata api diff <before.json> <after.json>
-        \\Reports removed paths and HTTP operations; exits with an error on breaking changes.
+        \\       akamata api call <operation-id> [client options] [--spec=PATH]
+        \\Diff reports removed paths and operations. Call resolves method/path from OpenAPI.
+        \\
+    else if (std.mem.eql(u8, command, "client"))
+        \\Usage: akamata client [METHOD] <path-or-url> [options]
+        \\
+        \\Options:
+        \\  --base-url=URL           Base for relative paths (default: http://127.0.0.1:8080)
+        \\  --header=NAME:VALUE      Add a request header (repeatable; -H= is an alias)
+        \\  --bearer=TOKEN           Add an Authorization Bearer header
+        \\  --query=NAME=VALUE       Add a percent-encoded query parameter (repeatable)
+        \\  --param=NAME=VALUE       Fill an OpenAPI {path} parameter for `api call`
+        \\  --json=JSON              JSON body and content-type (validated before sending)
+        \\                           Prefix with @ to read JSON from a file
+        \\  --data=TEXT              Raw request body; @PATH reads from a file
+        \\  --include                Print status and response headers
+        \\  --raw                    Do not pretty-print JSON responses
+        \\  --fail                   Return non-zero for HTTP 4xx/5xx
+        \\  --max-bytes=N            Response limit (default: 4 MiB; maximum: 64 MiB)
         \\
     else {
         std.debug.print("akamata: unknown help topic `{s}`\n\n", .{command});
@@ -1457,6 +1485,13 @@ fn cmdDestroy(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
 }
 
 fn cmdApi(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    if (args.len >= 2 and std.mem.eql(u8, std.mem.sliceTo(args[0], 0), "call")) {
+        api_client.runOperation(alloc, std.mem.sliceTo(args[1], 0), args[2..]) catch |err| {
+            std.debug.print("akamata api call: {s}\n", .{@errorName(err)});
+            std.process.exit(1);
+        };
+        return;
+    }
     if (args.len != 3 or !std.mem.eql(u8, std.mem.sliceTo(args[0], 0), "diff")) return error.UsageError;
     const before_bytes = try readFileAlloc(alloc, std.mem.sliceTo(args[1], 0), 16 * 1024 * 1024);
     defer alloc.free(before_bytes);

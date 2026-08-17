@@ -110,6 +110,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("tools/akamata/src/main.zig"),
         .target = native_target,
         .optimize = optimize,
+        .imports = &.{.{ .name = "akamata", .module = am_mod }},
     });
     cli_module.link_libc = true;
     const cli_exe = b.addExecutable(.{
@@ -178,6 +179,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("tools/akamata/src/main.zig"),
             .target = native_target,
             .optimize = optimize,
+            .imports = &.{.{ .name = "akamata", .module = am_mod }},
         });
         cli_test_mod.link_libc = true;
         const cli_t = b.addTest(.{ .root_module = cli_test_mod });
