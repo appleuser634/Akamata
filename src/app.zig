@@ -12,6 +12,7 @@ const res_mod = @import("http/response.zig");
 const status_mod = @import("http/status.zig");
 const parser = @import("http/parser.zig");
 const sync = @import("sync.zig");
+const clock = @import("observability/clock.zig");
 
 pub const Method = status_mod.Method;
 pub const RouteKind = enum { http, ws };
@@ -800,11 +801,31 @@ pub fn App(comptime State: type) type {
                     }
                 }
             };
-            if (matched) |route| if (route.meta) |meta| if (meta.limits.response_bytes) |limit| {
-                if (response.streaming == null and response.body.items.len > limit) {
+            ctx.trace.duration_ns = clock.elapsedNs(ctx.trace.start_ns);
+            if (matched) |route| if (route.meta) |meta| {
+                const limits = meta.limits;
+                var violation: ?[]const u8 = null;
+                var limit_value: u64 = 0;
+                if (limits.timeout_ms) |limit| if (ctx.trace.duration_ns > @as(u64, limit) * std.time.ns_per_ms) {
+                    violation = "timeout_budget_exceeded";
+                    limit_value = limit;
+                };
+                if (limits.max_db_queries) |limit| if (ctx.trace.db_queries +| ctx.trace.db_execs > limit) {
+                    violation = "db_query_budget_exceeded";
+                    limit_value = limit;
+                };
+                if (limits.max_outbound_requests) |limit| if (ctx.trace.outbound_http_requests > limit) {
+                    violation = "outbound_request_budget_exceeded";
+                    limit_value = limit;
+                };
+                if (limits.response_bytes) |limit| if (response.streaming == null and response.body.items.len > limit) {
+                    violation = "response_budget_exceeded";
+                    limit_value = limit;
+                };
+                if (violation) |kind| {
                     response.body.clearRetainingCapacity();
                     response.setStatus(500);
-                    try response.json(.{ .error_kind = "response_budget_exceeded", .limit = limit });
+                    try response.json(.{ .error_kind = kind, .limit = limit_value });
                 }
             };
         }
@@ -969,4 +990,23 @@ test "application lifecycle runs startup and shutdown once" {
     try std.testing.expectEqual(@as(usize, 1), starts);
     app.deinit();
     try std.testing.expectEqual(@as(usize, 1), stops);
+}
+
+test "endpoint response byte budget is enforced" {
+    const State = struct {};
+    const TestApp = App(State);
+    const handler = struct {
+        fn call(c: *ctx_mod.Context(State)) !void {
+            try c.text("too large", 200);
+        }
+    }.call;
+    var app = TestApp.init(std.testing.allocator, .{});
+    defer app.deinit();
+    _ = try app.endpoint(.GET, "/limited", handler, @import("openapi.zig").Spec(.{ .limits = .{ .response_bytes = 2 } }));
+    var request: req_mod.Request = .{ .method = .GET, .raw_method = "GET", .path = "/limited", .version = "HTTP/1.1", .headers = &.{}, .body = "", .keep_alive = false };
+    var response: res_mod.Response = .init(std.testing.allocator);
+    defer response.deinit();
+    try app.dispatch(std.testing.allocator, &request, &response, null, null);
+    try std.testing.expectEqual(@as(u16, 500), response.status_code);
+    try std.testing.expect(std.mem.indexOf(u8, response.body.items, "response_budget_exceeded") != null);
 }
