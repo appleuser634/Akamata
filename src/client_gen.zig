@@ -1,13 +1,13 @@
 //! Type-safe client generation from app route metadata.
 //!
 //! Walks the same `app.routes[i].meta` chain that `openapi.zig` uses and
-//! emits a runnable client module. Currently supports two targets:
+//! emits a runnable TypeScript client module. The legacy Zig enum value is
+//! retained for source compatibility but fails generation until its transport
+//! and lifetime contract is complete.
 //!
 //!   * **TypeScript** (`.typescript`) — one async function per documented
 //!     endpoint, fetch-based, with TS interfaces for every request/response
 //!     type.
-//!   * **Zig** (`.zig`) — uses `am.http_client.send` under the hood. Useful
-//!     for service-to-service calls in the same monorepo.
 //!
 //! Routes registered via the bare `app.get/post/...` helpers (no meta) are
 //! included with untyped schemas; `endpoint` routes add reflected schemas.
@@ -49,12 +49,21 @@ pub fn generate(comptime AppT: type, app: *AppT, gpa: std.mem.Allocator, opts: O
         });
     }
 
+    var names = std.StringHashMap(void).init(arena);
+    for (ops.items) |op| {
+        var name_writer: std.Io.Writer.Allocating = .init(arena);
+        try writeOperationFnName(&name_writer.writer, op.method, op.raw_path);
+        const name = name_writer.writer.buffered();
+        if (names.contains(name)) return error.DuplicateClientOperationName;
+        try names.put(name, {});
+    }
+
     var aw: std.Io.Writer.Allocating = try .initCapacity(arena, 4096);
     const w = &aw.writer;
 
     switch (opts.target) {
         .typescript => try emitTypescript(w, opts.base_url, ops.items, &builder),
-        .zig => try emitZig(w, opts.base_url, ops.items, &builder),
+        .zig => return error.UnsupportedTarget,
     }
     return gpa.dupe(u8, aw.written());
 }
@@ -156,7 +165,7 @@ fn emitTypescriptOperation(w: *std.Io.Writer, op: OpEntry) !void {
     if (op.refs.response) |res_ref| {
         try w.writeAll(refToTypeName(res_ref));
     } else {
-        try w.writeAll("void");
+        try w.writeAll(if (op.method == .HEAD) "void" else "unknown");
     }
     try w.writeAll("> => {\n");
 
@@ -169,7 +178,7 @@ fn emitTypescriptOperation(w: *std.Io.Writer, op: OpEntry) !void {
                 const start = i + 1;
                 var end = start;
                 while (end < op.raw_path.len and op.raw_path[end] != '/') : (end += 1) {}
-                try w.print("${{{s}}}", .{op.raw_path[start..end]});
+                try w.print("${{encodeURIComponent(String({s}))}}", .{op.raw_path[start..end]});
                 i = end;
             } else {
                 try w.writeByte(op.raw_path[i]);
@@ -197,14 +206,20 @@ fn emitTypescriptOperation(w: *std.Io.Writer, op: OpEntry) !void {
     try w.print(
         \\      const res = await f(_full, {{
         \\        method: "{s}",
-        \\        headers: {{ "content-type": "application/json", ...baseHeaders }},
+        \\        headers: {{ ...baseHeaders{s} }},
         \\
-    , .{lowerMethod(op.method)});
+    , .{ lowerMethod(op.method), if (op.refs.request != null) ", \"content-type\": \"application/json\"" else "" });
     if (op.refs.request != null) {
         try w.writeAll("        body: JSON.stringify(body),\n");
     }
     try w.writeAll("      });\n");
-    try w.writeAll("      if (!res.ok) throw new Error(`HTTP ${res.status}`);\n");
+    try w.writeAll(
+        \\      if (!res.ok) {
+        \\        const detail = await res.text().catch(() => "");
+        \\        throw new Error(`HTTP ${res.status}${detail ? `: ${detail}` : ""}`);
+        \\      }
+        \\
+    );
     if (op.refs.response != null) {
         try w.writeAll("      return res.json();\n");
     } else {
@@ -237,11 +252,6 @@ fn writeOperationFnName(w: *std.Io.Writer, method: @import("http/request.zig").M
             try w.writeByte(c);
         }
     }
-}
-
-fn operationFnName(_: []u8, method: @import("http/request.zig").Method, path: []const u8) ![]const u8 {
-    _ = method;
-    return path;
 }
 
 fn refToTypeName(ref: []const u8) []const u8 {
@@ -329,153 +339,25 @@ fn writeTsTypeFromJsonSchema(w: *std.Io.Writer, schema: []const u8) std.Io.Write
             return;
         }
     }
-    // oneOf: nullable union
-    if (findField(schema, "\"oneOf\":")) |_| {
-        // Pretty-printing the union is overkill; emit a permissive type.
-        try w.writeAll("any");
-        return;
+    // Akamata emits optionals as oneOf(null, T). Preserve that contract
+    // instead of widening the generated client field to `any`.
+    if (findField(schema, "\"oneOf\":")) |union_start| {
+        if (parseArray(schema[union_start..])) |items| {
+            const first = parseObject(items[1..]) orelse {
+                try w.writeAll("unknown");
+                return;
+            };
+            const rest = items[1 + first.len ..];
+            const second = parseObject(rest) orelse {
+                try w.writeAll("unknown");
+                return;
+            };
+            try writeTsTypeFromJsonSchema(w, second);
+            try w.writeAll(" | null");
+            return;
+        }
     }
     try w.writeAll("any");
-}
-
-// =========================================================================
-// Zig emitter
-// =========================================================================
-
-fn emitZig(
-    w: *std.Io.Writer,
-    base_url: []const u8,
-    ops: []const OpEntry,
-    builder: *openapi.SpecBuilder,
-) !void {
-    try w.writeAll(
-        \\// Generated by Akamata client_gen. Do not edit by hand.
-        \\const std = @import("std");
-        \\const am = @import("akamata");
-        \\
-        \\pub const default_base_url =
-    );
-    try w.print("{f};\n\n", .{jsonString(base_url)});
-
-    // Type stubs: emit Zig struct definitions matching the schemas.
-    var sch_it = builder.schemas.iterator();
-    while (sch_it.next()) |entry| {
-        const name = entry.key_ptr.*;
-        const json_schema = entry.value_ptr.*;
-        try w.print("pub const {s} = struct ", .{name});
-        try writeZigStructFromJsonSchema(w, json_schema);
-        try w.writeAll(";\n\n");
-    }
-
-    try w.writeAll(
-        \\pub const Client = struct {
-        \\    gpa: std.mem.Allocator,
-        \\    base_url: []const u8,
-        \\
-        \\    pub fn init(gpa: std.mem.Allocator, base_url: []const u8) Client {
-        \\        return .{ .gpa = gpa, .base_url = base_url };
-        \\    }
-        \\
-    );
-
-    for (ops) |op| {
-        try emitZigOperation(w, op);
-    }
-
-    try w.writeAll(
-        \\};
-        \\
-    );
-}
-
-fn emitZigOperation(w: *std.Io.Writer, op: OpEntry) !void {
-    try w.writeAll("    pub fn ");
-    try writeOperationFnName(w, op.method, op.raw_path);
-    try w.writeAll("(self: *Client");
-
-    var seg_it = std.mem.splitScalar(u8, op.raw_path, '/');
-    while (seg_it.next()) |seg| {
-        if (seg.len > 0 and seg[0] == ':') {
-            try w.print(", {s}: []const u8", .{seg[1..]});
-        }
-    }
-    if (op.refs.request) |req_ref| {
-        try w.print(", body: {s}", .{refToTypeName(req_ref)});
-    }
-    try w.writeAll(") !");
-    if (op.refs.response) |res_ref| {
-        try w.writeAll(refToTypeName(res_ref));
-    } else {
-        try w.writeAll("void");
-    }
-    try w.writeAll(" {\n");
-    // For brevity the Zig client is a stub — apps that want it can flesh
-    // out the actual HTTP send via am.http_client. The point is to lock in
-    // type safety and route names.
-    try w.writeAll("        _ = self;\n");
-    // Suppress unused-arg warnings.
-    var sit = std.mem.splitScalar(u8, op.raw_path, '/');
-    while (sit.next()) |seg| {
-        if (seg.len > 0 and seg[0] == ':') {
-            try w.print("        _ = {s};\n", .{seg[1..]});
-        }
-    }
-    if (op.refs.request != null) try w.writeAll("        _ = body;\n");
-    try w.writeAll("        @panic(\"client_gen Zig target is a type-stub; wire am.http_client.send manually\");\n");
-    try w.writeAll("    }\n\n");
-}
-
-fn writeZigStructFromJsonSchema(w: *std.Io.Writer, schema: []const u8) std.Io.Writer.Error!void {
-    try w.writeAll("{\n");
-    if (findField(schema, "\"properties\":")) |props_start| {
-        const props_obj = parseObject(schema[props_start..]) orelse {
-            try w.writeAll("}");
-            return;
-        };
-        var required: []const u8 = "";
-        if (findField(schema, "\"required\":")) |req_start| {
-            if (parseArray(schema[req_start..])) |arr| required = arr;
-        }
-        var it = objectFieldsIterator(props_obj);
-        while (it.next()) |field| {
-            const optional = !arrayContainsString(required, field.name);
-            try w.print("    {s}: ", .{field.name});
-            if (optional) try w.writeAll("?");
-            try writeZigTypeFromJsonSchema(w, field.value);
-            try w.writeAll(",\n");
-        }
-    }
-    try w.writeAll("}");
-}
-
-fn writeZigTypeFromJsonSchema(w: *std.Io.Writer, schema: []const u8) std.Io.Writer.Error!void {
-    if (findField(schema, "\"type\":")) |t_start| {
-        const type_str = parseString(schema[t_start..]) orelse "[]const u8";
-        if (std.mem.eql(u8, type_str, "string")) {
-            try w.writeAll("[]const u8");
-            return;
-        }
-        if (std.mem.eql(u8, type_str, "integer")) {
-            try w.writeAll("i64");
-            return;
-        }
-        if (std.mem.eql(u8, type_str, "number")) {
-            try w.writeAll("f64");
-            return;
-        }
-        if (std.mem.eql(u8, type_str, "boolean")) {
-            try w.writeAll("bool");
-            return;
-        }
-        if (std.mem.eql(u8, type_str, "array")) {
-            if (findField(schema, "\"items\":")) |i_start| {
-                try w.writeAll("[]const ");
-                try writeZigTypeFromJsonSchema(w, schema[i_start..]);
-                return;
-            }
-        }
-    }
-    try w.writeAll("[]const u8");
 }
 
 // =========================================================================

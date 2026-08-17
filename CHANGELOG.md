@@ -12,6 +12,9 @@
 - Every non-optional input field without a default is required by `c.input(T)`, independently of validation metadata.
 - OpenAPI and client route discovery includes routes registered with the untyped helpers; `endpoint()` still attaches reflected schemas.
 - Versioned migrations are transactional per file on SQLite and Turso. D1 remains non-transactional.
+- The experimental reactor fails closed until it reaches production safety parity.
+- Proxy headers require `trust_proxy_headers` and an explicit `trusted_proxy_fn`.
+- The unfinished Zig client target returns `error.UnsupportedTarget` instead of generating runtime panics.
 
 ### Fixed
 
@@ -22,6 +25,17 @@
 - Long static paths and trailing-slash matching now agree with indexed routes.
 - Built-in session and rate-limiter allocations are released during app teardown.
 - Native randomness works on Linux/musl targets.
+- HTTPS trust anchors use process-lifetime storage rather than a request arena.
+- Stateful middleware is App-local instead of shared by identical factories.
+- Outbound HTTP rejects injection, ambiguous framing, and truncated responses.
+- Job workers claim atomically and reclaim expired running leases.
+- Generated TypeScript clients preserve nullable types, escape path values,
+  retain HTTP error bodies, and no longer claim unknown responses are `void`.
+
+### Added
+
+- Explicit `Db.begin()` transactions and bounded `db.Pool` leases.
+- OpenAPI operation IDs, status documentation, content types, and security schemes.
 
 ### Testing
 

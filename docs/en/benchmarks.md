@@ -4,6 +4,10 @@
 > raw output, so they are not claims about the current revision. Run
 > `OUTDIR=./benchmark-results bash examples/bench/runall_ext.sh` and retain
 > the generated JSON, which records the commit, UTC timestamp, and OS.
+> The reactor measurements are historical only: `.reactor` currently fails
+> closed with `error.ExperimentalRuntimeDisabled`. Use `.threaded` in current
+> deployments until parser limits, deadlines, and connection lifecycle reach
+> safety parity.
 
 These measurements compare Akamata with several server implementations under specific local workloads. They are historical snapshots, not performance guarantees.
 
@@ -419,8 +423,8 @@ pkill -f index.ts
 Akamata achieves **better throughput than Go for all three workloads** in v0.4,
 P99 achieved an advantage of more than 10x over all three other frameworks. This makes the runtime selection:
 
-- `threaded` (default) — regular REST API, low concurrency, with Cloudflare/nginx frontstage
-- `reactor` (opt-in) — Hundreds or more of simultaneous connections, SSE/WebSocket-heavy
+- `threaded` — the only enabled native runtime in the current release
+- `reactor` — historical benchmark subject; currently disabled
 
 By using them properly, you can bring out the optimal performance characteristics for each scenario.
 

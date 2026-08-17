@@ -5,6 +5,10 @@
 設計案（2026年5月）。 PERF1 で追跡されます。 PERF2 での実装 (kqueue
 プロトタイプ）とそれに続く PERF3（epoll ポート）。
 
+> 安全性: `.reactor`は現在`error.ExperimentalRuntimeDisabled`を返します。threaded runtimeと
+> 共通のlimit、deadline、peer-IP、shutdown、write backpressure testを通過するまで、
+> production serverからは利用できません。
+
 ## なぜ今なのか
 
 現在の測定値 (`docs/ja/benchmarks-long-run.md`):
@@ -250,7 +254,8 @@ SQLite の準備/ステップは実際には CPU をビジー状態にし続け�
 ## PERF2 の結果 (2026 年 5 月)
 
 シングルスレッド kqueue プロトタイプは、`src/runtime/reactor_kqueue.zig` として出荷されます。
-`app.serve(.{ .runtime = .reactor, ... })` で選択可能です。 A/Bへ、
+以前は`app.serve(.{ .runtime = .reactor, ... })`で選択できましたが、現在は上記の
+安全性理由で無効です。将来のA/Bでは、
 `examples/bench`起動時に`BENCH_RUNTIME=reactor`を設定してください。
 
 10 秒間のループバック作業の結果 (`-t8 -c256`):
@@ -311,7 +316,7 @@ PERF3 により、リアクターがほとんどの環境で `wrk` ベンチマ�
 その代わり：
 
 - `runtime: .threaded` はデフォルトのままです。既存のユーザーには変化はありません。
-- `runtime: .reactor` は次の場合に適切な選択肢として文書化されています。
+- 安全性parityの完了後、`runtime: .reactor`は次の場合に適切な選択肢となり得ます。
   1. 多数のアイドル接続 (チャット、SSE、ロングポーリング)
   2. CPU バウンドのハンドラー (DB、JSON、暗号化)
   3. すでに多重化されているプロキシの背後で

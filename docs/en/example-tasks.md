@@ -228,7 +228,11 @@ pub fn openapiSpec(c: *Ctx) !void {
 included without typed schemas; `app.endpoint(...)` additionally uses
 **comptime reflection** to derive JSON Schema from request and response types.
 
-`am.client_gen.generate(...)` also reads the same route table, but you can choose the output target from TS / Zig. Incorporate `/client.ts` into your frontend build to ensure API signature changes are detected at compile time.
+`am.client_gen.generate(...)` also reads the same route table. TypeScript is
+the supported output target; the reserved Zig target fails with
+`error.UnsupportedTarget` until its transport and ownership contract is
+complete. Incorporate `/client.ts` into your frontend build to detect API
+signature changes at compile time.
 
 ### `src/setup.zig` — Wiring
 

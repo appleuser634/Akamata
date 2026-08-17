@@ -10,6 +10,7 @@ pub const Db = struct {
     pub fn exec(self: Db, sql: []const u8) !void
     pub fn execAll(self: Db, script: []const u8) !void   // Execute a SQL script
     pub fn close(self: Db) void
+    pub fn begin(self: Db) !Transaction
 };
 
 pub const Stmt = struct {
@@ -24,6 +25,10 @@ pub const Stmt = struct {
     pub fn deinit(self: Stmt) void
 };
 ```
+
+`Transaction` rolls back from `deinit()` unless committed. D1 returns
+`error.TransactionsUnsupported`. `am.db.Pool.init(allocator, handles)` owns a
+bounded set of independently opened handles; release every lease before the pool.
 
 SQLite passes the whole script to SQLite's parser. Other backends use a
 splitter that understands quoted strings, identifiers, line comments, and

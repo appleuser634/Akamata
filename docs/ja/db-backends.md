@@ -10,6 +10,7 @@ pub const Db = struct {
     pub fn exec(self: Db, sql: []const u8) !void
     pub fn execAll(self: Db, script: []const u8) !void   // SQL scriptを実行
     pub fn close(self: Db) void
+    pub fn begin(self: Db) !Transaction
 };
 
 pub const Stmt = struct {
@@ -24,6 +25,10 @@ pub const Stmt = struct {
     pub fn deinit(self: Stmt) void
 };
 ```
+
+`Transaction`はcommitされない限り`deinit()`でrollbackします。D1は
+`error.TransactionsUnsupported`です。`am.db.Pool.init(allocator, handles)`は独立して
+openしたhandle群を所有し、全leaseをPoolより先に解放します。
 
 SQLiteはscript全体をSQLite自身のparserへ渡します。他のbackendでは文字列、quoted
 identifier、line comment、block commentを認識するsplitterを使い、閉じていないquoteや

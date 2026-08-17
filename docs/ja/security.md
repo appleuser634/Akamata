@@ -8,8 +8,9 @@ threaded native runtimeではaccept処理と、上限付きのconnection worker�
 
 `ServeOptions.trust_proxy_headers`のdefaultは`false`で、`c.req.ip()`は
 `X-Forwarded-For`、`CF-Connecting-IP`、`X-Real-IP`を無視します。threaded native
-serverはsocket peerを返し、peer metadataがないtargetでは`null`になり得ます。直前の
-接続元が全て自分で管理するproxyの場合だけforwarding headerを有効にしてください。
+serverはsocket peerを返し、peer metadataがないtargetでは`null`になり得ます。有効化には
+direct peerを認可する`trusted_proxy_fn`も必要です。Internet公開native serverで全peerを
+許可しないでください。
 Akamataのrate limiterはprocess／isolate内だけで動作します。複数nodeではshared limiterが必要です。
 
 `secureHeaders`はhandlerより前に適用されるため、streaming responseにもsecurity policyが付きます。HSTSのdefaultはHTTPS本番環境向けです。平文HTTPの開発hostでは、browserへ利用できないHTTPS policyを記憶させないよう`strict_transport_security`を無効にしてください。
@@ -17,6 +18,8 @@ Akamataのrate limiterはprocess／isolate内だけで動作します。複数no
 ## 認証とcookie
 
 `am.mw.jwt`はHS256だけを受け付け、defaultで`exp`を必須とし、`exp`と`nbf`を検証します。32 bytes以上のentropyを持つrandom secretを使用してください。`now_fn`は再現可能なtest用です。`leeway_seconds`は必要最小限にします。
+URLはlogやhistoryへ残るためquery tokenはdefaultで無効です。Authorization headerを使えない
+限定的なWebSocket handshakeでだけ`allow_query_token=true`を指定してください。
 
 Sessionには32 bytes以上のstable secretが必要です。署名cookieには有効期限が含まれ、persistent Storeを使用してもrequest時に検証されます。Session／CSRF cookieはdefaultで`Secure`です。平文HTTPのlocal開発でだけ明示的に無効化してください。Session cookieには`HttpOnly`と`SameSite=Lax`も付きます。login時と権限変更時は`session.rotate(c)`でSIDを更新してください。
 

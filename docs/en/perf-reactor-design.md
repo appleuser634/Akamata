@@ -5,6 +5,11 @@
 Design draft (May 2026). Tracked under PERF1; implementation under PERF2 (kqueue
 prototype) and a follow-up PERF3 (epoll port).
 
+> Safety status: `.reactor` currently returns
+> `error.ExperimentalRuntimeDisabled`. It remains unreachable through the
+> production server until it passes the threaded runtime's shared limits,
+> deadlines, peer-IP, shutdown, and write-backpressure suite.
+
 ## Why now
 
 Current measurements (`docs/en/benchmarks-long-run.md`):
@@ -250,7 +255,8 @@ for:
 ## PERF2 results (May 2026)
 
 The single-thread kqueue prototype ships as `src/runtime/reactor_kqueue.zig`
-and is selectable via `app.serve(.{ .runtime = .reactor, ... })`. To A/B,
+was historically selectable via `app.serve(.{ .runtime = .reactor, ... })`.
+It is now disabled as described above. For future A/B work,
 set `BENCH_RUNTIME=reactor` when launching `examples/bench`.
 
 10-second loopback wrk results (`-t8 -c256`):
@@ -311,7 +317,7 @@ threaded model's home turf), we **deliberately do not flip the default**.
 Instead:
 
 - `runtime: .threaded` stays the default. Existing users see no change.
-- `runtime: .reactor` is documented as the right choice for:
+- After safety parity is complete, `runtime: .reactor` may be appropriate for:
   1. Many idle connections (chat, SSE, long-poll)
   2. CPU-bound handlers (DB, JSON, crypto)
   3. Behind a proxy that already multiplexes

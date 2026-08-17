@@ -4,6 +4,9 @@
 > 現行revisionの性能主張には使用しません。現在の比較は
 > `OUTDIR=./benchmark-results bash examples/bench/runall_ext.sh`で実行し、生成される
 > commit hash・UTC時刻・OS情報付きJSONを成果物として保存してください。
+> reactorの測定値も履歴資料です。現在`.reactor`は
+> `error.ExperimentalRuntimeDisabled`でfail closedします。parser limit、deadline、
+> connection lifecycleが安全性parityに達するまでは`.threaded`を使用してください。
 
 特定のlocal workloadでAkamataと複数のserver実装を比較した測定記録です。過去のsnapshotであり、他の環境における性能を保証するものではありません。
 

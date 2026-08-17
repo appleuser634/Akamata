@@ -29,8 +29,9 @@ instead of `404`.
 ## Proxy trust and errors
 
 Forwarding headers no longer affect `c.req.ip()` by default. Set
-`trust_proxy_headers = true` only when the application cannot be reached except
-through a trusted proxy that overwrites client-supplied forwarding headers.
+`trust_proxy_headers = true` and provide `trusted_proxy_fn` only when the
+application cannot be reached except through a trusted proxy that overwrites
+client-supplied forwarding headers.
 Default 500 JSON intentionally omits the internal Zig error name; log details
 server-side or use a custom `onError` handler where appropriate.
 
@@ -42,8 +43,9 @@ optional or give them defaults for partial updates.
 
 OpenAPI and client generation now includes ordinary `get`, `post`, and other
 untyped routes. Use `endpoint()` when reflected request/response/query schemas
-are needed. Expect the generated path set to grow; the Zig client target is
-still a generated stub rather than a complete transport implementation.
+are needed. Expect the generated path set to grow. The incomplete Zig client
+target now fails generation with `error.UnsupportedTarget` instead of emitting
+methods that panic at runtime.
 
 ## Database and migrations
 

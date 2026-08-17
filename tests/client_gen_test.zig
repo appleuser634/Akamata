@@ -3,7 +3,7 @@ const am = @import("akamata");
 
 const State = struct {};
 const CreateUser = struct { name: []const u8, email: []const u8 };
-const User = struct { id: i64, name: []const u8, email: []const u8 };
+const User = struct { id: i64, name: []const u8, email: []const u8, nickname: ?[]const u8 = null };
 
 fn dummy(c: *am.Context(State)) !void {
     _ = c;
@@ -32,13 +32,15 @@ test "client_gen.typescript emits interfaces and functions" {
     try std.testing.expect(std.mem.indexOf(u8, ts, "export interface CreateUser") != null);
     try std.testing.expect(std.mem.indexOf(u8, ts, "name: string") != null);
     try std.testing.expect(std.mem.indexOf(u8, ts, "id: number") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "nickname?: string | null") != null);
     try std.testing.expect(std.mem.indexOf(u8, ts, "postUsers") != null);
     try std.testing.expect(std.mem.indexOf(u8, ts, "getUsersById") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ts, "${id}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "${encodeURIComponent(String(id))}") != null);
     try std.testing.expect(std.mem.indexOf(u8, ts, "JSON.stringify(body)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "await res.text()") != null);
 }
 
-test "client_gen.zig emits struct stubs" {
+test "client_gen.zig fails closed until transport is implemented" {
     const alloc = std.testing.allocator;
     var app = am.App(State).init(alloc, .{});
     defer app.deinit();
@@ -47,14 +49,8 @@ test "client_gen.zig emits struct stubs" {
         .response = User,
     }));
 
-    const code = try am.client_gen.generate(@TypeOf(app), &app, alloc, .{
+    try std.testing.expectError(error.UnsupportedTarget, am.client_gen.generate(@TypeOf(app), &app, alloc, .{
         .target = .zig,
         .base_url = "http://localhost:8080",
-    });
-    defer alloc.free(code);
-
-    try std.testing.expect(std.mem.indexOf(u8, code, "pub const User = struct") != null);
-    try std.testing.expect(std.mem.indexOf(u8, code, "name: []const u8") != null);
-    try std.testing.expect(std.mem.indexOf(u8, code, "id: i64") != null);
-    try std.testing.expect(std.mem.indexOf(u8, code, "pub fn getUsersById") != null);
+    }));
 }

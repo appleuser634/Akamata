@@ -32,6 +32,9 @@ test "openapi.generate produces a spec with documented endpoints" {
         .response = User,
         .summary = "Create a new user",
         .tags = &.{"users"},
+        .operation_id = "createUser",
+        .success_status = 201,
+        .security = &.{"bearerAuth"},
     }));
     _ = try app.endpoint(.GET, "/users/:id", getUser, am.openapi.Spec(.{
         .response = User,
@@ -44,8 +47,11 @@ test "openapi.generate produces a spec with documented endpoints" {
     const spec = try am.openapi.generate(@TypeOf(app), &app, alloc, .{
         .title = "Test",
         .version = "1.0.0",
+        .security_schemes = &.{.{ .name = "bearerAuth", .kind = .bearer }},
     });
     defer alloc.free(spec);
+    var parsed_json = try std.json.parseFromSlice(std.json.Value, alloc, spec, .{});
+    defer parsed_json.deinit();
 
     // Sanity: contains both documented paths and their components, omits /health.
     try std.testing.expect(std.mem.indexOf(u8, spec, "\"/users\"") != null);
@@ -57,7 +63,25 @@ test "openapi.generate produces a spec with documented endpoints" {
     // Bare routes remain visible even without typed request/response schemas.
     try std.testing.expect(std.mem.indexOf(u8, spec, "/health") != null);
     try std.testing.expect(std.mem.indexOf(u8, spec, "\"openapi\":\"3.1.0\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, spec, "\"operationId\":\"createUser\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, spec, "\"201\":{\"description\":\"Success\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, spec, "\"security\":[{\"bearerAuth\":[]}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, spec, "\"securitySchemes\":{\"bearerAuth\":") != null);
     // Path parameter
     try std.testing.expect(std.mem.indexOf(u8, spec, "\"in\":\"path\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, spec, "\"name\":\"id\"") != null);
+}
+
+test "OpenAPI rejects distinct schemas with the same short type name" {
+    const A = struct {
+        const Collision = struct { first: i64 };
+    };
+    const B = struct {
+        const Collision = struct { second: []const u8 };
+    };
+    var app = am.App(State).init(std.testing.allocator, .{});
+    defer app.deinit();
+    _ = try app.endpoint(.GET, "/a", getUser, am.openapi.Spec(.{ .response = A.Collision }));
+    _ = try app.endpoint(.GET, "/b", getUser, am.openapi.Spec(.{ .response = B.Collision }));
+    try std.testing.expectError(error.DuplicateSchemaName, am.openapi.generate(@TypeOf(app), &app, std.testing.allocator, .{}));
 }

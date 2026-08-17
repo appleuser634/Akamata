@@ -64,8 +64,8 @@ var api = try app.basePath("/api/v1");
 _ = try api.get("/users", listUsers);
 
 // エラー / Not Found ハンドラ
-app.notFound(myNotFound);
-app.onError(myErrorHandler);
+try app.notFound(myNotFound);
+try app.onError(myErrorHandler);
 
 // 起動 (backend で自動分岐)
 try app.serve(.{ .port = 8080 });
@@ -79,8 +79,11 @@ try app.serve(.{ .port = 8080 });
 pathが存在してmethodだけが違う場合は`405`と`Allow`を返します。
 
 `c.req.ip()`はdefaultではsocket peerだけを返します。管理下のreverse proxyからのみ
-接続される構成では`app.serve(.{ .trust_proxy_headers = true })`を明示し、
-`X-Forwarded-For`等を有効にしてください。
+接続される構成では`trust_proxy_headers = true`に加え、direct peerを認可する
+`trusted_proxy_fn`を設定してください。
+
+route、middleware、Group、hookは一緒にfreezeされます。`prepare()`後の`use`、`useAll`、
+`basePath`、`notFound`、`onError`も`error.RoutesFrozen`を返します。
 
 ## Context
 
@@ -298,6 +301,9 @@ fn openapiSpec(c: *am.Context(State)) !void {
 生成対象には登録済みHTTP routeが全て含まれます。通常のhelperはuntyped operationとなり、
 `endpoint()`はreflectionしたrequest／response／query metadataを追加します。生成物を配信する
 前にroute登録を完了してください。
+`Spec`では`operation_id`、`deprecated`、content type、success status、追加response
+status、security requirementも指定でき、document全体のschemeは
+`Info.security_schemes`へ定義します。
 
 unit test など `app.dispatch` を介さない経路では null になります。
 

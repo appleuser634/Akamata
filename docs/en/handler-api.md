@@ -69,8 +69,8 @@ var api = try app.basePath("/api/v1");
 _ = try api.get("/users", listUsers);
 
 // Error / Not Found handlers
-app.notFound(myNotFound);
-app.onError(myErrorHandler);
+try app.notFound(myNotFound);
+try app.onError(myErrorHandler);
 
 // Start (automatically selects the backend)
 try app.serve(.{ .port = 8080 });
@@ -87,8 +87,13 @@ Without an explicit `HEAD` route, `HEAD` uses `GET` but sends no body. A known
 path with the wrong method returns `405` and a deduplicated `Allow` header;
 `GET` implies `HEAD`.
 
-`c.req.ip()` uses only the direct peer by default. Enable forwarding headers
-with `trust_proxy_headers = true` only behind a trusted proxy.
+`c.req.ip()` uses only the direct peer by default. Forwarding headers require
+both `trust_proxy_headers = true` and a `trusted_proxy_fn` that authorizes the
+direct peer.
+
+Routes, middleware, groups, and hooks freeze together. `use`, `useAll`,
+`basePath`, `notFound`, and `onError` return `error.RoutesFrozen` after
+`prepare()`.
 
 ## Context
 
@@ -311,6 +316,9 @@ fn openapiSpec(c: *am.Context(State)) !void {
 Generation includes every registered HTTP route. Ordinary helpers produce an
 untyped operation; `endpoint()` adds reflected request, response, and query
 metadata. Complete route registration before serving a generated artifact.
+`Spec` can also declare `operation_id`, `deprecated`, content types, success
+status, additional response statuses, and security requirements; document-level
+security schemes belong in `Info.security_schemes`.
 
 It will be null for routes that do not go through `app.dispatch`, such as unit test.
 

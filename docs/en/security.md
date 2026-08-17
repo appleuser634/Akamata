@@ -9,8 +9,9 @@ The threaded native runtime separates acceptance from bounded connection workers
 `ServeOptions.trust_proxy_headers` defaults to `false`, so `c.req.ip()` ignores
 `X-Forwarded-For`, `CF-Connecting-IP`, and `X-Real-IP`. The threaded native
 server reports the socket peer; targets without peer metadata may return
-`null`. Enable forwarding headers only when every direct connection is from a
-proxy you control. The in-process rate limiter is bounded but local to one
+`null`. Enabling them also requires `trusted_proxy_fn`, which must authorize
+the direct peer. Never accept every peer on an Internet-facing native server.
+The in-process rate limiter is bounded but local to one
 process/isolate; multi-node enforcement needs a shared limiter.
 
 `secureHeaders` is applied before handlers so streaming responses receive the policy. Its HSTS default is for HTTPS production; disable `strict_transport_security` on plain-HTTP development hosts to avoid teaching a browser an unusable HTTPS policy.
@@ -18,6 +19,9 @@ process/isolate; multi-node enforcement needs a shared limiter.
 ## Authentication and cookies
 
 `am.mw.jwt` accepts HS256 only, requires `exp` by default, and validates `exp` and `nbf`. Use a random secret with at least 32 bytes of entropy. `now_fn` exists for deterministic tests; `leeway_seconds` should remain small.
+Query-string tokens are disabled by default because URLs leak into logs and
+history. Set `allow_query_token=true` only for a constrained WebSocket
+handshake where an Authorization header cannot be used.
 
 Sessions require a stable secret of at least 32 bytes. Their signed cookie includes an expiry that is checked even with a persistent Store. Session and CSRF cookies are `Secure` by default; explicitly disable this only for plain-HTTP local development. Session cookies are also `HttpOnly` and `SameSite=Lax`. Rotate the SID after login and privilege changes with `session.rotate(c)`.
 

@@ -25,7 +25,8 @@ HTTP semanticsも変わります。`HEAD`は`GET`へfallbackでき、wire上のb
 ## Proxy trustとerror
 
 forwarding headerはdefaultで`c.req.ip()`へ影響しません。clientがapplicationへ直接接続できず、
-管理下のproxyがclient由来headerを必ず上書きする場合だけ`trust_proxy_headers = true`を設定します。
+管理下のproxyがclient由来headerを必ず上書きする場合だけ`trust_proxy_headers = true`と
+`trusted_proxy_fn`を設定します。
 defaultの500 JSONはZig内部error名を公開しません。詳細はserver-side logまたは必要に応じて
 custom `onError`で扱ってください。
 
@@ -36,7 +37,8 @@ rule有無に関係なく必須です。partial updateではoptionalまたはdef
 
 OpenAPIとclient生成は通常の`get`、`post`などuntyped routeも収録します。request／response／
 query schemaをreflectionする場合は`endpoint()`を使います。生成pathが増える点に注意してください。
-Zig client targetは引き続き完全なtransport実装ではなく生成stubです。
+未完成のZig client targetはruntime panicを含むstubを生成せず、生成時に
+`error.UnsupportedTarget`を返します。
 
 ## Databaseとmigration
 

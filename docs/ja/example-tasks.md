@@ -228,7 +228,10 @@ pub fn openapiSpec(c: *Ctx) !void {
 収録され、`app.endpoint(...)`ではさらに**comptime reflection**でrequest／response型から
 JSON Schemaを導出します。
 
-`am.client_gen.generate(...)` も同じルート表を読みますが、出力ターゲットを TS / Zig から選べます。`/client.ts` をフロントエンドのビルドに組み込めば、API シグネチャ変更がコンパイル時に検出できるようになります。
+`am.client_gen.generate(...)`も同じroute tableを読みます。対応する出力targetは
+TypeScriptです。予約済みのZig targetはtransportとownershipの契約が完成するまで
+`error.UnsupportedTarget`でfail closedします。`/client.ts`をfrontend buildに組み込めば、
+API signature変更をcompile時に検出できます。
 
 ### `src/setup.zig` — Wiring
 

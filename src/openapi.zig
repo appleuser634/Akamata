@@ -10,12 +10,31 @@
 
 const std = @import("std");
 
+pub const ResponseDoc = struct {
+    status: u16,
+    description: []const u8,
+};
+
+pub const SecurityScheme = struct {
+    name: []const u8,
+    kind: enum { bearer, basic, api_key_header },
+    header_name: []const u8 = "x-api-key",
+};
+
 /// Per-route metadata stamped at registration time. Stored once in static
 /// memory (the value lives in `.rodata`) and referenced from `Route.meta`.
 pub const EndpointMeta = struct {
     summary: []const u8 = "",
     description: []const u8 = "",
     tags: []const []const u8 = &.{},
+    operation_id: []const u8 = "",
+    deprecated: bool = false,
+    success_status: u16 = 200,
+    request_content_type: []const u8 = "application/json",
+    response_content_type: []const u8 = "application/json",
+    /// Names of security schemes defined by the document consumer.
+    security: []const []const u8 = &.{},
+    additional_responses: []const ResponseDoc = &.{},
     /// Render `request` and `response` into the OpenAPI components.schemas
     /// table and return a `$ref` string. Generated per-T at comptime.
     schema_fn: *const fn (gpa: std.mem.Allocator, ctx: *SpecBuilder) anyerror!Refs,
@@ -40,6 +59,7 @@ pub const Info = struct {
     title: []const u8 = "Akamata API",
     version: []const u8 = "0.0.0",
     description: []const u8 = "",
+    security_schemes: []const SecurityScheme = &.{},
 };
 
 /// Mutable state passed through schema generators. Lets each generator
@@ -62,13 +82,14 @@ pub const SpecBuilder = struct {
 
     pub fn registerSchema(self: *SpecBuilder, comptime T: type) anyerror![]const u8 {
         const name = comptime shortTypeName(T);
-        if (self.schemas.contains(name)) {
-            return std.fmt.allocPrint(self.arena, "#/components/schemas/{s}", .{name});
-        }
         var buf: std.ArrayList(u8) = .empty;
         var aw: std.Io.Writer.Allocating = .fromArrayList(self.arena, &buf);
         defer buf = aw.toArrayList();
         try writeTypeSchema(T, self, &aw.writer);
+        if (self.schemas.get(name)) |existing| {
+            if (!std.mem.eql(u8, existing, aw.writer.buffered())) return error.DuplicateSchemaName;
+            return std.fmt.allocPrint(self.arena, "#/components/schemas/{s}", .{name});
+        }
         try self.schemas.put(name, aw.writer.buffered());
         return std.fmt.allocPrint(self.arena, "#/components/schemas/{s}", .{name});
     }
@@ -109,11 +130,8 @@ pub fn Spec(comptime opts: SpecOpts) *const EndpointMeta {
             const info = @typeInfo(Q);
             if (info != .@"struct") return;
             inline for (info.@"struct".fields) |f| {
-                // Every query param is rendered as optional in TS — the
-                // user can choose to omit it. Required-ness is enforced
-                // by the OpenAPI spec, not the TS type, since the wire
-                // format already carries the constraint.
-                try w.print("    {s}?: ", .{f.name});
+                const optional = @typeInfo(f.type) == .optional or f.defaultValue() != null;
+                try w.print("    {s}{s}: ", .{ f.name, if (optional) "?" else "" });
                 try writeTsScalar(unwrapOptional(f.type), w);
                 try w.writeAll(";\n");
             }
@@ -124,6 +142,13 @@ pub fn Spec(comptime opts: SpecOpts) *const EndpointMeta {
         .summary = opts.summary,
         .description = opts.description,
         .tags = opts.tags,
+        .operation_id = opts.operation_id,
+        .deprecated = opts.deprecated,
+        .success_status = opts.success_status,
+        .request_content_type = opts.request_content_type,
+        .response_content_type = opts.response_content_type,
+        .security = opts.security,
+        .additional_responses = opts.additional_responses,
         .schema_fn = closure.schemaFn,
         .query_params_fn = if (has_query) closure.queryParamsFn else null,
         .query_ts_fields_fn = if (has_query) closure.queryTsFieldsFn else null,
@@ -146,6 +171,13 @@ pub const SpecOpts = struct {
     summary: []const u8 = "",
     description: []const u8 = "",
     tags: []const []const u8 = &.{},
+    operation_id: []const u8 = "",
+    deprecated: bool = false,
+    success_status: u16 = 200,
+    request_content_type: []const u8 = "application/json",
+    response_content_type: []const u8 = "application/json",
+    security: []const []const u8 = &.{},
+    additional_responses: []const ResponseDoc = &.{},
 };
 
 /// Write the OpenAPI 3.1 document for `app` to stdout. Convenience wrapper
@@ -217,7 +249,21 @@ pub fn generate(comptime AppT: type, app: *AppT, gpa: std.mem.Allocator, info: I
         }
         try w.writeAll("}");
     }
-    try w.writeAll("},\"components\":{\"schemas\":{");
+    try w.writeAll("},\"components\":{\"securitySchemes\":{");
+    for (info.security_schemes, 0..) |scheme, i| {
+        if (i > 0) try w.writeAll(",");
+        try writeJsonString(w, scheme.name);
+        switch (scheme.kind) {
+            .bearer => try w.writeAll(":{\"type\":\"http\",\"scheme\":\"bearer\"}"),
+            .basic => try w.writeAll(":{\"type\":\"http\",\"scheme\":\"basic\"}"),
+            .api_key_header => {
+                try w.writeAll(":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":");
+                try writeJsonString(w, scheme.header_name);
+                try w.writeAll("}");
+            },
+        }
+    }
+    try w.writeAll("},\"schemas\":{");
     var sch_it = builder.schemas.iterator();
     var first_sch = true;
     while (sch_it.next()) |entry| {
@@ -248,6 +294,12 @@ fn writeOperation(w: *std.Io.Writer, op: OperationEntry) !void {
     }
     if (op.meta.description.len > 0) {
         try writeKv(w, &first, "description", op.meta.description);
+    }
+    if (op.meta.operation_id.len > 0) try writeKv(w, &first, "operationId", op.meta.operation_id);
+    if (op.meta.deprecated) {
+        if (!first) try w.writeAll(",");
+        first = false;
+        try w.writeAll("\"deprecated\":true");
     }
     if (op.meta.tags.len > 0) {
         if (!first) try w.writeAll(",");
@@ -297,20 +349,54 @@ fn writeOperation(w: *std.Io.Writer, op: OperationEntry) !void {
     if (op.refs.request) |req_ref| {
         if (!first) try w.writeAll(",");
         first = false;
-        try w.writeAll("\"requestBody\":{\"required\":true,\"content\":{\"application/json\":{\"schema\":{\"$ref\":");
+        try w.writeAll("\"requestBody\":{\"required\":true,\"content\":{");
+        try writeJsonString(w, op.meta.request_content_type);
+        try w.writeAll(":{\"schema\":{\"$ref\":");
         try writeJsonString(w, req_ref);
         try w.writeAll("}}}}");
     }
 
+    if (op.meta.security.len > 0) {
+        if (!first) try w.writeAll(",");
+        first = false;
+        try w.writeAll("\"security\":[");
+        for (op.meta.security, 0..) |scheme, i| {
+            if (i > 0) try w.writeAll(",");
+            try w.writeAll("{");
+            try writeJsonString(w, scheme);
+            try w.writeAll(":[]}");
+        }
+        try w.writeAll("]");
+    }
+
     if (!first) try w.writeAll(",");
     first = false;
-    try w.writeAll("\"responses\":{\"200\":{\"description\":\"OK\"");
+    try w.writeAll("\"responses\":{");
+    if (op.meta.success_status < 100 or op.meta.success_status > 599) return error.InvalidStatus;
+    var status_buf: [3]u8 = undefined;
+    const status_text = std.fmt.bufPrint(&status_buf, "{d}", .{op.meta.success_status}) catch return error.InvalidStatus;
+    try writeJsonString(w, status_text);
+    try w.writeAll(":{\"description\":\"Success\"");
     if (op.refs.response) |res_ref| {
-        try w.writeAll(",\"content\":{\"application/json\":{\"schema\":{\"$ref\":");
+        try w.writeAll(",\"content\":{");
+        try writeJsonString(w, op.meta.response_content_type);
+        try w.writeAll(":{\"schema\":{\"$ref\":");
         try writeJsonString(w, res_ref);
         try w.writeAll("}}}");
     }
-    try w.writeAll("}}");
+    try w.writeAll("}");
+    for (op.meta.additional_responses) |response_doc| {
+        if (response_doc.status < 100 or response_doc.status > 599 or response_doc.status == op.meta.success_status)
+            return error.InvalidStatus;
+        var extra_status_buf: [3]u8 = undefined;
+        const extra_status = std.fmt.bufPrint(&extra_status_buf, "{d}", .{response_doc.status}) catch return error.InvalidStatus;
+        try w.writeAll(",");
+        try writeJsonString(w, extra_status);
+        try w.writeAll(":{\"description\":");
+        try writeJsonString(w, response_doc.description);
+        try w.writeAll("}");
+    }
+    try w.writeAll("}");
 
     try w.writeAll("}");
 }
