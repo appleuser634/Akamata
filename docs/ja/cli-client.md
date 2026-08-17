@@ -29,6 +29,8 @@ endpoint検出では、利用可能ならlocal `akamata-openapi` runnerを使用
 
 runnerを起動するのは、現在のprojectの`src/main.zig`にinspection markerが明示されている場合だけです。そのためAkamata framework repository自体からTUIを実行しても、example serverを誤って起動せずmanual modeで開始します。
 
+SSEなどのstreaming endpointはdiscovery時に判別し、responseが意図的に終了しないためTUIのresponse paneからは接続しません。代わりに安全なcommand例を表示するので、live streamを確認する場合は`curl -N <URL>`を使用してください。通常のrequestには10秒のsocket timeoutがあり、serverが応答しない場合もterminalが無期限に待ち続けません。
+
 request実行時にはapplication serverが起動している必要があります。inspectionとservingを分離することで、public API surfaceを変更しません。
 
 ## 直接request

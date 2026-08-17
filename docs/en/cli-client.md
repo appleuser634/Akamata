@@ -29,6 +29,8 @@ Endpoint discovery first uses the local `akamata-openapi` runner when available.
 
 The runner is invoked only when the current project's `src/main.zig` explicitly contains the inspection marker. Running the TUI from the Akamata framework repository itself therefore opens manual mode instead of accidentally starting the framework's example server.
 
+Streaming endpoints such as SSE are marked during discovery and are not opened in the response pane, because their responses intentionally never finish. The TUI displays a safe command hint instead; use `curl -N <URL>` when you want to consume the live stream. Ordinary requests have a 10-second socket timeout so an unavailable or stalled server cannot leave the terminal waiting indefinitely.
+
 The application server must still be running when a request is executed. Discovery and serving are deliberately separate so inspection does not mutate the public API surface.
 
 ## Direct requests
