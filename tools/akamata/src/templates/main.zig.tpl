@@ -226,6 +226,22 @@ pub fn main(init: std.process.Init) !void {
     defer app.state().db.close();
     try registerRoutes(&app);
 
+    // Local tooling protocol: lets `akamata client --tui` inspect every
+    // registered route without exposing an OpenAPI endpoint over HTTP.
+    if (args.len >= 2 and std.mem.eql(u8, std.mem.sliceTo(args[1], 0), "akamata-openapi")) {
+        const spec = try am.openapi.generate(@TypeOf(app), &app, alloc, .{
+            .title = "{{NAME}} API",
+            .version = "0.0.1",
+        });
+        defer alloc.free(spec);
+        var stdout_buffer: [4096]u8 = undefined;
+        const io = std.Io.Threaded.global_single_threaded.io();
+        var stdout = std.Io.File.stdout().writer(io, &stdout_buffer);
+        try stdout.interface.writeAll(spec);
+        try stdout.interface.writeByte('\n');
+        return stdout.interface.flush();
+    }
+
     const port_env = am.env.get(alloc, "PORT");
     defer if (port_env) |p| alloc.free(p);
     const port: u16 = if (port_env) |p| std.fmt.parseInt(u16, p, 10) catch 8080 else 8080;
