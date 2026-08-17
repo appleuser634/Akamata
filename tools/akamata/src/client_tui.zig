@@ -19,6 +19,8 @@ const State = struct {
     header: []const u8 = "",
     response_body: []const u8 = "Press Enter to send the selected request.",
     response_status: ?u16 = null,
+    manual_mode: bool = false,
+    viewport: TerminalSize = .{},
     message: []const u8 = "j/k select · Enter send · m method · e path · h header · b body · u URL · r reload · q quit",
 };
 
@@ -36,9 +38,18 @@ pub fn run(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     defer leaveScreen();
     std.debug.print("\x1b[H\x1b[2J\x1b[1;36m AKAMATA API CLIENT \x1b[0m\n\nDiscovering endpoints…\n", .{});
     var endpoints = discover(arena, base_url) catch &.{};
-    if (endpoints.len == 0) endpoints = try arena.dupe(Endpoint, &.{.{ .method = .GET, .path = "/", .summary = "Manual request", .operation_id = "" }});
+    const manual_mode = endpoints.len == 0;
+    if (manual_mode) endpoints = try arena.dupe(Endpoint, &.{.{ .method = .GET, .path = "/", .summary = "Manual request", .operation_id = "" }});
 
-    var state: State = .{ .endpoints = endpoints, .base_url = base_url, .request_method = endpoints[0].method, .request_path = endpoints[0].path };
+    var state: State = .{
+        .endpoints = endpoints,
+        .base_url = base_url,
+        .request_method = endpoints[0].method,
+        .request_path = endpoints[0].path,
+        .manual_mode = manual_mode,
+        .viewport = terminalSize(arena),
+        .message = if (manual_mode) "Manual mode: no application metadata found in this directory." else "Ready. Select an endpoint and press Enter.",
+    };
     while (true) {
         draw(&state);
         const key = readKey() catch return error.TerminalReadFailed;
@@ -46,6 +57,16 @@ pub fn run(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
             'q', 3 => return,
             'j' => if (state.selected + 1 < state.endpoints.len) {
                 state.selected += 1;
+                state.request_method = state.endpoints[state.selected].method;
+                state.request_path = state.endpoints[state.selected].path;
+            },
+            'g' => {
+                state.selected = 0;
+                state.request_method = state.endpoints[0].method;
+                state.request_path = state.endpoints[0].path;
+            },
+            'G' => {
+                state.selected = state.endpoints.len - 1;
                 state.request_method = state.endpoints[state.selected].method;
                 state.request_path = state.endpoints[state.selected].path;
             },
@@ -60,12 +81,14 @@ pub fn run(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
             'h' => state.header = try prompt(arena, "Header as Name: Value (empty clears)", state.header),
             'u' => state.base_url = std.mem.trimEnd(u8, try prompt(arena, "Base URL", state.base_url), "/"),
             'r' => {
+                state.viewport = terminalSize(arena);
                 const refreshed = discover(arena, state.base_url) catch &.{};
                 if (refreshed.len > 0) {
                     state.endpoints = refreshed;
                     state.selected = 0;
                     state.request_method = refreshed[0].method;
                     state.request_path = refreshed[0].path;
+                    state.manual_mode = false;
                     state.message = "Routes refreshed from application metadata.";
                 } else state.message = "Discovery failed; keeping the current route list.";
             },
@@ -226,25 +249,62 @@ fn prettyBody(alloc: std.mem.Allocator, body: []const u8) ![]const u8 {
 }
 
 fn draw(state: *const State) void {
-    std.debug.print("\x1b[H\x1b[2J\x1b[1;36m AKAMATA API CLIENT \x1b[0m  {s}\n", .{state.base_url});
-    std.debug.print("\x1b[90m────────────────────────────────────────────────────────────────────────────────────────\x1b[0m\n", .{});
-    const shown = @min(state.endpoints.len, 14);
-    for (state.endpoints[0..shown], 0..) |endpoint, i| {
-        const cursor = if (i == state.selected) "\x1b[30;46m>" else " ";
-        std.debug.print("{s} {s: <7} {s: <34}\x1b[0m {s}\n", .{ cursor, @tagName(endpoint.method), endpoint.path, endpoint.summary });
-    }
-    if (state.endpoints.len > shown) std.debug.print("  … {d} more route(s)\n", .{state.endpoints.len - shown});
-    std.debug.print("\x1b[90m────────────────────────────────────────────────────────────────────────────────────────\x1b[0m\n", .{});
-    std.debug.print("\x1b[1mRequest\x1b[0m  {s} {s}\n", .{ @tagName(state.request_method), state.request_path });
-    std.debug.print("Header   {s}\n", .{if (state.header.len == 0) "(empty — press h to edit)" else state.header});
-    std.debug.print("Body     {s}\n", .{if (state.body.len == 0) "(empty — press b to edit)" else state.body});
-    std.debug.print("\x1b[90m────────────────────────────────────────────────────────────────────────────────────────\x1b[0m\n", .{});
-    if (state.response_status) |status| std.debug.print("\x1b[1mResponse {d}\x1b[0m\n", .{status}) else std.debug.print("\x1b[1mResponse\x1b[0m\n", .{});
-    printLimited(state.response_body, 14);
-    std.debug.print("\n\x1b[30;47m {s} \x1b[0m", .{state.message});
+    const viewport = state.viewport;
+    const width = @max(@as(usize, viewport.cols), 60);
+    const height = @max(@as(usize, viewport.rows), 18);
+    const list_height = @min(state.endpoints.len, @max(@as(usize, 3), @min(@as(usize, 12), height / 3)));
+    const start = if (state.selected >= list_height) state.selected - list_height + 1 else 0;
+    const response_lines = @max(@as(usize, 3), height -| (list_height + 12));
+
+    std.debug.print("\x1b[H\x1b[2J\x1b[1;36m AKAMATA API CLIENT \x1b[0m  {s}  ", .{state.base_url});
+    if (state.manual_mode) std.debug.print("\x1b[33m[MANUAL]\x1b[0m\n", .{}) else std.debug.print("\x1b[32m[DISCOVERED]\x1b[0m\n", .{});
+    separator(width);
+    std.debug.print("\x1b[1m Endpoints\x1b[0m  {d} route(s)  \x1b[90m↑/↓ or j/k to select · g/G first/last\x1b[0m\n", .{state.endpoints.len});
+    for (state.endpoints[start .. start + list_height], start..) |endpoint, i| printEndpoint(endpoint, i == state.selected, width);
+    separator(width);
+    std.debug.print("\x1b[1m Request\x1b[0m   ", .{});
+    printMethod(state.request_method);
+    std.debug.print(" {s}\n", .{truncate(state.request_path, width -| 20)});
+    std.debug.print(" Header    {s}\n", .{truncate(if (state.header.len == 0) "—" else state.header, width -| 12)});
+    std.debug.print(" Body      {s}\n", .{truncate(if (state.body.len == 0) "—" else state.body, width -| 12)});
+    separator(width);
+    if (state.response_status) |status| {
+        const color = if (status < 300) "\x1b[32m" else if (status < 400) "\x1b[36m" else "\x1b[31m";
+        std.debug.print("\x1b[1m Response\x1b[0m   {s}{d}\x1b[0m\n", .{ color, status });
+    } else std.debug.print("\x1b[1m Response\x1b[0m\n", .{});
+    printLimited(state.response_body, response_lines, width);
+    std.debug.print("\x1b[{d};1H\x1b[2K\x1b[90m{s}\x1b[0m", .{ height - 1, truncate(state.message, width) });
+    const shortcuts = if (width < 100)
+        " ↑↓ select  Enter send  m method  e path  h header  b body  q quit "
+    else
+        " ↑↓ select  Enter send  m method  e path  h header  b body  u URL  r reload  ? help  q quit ";
+    std.debug.print("\x1b[{d};1H\x1b[7m\x1b[2K{s}\x1b[0m", .{ height, shortcuts });
 }
 
-fn printLimited(text: []const u8, max_lines: usize) void {
+fn printEndpoint(endpoint: Endpoint, selected: bool, width: usize) void {
+    if (selected) std.debug.print("\x1b[30;46m", .{});
+    std.debug.print("{s} ", .{if (selected) ">" else " "});
+    printMethod(endpoint.method);
+    const path_width = @min(@as(usize, 38), width / 2);
+    const shown_path = truncate(endpoint.path, path_width);
+    std.debug.print(" {s}", .{shown_path});
+    for (shown_path.len..path_width) |_| std.debug.print(" ", .{});
+    std.debug.print("  {s}", .{truncate(endpoint.summary, width -| (path_width + 14))});
+    std.debug.print("\x1b[K\x1b[0m\n", .{});
+}
+
+fn printMethod(method: am.http_client.Method) void {
+    const color = switch (method) {
+        .GET, .HEAD => "\x1b[32m",
+        .POST => "\x1b[33m",
+        .PUT, .PATCH => "\x1b[34m",
+        .DELETE => "\x1b[31m",
+        .OPTIONS => "\x1b[35m",
+    };
+    std.debug.print("{s}{s: <7}\x1b[0m", .{ color, @tagName(method) });
+}
+
+fn printLimited(text: []const u8, max_lines: usize, width: usize) void {
     var it = std.mem.splitScalar(u8, text, '\n');
     var lines: usize = 0;
     while (it.next()) |line| : (lines += 1) {
@@ -252,8 +312,18 @@ fn printLimited(text: []const u8, max_lines: usize) void {
             std.debug.print("…\n", .{});
             break;
         }
-        std.debug.print("{s}\n", .{if (line.len > 100) line[0..100] else line});
+        std.debug.print(" {s}\n", .{truncate(line, width -| 2)});
     }
+}
+
+fn truncate(text: []const u8, width: usize) []const u8 {
+    return if (text.len > width) text[0..width] else text;
+}
+
+fn separator(width: usize) void {
+    std.debug.print("\x1b[90m", .{});
+    for (0..width) |_| std.debug.print("─", .{});
+    std.debug.print("\x1b[0m\n", .{});
 }
 
 fn prompt(alloc: std.mem.Allocator, label: []const u8, current: []const u8) ![]const u8 {
@@ -298,7 +368,25 @@ fn leaveRaw() void {
 }
 fn readKey() !u8 {
     var byte: [1]u8 = undefined;
-    return if (posixRead(0, &byte, 1) == 1) byte[0] else error.EndOfStream;
+    if (posixRead(0, &byte, 1) != 1) return error.EndOfStream;
+    if (byte[0] != 0x1b) return byte[0];
+    var sequence: [2]u8 = undefined;
+    if (posixRead(0, &sequence, 2) != 2 or sequence[0] != '[') return 0x1b;
+    return switch (sequence[1]) {
+        'A' => 'k',
+        'B' => 'j',
+        else => 0x1b,
+    };
+}
+
+const TerminalSize = struct { rows: u16 = 24, cols: u16 = 100 };
+fn terminalSize(alloc: std.mem.Allocator) TerminalSize {
+    const output = capture(alloc, "stty size 2>/dev/null") catch return .{};
+    var parts = std.mem.tokenizeAny(u8, output, " \t\r\n");
+    const rows = std.fmt.parseInt(u16, parts.next() orelse return .{}, 10) catch return .{};
+    const cols = std.fmt.parseInt(u16, parts.next() orelse return .{}, 10) catch return .{};
+    if (rows == 0 or cols == 0) return .{};
+    return .{ .rows = rows, .cols = cols };
 }
 
 const FILE = opaque {};
