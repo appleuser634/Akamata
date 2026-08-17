@@ -38,9 +38,16 @@ examples/tasks/
 zig build -Dexample=tasks
 ./zig-out/bin/tasks
 
+# 別terminalで（examples/tasksから）routeを自動検出してTUIを起動
+cd examples/tasks
+akamata client
+
 # テスト
 zig build tasks-test
 ```
+
+`examples/tasks`内で単に`zig build run`を実行すると親buildが解決され、defaultの
+`chat` exampleが起動します。上記の明示的なtasks buildを使用してください。
 
 環境変数で挙動を変えられます:
 

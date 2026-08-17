@@ -11,9 +11,17 @@ Akamata の代表的な機能を 1 アプリにまとめたタスク管理 REST 
 zig build -Dexample=tasks
 ./zig-out/bin/tasks
 
+# 別terminalでTUI client（examples/tasksから実行するとsource routeを自動検出）
+cd examples/tasks
+akamata client
+
 # テスト
 zig build tasks-test
 ```
+
+`examples/tasks` directory内で単に`zig build run`を実行すると、親repositoryの
+default exampleである`chat`が起動します。tasks serverには上記の
+`zig build -Dexample=tasks`と`./zig-out/bin/tasks`を使用してください。
 
 ## 動かしてみる
 

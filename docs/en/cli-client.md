@@ -25,7 +25,7 @@ The TUI adapts its route list and response viewport to the terminal size. It kee
 - `r`: reload endpoint metadata
 - `?`: show help, `q`: quit
 
-Endpoint discovery first runs `zig build run -- akamata-openapi`. Current Akamata scaffolds implement this local inspection protocol after registering their routes, then exit without starting the server. Consequently, every registered route is visible to the TUI without adding `/openapi.json` or another discovery endpoint to the web API. For older applications, the TUI falls back to fetching `/openapi.json`; if neither source is available it opens with a manual request entry.
+Endpoint discovery first uses the local `akamata-openapi` runner when available. For older applications and repository examples, it safely scans literal `.endpoint/.get/.post/...` registrations under the application's `src/` tree. It then falls back to fetching `/openapi.json`; if no source is available it opens with a manual request entry. Source discovery requires `src/main.zig`, so framework/library internals are not mistaken for application endpoints.
 
 The runner is invoked only when the current project's `src/main.zig` explicitly contains the inspection marker. Running the TUI from the Akamata framework repository itself therefore opens manual mode instead of accidentally starting the framework's example server.
 

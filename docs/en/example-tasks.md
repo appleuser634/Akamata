@@ -38,9 +38,16 @@ examples/tasks/
 zig build -Dexample=tasks
 ./zig-out/bin/tasks
 
+# In another terminal (from examples/tasks): discover routes and open the TUI
+cd examples/tasks
+akamata client
+
 # テスト
 zig build tasks-test
 ```
+
+Running plain `zig build run` inside `examples/tasks` resolves the parent build
+and starts its default `chat` example. Use the explicit tasks build shown above.
 
 You can change the behavior with environment variables:
 

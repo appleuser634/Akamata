@@ -25,7 +25,7 @@ TUIはterminal sizeに応じてendpoint一覧とresponse領域を調整し、sta
 - `r`: endpoint metadata再取得
 - `?`: help、`q`: 終了
 
-endpoint検出では最初に`zig build run -- akamata-openapi`を実行します。現在のAkamata scaffoldはroute登録後にこのlocal inspection protocolへ応答し、serverを起動せず終了します。そのため、web APIに`/openapi.json`等を追加しなくても、登録された全routeをTUIから参照できます。旧applicationでは`/openapi.json`取得へfallbackし、どちらも利用できない場合はmanual requestで開始します。
+endpoint検出では、利用可能ならlocal `akamata-openapi` runnerを使用します。旧applicationやrepository exampleではapplicationの`src/`以下にあるliteralな`.endpoint/.get/.post/...`登録を安全にscanし、その後`/openapi.json`取得へfallbackします。どのsourceも利用できない場合はmanual requestで開始します。source discoveryには`src/main.zig`を必須とし、framework／library内部をapplication endpointと誤認しません。
 
 runnerを起動するのは、現在のprojectの`src/main.zig`にinspection markerが明示されている場合だけです。そのためAkamata framework repository自体からTUIを実行しても、example serverを誤って起動せずmanual modeで開始します。
 
