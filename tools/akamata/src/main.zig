@@ -15,6 +15,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const api_client = @import("api_client.zig");
+const client_tui = @import("client_tui.zig");
 
 const tmpl_build_zig = @embedFile("templates/build.zig.tpl");
 const tmpl_build_zon = @embedFile("templates/build.zig.zon.tpl");
@@ -73,7 +74,9 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "api")) {
         try cmdApi(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "client")) {
-        api_client.run(alloc, args[2..]) catch |err| {
+        const client_args = args[2..];
+        const use_tui = client_args.len == 0 or std.mem.eql(u8, std.mem.sliceTo(client_args[0], 0), "--tui");
+        (if (use_tui) client_tui.run(alloc, client_args) else api_client.run(alloc, client_args)) catch |err| {
             std.debug.print("akamata client: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };
@@ -192,8 +195,8 @@ fn usage() !void {
         \\      Remove files previously created by the resource generator.
         \\  api diff <before.json> <after.json>
         \\      Detect removed OpenAPI paths and operations (non-zero on breakage).
-        \\  client [METHOD] <path-or-url> [options]
-        \\      Call an Akamata API (default: GET, http://127.0.0.1:8080).
+        \\  client [--tui] | [METHOD] <path-or-url> [options]
+        \\      Explore and call an Akamata API. No arguments opens the TUI.
         \\  api call <operation-id> [options]
         \\      Resolve an operation from /openapi.json and call it.
         \\
@@ -280,7 +283,11 @@ fn commandUsage(command: []const u8) !void {
         \\Diff reports removed paths and operations. Call resolves method/path from OpenAPI.
         \\
     else if (std.mem.eql(u8, command, "client"))
-        \\Usage: akamata client [METHOD] <path-or-url> [options]
+        \\Usage: akamata client [--tui] [--base-url=URL]
+        \\       akamata client [METHOD] <path-or-url> [options]
+        \\
+        \\With no request arguments, opens the full-screen endpoint explorer.
+        \\Routes are inspected from the application runner without exposing an HTTP route.
         \\
         \\Options:
         \\  --base-url=URL           Base for relative paths (default: http://127.0.0.1:8080)
