@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-08-17
+
 ### Changed
 
 - Route registration is frozen by `App.prepare()`, the first dispatch, or `serve()`; later registration returns `error.RoutesFrozen`.

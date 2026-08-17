@@ -76,7 +76,7 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-const VERSION = "0.0.1";
+const VERSION = "0.0.2";
 
 fn isHelpArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
@@ -130,7 +130,7 @@ fn editDistance(a: []const u8, b: []const u8) usize {
 fn usage() !void {
     const msg =
         \\Usage: akamata <command> [args]
-        \\Version: akamata 0.0.1 (use `akamata --version` for the version)
+        \\Version: akamata 0.0.2 (use `akamata --version` for the version)
         \\
         \\Commands:
         \\  init <name> [--target=native|workers|containers|both]

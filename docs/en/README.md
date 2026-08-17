@@ -1,9 +1,9 @@
 # Akamata Documentation
 
-This is the documentation home for Akamata v0.0.1 and Zig 0.16.x. Start with the Quick Start if you are evaluating the framework, then use the Handbook or Tutorial for a deeper walkthrough.
+This is the documentation home for Akamata v0.0.2 and Zig 0.16.x. Start with the Quick Start if you are evaluating the framework, then use the Handbook or Tutorial for a deeper walkthrough.
 
-**Release status:** v0.0.1 is the initial public 0.x release. The `main`
-branch is development-oriented; pin a tagged release for reproducible builds.
+**Release status:** v0.0.2 is the current public 0.x release. The `main` branch
+is development-oriented; pin a tagged release for reproducible builds.
 
 [日本語](../ja/README.md) · [Project README](../../README.md)
 
