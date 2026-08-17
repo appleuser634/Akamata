@@ -28,6 +28,10 @@ pub const RouteKind = app_mod.RouteKind;
 const ctx_mod = @import("context.zig");
 pub const Context = ctx_mod.Context;
 pub const Params = ctx_mod.Params;
+pub const contract = @import("contract.zig");
+pub const di = @import("di.zig");
+pub const capability = @import("capability.zig");
+pub const diagnostics = @import("diagnostics.zig");
 
 // Built-in middlewares (new API: take comptime State)
 pub const mw = struct {

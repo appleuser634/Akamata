@@ -266,7 +266,10 @@ pub fn Factory(comptime T: type, comptime Overrides: type) type {
         overrides: Overrides,
 
         pub fn build(self: @This()) T {
-            var instance: T = undefined;
+            // Deterministic base state: omitted fields no longer contain
+            // uninitialised stack bytes. Callers should still override
+            // required slice/pointer fields before persisting the value.
+            var instance: T = std.mem.zeroes(T);
             // Apply schema defaults if any.
             if (@hasDecl(T, "__schema") and @hasDecl(@TypeOf(T.__schema), "defaults")) {
                 inline for (T.__schema.defaults) |kv| {
@@ -291,4 +294,40 @@ pub fn Factory(comptime T: type, comptime Overrides: type) type {
             return repo.create(db, arena, built);
         }
     };
+}
+
+pub const ContractAudit = struct {
+    routes: usize = 0,
+    typed: usize = 0,
+    untyped: usize = 0,
+    duplicate_operation_ids: usize = 0,
+
+    pub fn ok(self: ContractAudit) bool {
+        return self.untyped == 0 and self.duplicate_operation_ids == 0;
+    }
+};
+
+/// Inspect the same route snapshot consumed by OpenAPI and client generation.
+/// This lets tests enforce that every HTTP route has a contract and operation
+/// IDs remain unique.
+pub fn auditContracts(app: anytype, arena: std.mem.Allocator) !ContractAudit {
+    const routes = try app.routeViews(arena);
+    var result: ContractAudit = .{ .routes = routes.len };
+    for (routes, 0..) |route, i| {
+        const meta = route.meta orelse {
+            result.untyped += 1;
+            continue;
+        };
+        result.typed += 1;
+        if (meta.operation_id.len == 0) continue;
+        for (routes[0..i]) |before| {
+            if (before.meta) |other| {
+                if (std.mem.eql(u8, meta.operation_id, other.operation_id)) {
+                    result.duplicate_operation_ids += 1;
+                    break;
+                }
+            }
+        }
+    }
+    return result;
 }
