@@ -23,7 +23,6 @@ is development-oriented; pin a tagged release for reproducible builds.
 - [Observability](observability.md)
 - [Security](security.md)
 - [Release process](releasing.md)
-- [Mobus deployment](mobus-deployment.md) and [portability notes](mobus-portability.md)
 
 ## API reference
 

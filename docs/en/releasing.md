@@ -24,8 +24,6 @@ The version source of truth is `build.zig.zon`; keep the CLI version constant, s
    zig build scaffold-test
    zig build -Dexample=chat
    zig build -Dexample=chat -Dbackend=workers -Doptimize=ReleaseSmall
-   zig build -Dexample=mobus
-   zig build -Dexample=mobus -Dbackend=workers -Doptimize=ReleaseSmall
    ```
 
 4. Run CLI checks: `akamata --version`, `akamata help`, `akamata deploy --help`, and `akamata migrate --help`.
@@ -55,4 +53,3 @@ Use annotated tags named exactly `vMAJOR.MINOR.PATCH`, for example `v0.0.1` and 
 ## Release artifacts and support
 
 GitHub Releases are the public release record. No package registry, Homebrew formula, or container registry is implied by this process. The current `main` and current release line are supported until a later policy is published.
-

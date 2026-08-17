@@ -1240,7 +1240,6 @@ ls src/*.zig | entr -r zig build run
 
 ### より大きなアプリ
 
-- **`examples/mobus/`** — JWT認証、friend機能、WebSocket chat、FCM pushを備えた大規模なexample
 - **`examples/chat/`** — Durable Object SQLite + WebSocket の組み合わせ
 
 ### 個別トピック

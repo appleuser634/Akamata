@@ -374,7 +374,6 @@ am.model.relations.hasMany / belongsTo  (lazy)
 ## Where to go next
 
 - `examples/guestbook/` — minimum complete app with HTML UI, validation, all three DB backends
-- `examples/mobus/` — bigger realistic app (auth, friends, messages, WS hub, FCM push)
 - `examples/chat/` — Durable Object SQLite + WebSocket
 - `docs/en/db-backends.md` — Backend implementation notes (JSPI, Hrana protocol)
 - `docs/en/benchmarks.md` — Performance numbers (167k req/s on hot paths)

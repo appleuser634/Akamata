@@ -1,12 +1,12 @@
 const std = @import("std");
 
 pub const Backend = enum { native, workers };
-pub const Example = enum { chat, mobus, guestbook, bench, tasks };
+pub const Example = enum { chat, guestbook, bench, tasks };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const backend = b.option(Backend, "backend", "deployment backend (native | workers)") orelse .native;
-    const example = b.option(Example, "example", "which example to build (chat | mobus | guestbook | bench)") orelse .chat;
+    const example = b.option(Example, "example", "which example to build (chat | guestbook | bench | tasks)") orelse .chat;
     // OpenSSL is opt-in and only needed for FCM RS256 signing. The HTTPS
     // client and Turso path now use std.crypto.tls — no OpenSSL needed.
     // Enable with `-Dopenssl=true` if you build the FCM push example.
@@ -65,10 +65,6 @@ pub fn build(b: *std.Build) void {
             .native => "examples/chat/src/main.zig",
             .workers => "examples/chat/src/worker.zig",
         },
-        .mobus => switch (backend) {
-            .native => "examples/mobus/src/main.zig",
-            .workers => "examples/mobus/src/worker.zig",
-        },
         .guestbook => switch (backend) {
             .native => "examples/guestbook/src/main.zig",
             .workers => "examples/guestbook/src/worker.zig",
@@ -78,7 +74,6 @@ pub fn build(b: *std.Build) void {
     };
     const example_name = switch (example) {
         .chat => if (backend == .workers) "chat_worker" else "chat",
-        .mobus => if (backend == .workers) "mobus_worker" else "mobus",
         .guestbook => if (backend == .workers) "guestbook_worker" else "guestbook",
         .bench => "bench",
         .tasks => "tasks",
@@ -142,7 +137,6 @@ pub fn build(b: *std.Build) void {
         "tests/jwt_test.zig",
         "tests/bcrypt_test.zig",
         "tests/mq_test.zig",
-        "tests/mobus_route_test.zig",
         "tests/app_test.zig",
         "tests/db_factory_test.zig",
         "tests/model_schema_test.zig",

@@ -1,7 +1,7 @@
 // Pure-Zig MQTT 3.1.1 QoS 0 publisher. Containers-only (uses TCP, no TLS).
 //
 // One-shot publish: each call opens a connection, sends CONNECT + PUBLISH +
-// DISCONNECT, then closes. mobus_server_zig follows the same pattern; broker
+// DISCONNECT, then closes. The broker
 // connection pooling can be added later if throughput becomes a concern.
 
 const std = @import("std");

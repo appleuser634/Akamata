@@ -131,7 +131,6 @@ confined to the legacy namespace before 1.0.
   SQLite, D1, and Turso
 - [`examples/tasks/`](examples/tasks/) — reference REST API covering validation,
   OpenAPI, SSE, sessions, security middleware, jobs, and testing
-- [`examples/mobus/`](examples/mobus/) — a larger real-world application port
 - [`examples/bench/`](examples/bench/) — reproducible framework benchmarks
 
 ## License

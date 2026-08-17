@@ -23,7 +23,6 @@
 - [Observability](observability.md)
 - [Security](security.md)
 - [Release process](releasing.md)
-- [Mobus deployment](mobus-deployment.md)と[portability notes](mobus-portability.md)
 
 ## API reference
 

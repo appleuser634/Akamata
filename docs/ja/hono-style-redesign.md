@@ -320,9 +320,8 @@ pub fn build(b: *std.Build) void {
 ### Phase γ: 既存 examples の新API移行 (2 日)
 
 γ1. `examples/chat/src/main.zig` を新API に書き換え
-γ2. `examples/mobus/src/main.zig` 同上（大規模applicationのroute集合）
-γ3. `docs/ja/` を全面リライト
-γ4. 旧 `Router(App)` / `Server(App)` は **非推奨マークだけ残して当面は残置** (互換性のため)
+γ2. `docs/ja/` を全面リライト
+γ3. 旧 `Router(App)` / `Server(App)` は **非推奨マークだけ残して当面は残置** (互換性のため)
 
 ### Phase δ: テスト + CI (1 日)
 
@@ -350,4 +349,4 @@ pub fn build(b: *std.Build) void {
 1. **state 型**: `App(MyState)` ジェネリック (Zig らしい型安全)。Handler は `*const fn(*Context(State)) anyerror!void`、Context も State パラメータ付き
 2. **Group 型**: `app.basePath("/api/v1")` も同じ `*App(State)` 型を返す。Hono と同じく内部に prefix を持つだけ
 3. **CLI 外部依存**: `wrangler` / `docker` は CLI に同梱せず、子プロセスで呼ぶ (`std.process.Child` 相当)。未インストールなら案内メッセージ
-4. **スコープ**: フルコース (Phase α+β+γ+δ)。examples/chat と mobus も新APIへ移行
+4. **スコープ**: フルコース (Phase α+β+γ+δ)。chat exampleも新APIへ移行

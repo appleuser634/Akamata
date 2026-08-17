@@ -103,7 +103,7 @@ D1's JS API is async (each `prepare/bind/all` is a Promise), so it is fundamenta
 **Important — 1 statement, 1 suspend**: JSPI suspend/resume parks/resume the entire wasm call stack, which is costly even if the JS side does not do any I/O. Therefore, **actually await only `d1_run` (query execution + all row materialization)**, and make `d1_step` / `d1_column_*` synchronous import. The Zig side executes `d1_run` in a delayed manner at the first `step()`, and thereafter advances the line cursor synchronously. Now a SELECT of N rows can be done with "1 suspend" (naively wrapping `d1_step` with Suspending would result in **1 row and 1 suspend**, which would cause ~20 unnecessary stack switches on a 20-line timeline).
 
 ```js
-// Excerpt: deploy/mobus/worker/index.mjs
+// Excerpt: deploy/worker/index.mjs
 // The only async D1 operation: bind + run materializes all rows.
 d1_run: new WebAssembly.Suspending(async (h) => {
   const e = d1stmts.get(h);
@@ -168,16 +168,16 @@ JSPI's wasm stack switch once is on the order of **µs**, but resume goes throug
 ### Measurement procedure (out-of-band)
 
 ```bash
-# Start a local D1 with wrangler
-cd examples/mobus
-wrangler d1 execute mobus --local --file=schema.sql
+# Start a local D1 with wrangler from a generated Workers app
+cd generated-app
+wrangler d1 execute app-db --local --file=schema.sql
 wrangler dev --local --port 8787
 
 # Run wrk from another terminal
 wrk -t4 -c100 -d15s --latency http://127.0.0.1:8787/api/messages
 
 # Turso comparison
-TURSO_URL=libsql://your-db.turso.io TURSO_TOKEN=... ./zig-out/bin/mobus
+TURSO_URL=libsql://your-db.turso.io TURSO_TOKEN=... ./zig-out/bin/app
 wrk -t4 -c100 -d15s --latency http://127.0.0.1:8080/api/messages
 ```
 

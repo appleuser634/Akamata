@@ -24,8 +24,6 @@ versionのsource of truthは`build.zig.zon`です。CLI version、scaffold metad
    zig build scaffold-test
    zig build -Dexample=chat
    zig build -Dexample=chat -Dbackend=workers -Doptimize=ReleaseSmall
-   zig build -Dexample=mobus
-   zig build -Dexample=mobus -Dbackend=workers -Doptimize=ReleaseSmall
    ```
 
 4. `akamata --version`、`akamata help`、`akamata deploy --help`、`akamata migrate --help`を確認します。
@@ -55,4 +53,3 @@ tagは必ず`vMAJOR.MINOR.PATCH`とし、annotated tagを使用します。公�
 ## Release artifact
 
 GitHub Releaseを公開releaseの記録とします。この手順はpackage registry、Homebrew、container registryの公開を意味しません。
-

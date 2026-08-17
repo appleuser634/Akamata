@@ -1223,7 +1223,6 @@ You've only touched the basics. To go deeper:
 
 ### Bigger apps
 
-- **`examples/mobus/`** — a larger application with JWT auth, friends, WebSocket chat, and FCM
 - **`examples/chat/`** — Durable Object SQLite + WebSocket
 
 ### Individual topics

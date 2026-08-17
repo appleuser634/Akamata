@@ -125,7 +125,6 @@ backend対応状況とAPI詳細は、[Handler API](docs/ja/handler-api.md)、
 - [`examples/guestbook/`](examples/guestbook/) — SQLite、D1、Turso向けmodel/repository guestbook
 - [`examples/tasks/`](examples/tasks/) — validation、OpenAPI、SSE、session、security middleware、
   job、testを扱うreference REST API
-- [`examples/mobus/`](examples/mobus/) — 大規模な実アプリの移植例
 - [`examples/bench/`](examples/bench/) — 再現可能なframework benchmark
 
 ## ライセンス

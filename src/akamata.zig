@@ -32,7 +32,7 @@ pub const Params = ctx_mod.Params;
 // Built-in middlewares (new API: take comptime State)
 pub const mw = struct {
     pub const logger = @import("mw/logger.zig").logger;
-    /// Alias kept for the legacy chat/mobus examples — same as `logger`.
+    /// Compatibility alias for the structured logger.
     pub const requestLog = @import("mw/logger.zig").logger;
     pub const recover = @import("mw/recover.zig").recover;
     pub const cors = @import("mw/cors.zig").cors;

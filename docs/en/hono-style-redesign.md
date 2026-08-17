@@ -320,9 +320,8 @@ Now the `-Dbackend`/`-Dtarget`/`-Doptimize` flags will be automatically aligned.
 ### Phase γ: Migration of existing examples to new API (2 days)
 
 γ1. Rewrite `examples/chat/src/main.zig` to new API
-γ2. `examples/mobus/src/main.zig` Same as above (the larger application route set)
-γ3. Fully rewritten `docs/en/`
-γ4. Old `Router(App)` / `Server(App)` will remain for the time being with only the deprecation mark left** (for compatibility)
+γ2. Fully rewritten `docs/en/`
+γ3. Old `Router(App)` / `Server(App)` will remain for the time being with only the deprecation mark left** (for compatibility)
 
 ### Phase δ: Test + CI (1 day)
 
@@ -350,4 +349,4 @@ Total 8 days.
 1. **state type**: `App(MyState)` generic (Zig-like type safety). Handler is `*const fn(*Context(State)) anyerror!void`, Context also has State parameter
 2. **Group type**: `app.basePath("/api/v1")` also returns the same `*App(State)` type. Just has a prefix inside like Hono
 3. **CLI external dependency**: `wrangler` / `docker` is not included in the CLI and is called in a child process (equivalent to `std.process.Child`). Information message if not installed
-4. **Scope**: Full course (Phase α+β+γ+δ). examples/chat and mobus have also been migrated to the new API
+4. **Scope**: Full course (Phase α+β+γ+δ), including migration of the chat example to the new API

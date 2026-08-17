@@ -28,10 +28,6 @@ jobs:
             cmd: zig build -Dexample=chat
           - name: chat-workers
             cmd: zig build -Dexample=chat -Dbackend=workers -Doptimize=ReleaseSmall
-          - name: mobus-native
-            cmd: zig build -Dexample=mobus
-          - name: mobus-workers
-            cmd: zig build -Dexample=mobus -Dbackend=workers -Doptimize=ReleaseSmall
           - name: guestbook-workers
             cmd: zig build -Dexample=guestbook -Dbackend=workers -Doptimize=ReleaseSmall
     steps:

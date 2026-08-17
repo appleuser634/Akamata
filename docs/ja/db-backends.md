@@ -102,7 +102,7 @@ D1 の JS API は async (各 `prepare/bind/all` が Promise) なので Zig の�
 **重要 — 1 ステートメント 1 サスペンド**: JSPI の suspend/resume は wasm コールスタック全体を park/resume するため、JS 側が I/O をしなくてもコストがかかる。したがって**実際に await するのは `d1_run`（クエリ実行 + 全行マテリアライズ）だけ**にし、`d1_step` / `d1_column_*` は同期インポートにする。Zig 側は最初の `step()` で `d1_run` を遅延実行し、以降は同期的に行カーソルを進める。これで N 行の SELECT が「1 サスペンド」で済む（素朴に `d1_step` を Suspending でラップすると **1 行 1 サスペンド**になり、20 行のタイムラインで ~20 回の不要なスタックスイッチが発生する）。
 
 ```js
-// 抜粋: deploy/mobus/worker/index.mjs
+// 抜粋: deploy/worker/index.mjs
 // 唯一の async D1 op: bind + run で全行をマテリアライズ。
 d1_run: new WebAssembly.Suspending(async (h) => {
   const e = d1stmts.get(h);
@@ -167,16 +167,16 @@ JSPI の wasm stack switch 1 回は **µs オーダー**だが、resume は JS �
 ### 計測手順 (out-of-band)
 
 ```bash
-# wrangler でローカル D1 を立てる
-cd examples/mobus
-wrangler d1 execute mobus --local --file=schema.sql
+# 生成したWorkers appでローカルD1を立てる
+cd generated-app
+wrangler d1 execute app-db --local --file=schema.sql
 wrangler dev --local --port 8787
 
 # 別ターミナルから wrk
 wrk -t4 -c100 -d15s --latency http://127.0.0.1:8787/api/messages
 
 # Turso 同等
-TURSO_URL=libsql://your-db.turso.io TURSO_TOKEN=... ./zig-out/bin/mobus
+TURSO_URL=libsql://your-db.turso.io TURSO_TOKEN=... ./zig-out/bin/app
 wrk -t4 -c100 -d15s --latency http://127.0.0.1:8080/api/messages
 ```
 
