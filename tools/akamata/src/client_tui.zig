@@ -112,11 +112,105 @@ fn discover(alloc: std.mem.Allocator, base_url: []const u8) ![]const Endpoint {
             if (parseEndpoints(alloc, bytes)) |routes| return routes else |_| {}
         }
     }
+    // Existing applications and repository examples may predate the runner.
+    // Their literal route registrations are still useful and require neither
+    // a running server nor a public discovery endpoint.
+    if (discoverFromSource(alloc)) |routes| return routes else |_| {}
     // Compatibility fallback for applications that already expose OpenAPI.
     const url = try std.fmt.allocPrint(alloc, "{s}/openapi.json", .{base_url});
     const response = am.http_client.send(alloc, .{ .method = .GET, .url = url }) catch return error.DiscoveryFailed;
     if (response.status < 200 or response.status >= 300) return error.DiscoveryFailed;
     return parseEndpoints(alloc, response.body);
+}
+
+fn discoverFromSource(alloc: std.mem.Allocator) ![]const Endpoint {
+    // A framework/library checkout can also have a src/ tree containing route
+    // helper implementations. Require an application entry point so those
+    // internals are never mistaken for user endpoints.
+    var main_buf: [2 * 1024 * 1024]u8 = undefined;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    _ = std.Io.Dir.cwd().readFile(io, "src/main.zig", &main_buf) catch return error.SourceDiscoveryUnavailable;
+    const files = capture(alloc, "find 'src' -type f -name '*.zig' 2>/dev/null") catch return error.SourceDiscoveryUnavailable;
+    var out: std.ArrayList(Endpoint) = .empty;
+    var file_it = std.mem.tokenizeAny(u8, files, "\r\n");
+    while (file_it.next()) |path| {
+        if (std.mem.indexOf(u8, path, "test") != null) continue;
+        const source = std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(4 * 1024 * 1024)) catch continue;
+        try parseSourceRoutes(alloc, source, path, &out);
+    }
+    if (out.items.len == 0) return error.NoEndpoints;
+    std.mem.sort(Endpoint, out.items, {}, struct {
+        fn less(_: void, a: Endpoint, b: Endpoint) bool {
+            const by_path = std.mem.order(u8, a.path, b.path);
+            return if (by_path == .eq) std.mem.lessThan(u8, @tagName(a.method), @tagName(b.method)) else by_path == .lt;
+        }
+    }.less);
+    return out.toOwnedSlice(alloc);
+}
+
+fn parseSourceRoutes(alloc: std.mem.Allocator, source: []const u8, file_path: []const u8, out: *std.ArrayList(Endpoint)) !void {
+    var lines = std.mem.splitScalar(u8, source, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or std.mem.startsWith(u8, line, "//")) continue;
+        var method: ?am.http_client.Method = null;
+        var search_from: usize = 0;
+        if (std.mem.indexOf(u8, line, ".endpoint(.")) |at| {
+            const method_start = at + ".endpoint(.".len;
+            const method_end = std.mem.indexOfScalarPos(u8, line, method_start, ',') orelse continue;
+            method = parseMethod(line[method_start..method_end]);
+            search_from = method_end + 1;
+        } else {
+            const registrations = [_]struct { marker: []const u8, method: am.http_client.Method }{
+                .{ .marker = ".get(", .method = .GET },
+                .{ .marker = ".head(", .method = .HEAD },
+                .{ .marker = ".post(", .method = .POST },
+                .{ .marker = ".put(", .method = .PUT },
+                .{ .marker = ".delete(", .method = .DELETE },
+                .{ .marker = ".patch(", .method = .PATCH },
+                .{ .marker = ".options(", .method = .OPTIONS },
+            };
+            for (registrations) |registration| {
+                if (std.mem.indexOf(u8, line, registration.marker)) |at| {
+                    method = registration.method;
+                    search_from = at + registration.marker.len;
+                }
+            }
+        }
+        const resolved_method = method orelse continue;
+        const quote = std.mem.indexOfScalarPos(u8, line, search_from, '"') orelse continue;
+        const close = std.mem.indexOfScalarPos(u8, line, quote + 1, '"') orelse continue;
+        const raw_path = line[quote + 1 .. close];
+        if (raw_path.len == 0 or raw_path[0] != '/') continue;
+        const path = try normalizeRoutePath(alloc, raw_path);
+        var duplicate = false;
+        for (out.items) |existing| {
+            if (existing.method == resolved_method and std.mem.eql(u8, existing.path, path)) duplicate = true;
+        }
+        if (duplicate) continue;
+        try out.append(alloc, .{
+            .method = resolved_method,
+            .path = path,
+            .summary = try std.fmt.allocPrint(alloc, "source · {s}", .{file_path}),
+            .operation_id = "",
+        });
+    }
+}
+
+fn normalizeRoutePath(alloc: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var segments = std.mem.splitScalar(u8, raw, '/');
+    var first = true;
+    while (segments.next()) |segment| {
+        if (!first) try out.append(alloc, '/');
+        first = false;
+        if (std.mem.startsWith(u8, segment, ":")) {
+            try out.append(alloc, '{');
+            try out.appendSlice(alloc, segment[1..]);
+            try out.append(alloc, '}');
+        } else try out.appendSlice(alloc, segment);
+    }
+    return out.toOwnedSlice(alloc);
 }
 
 fn supportsLocalInspection() bool {
@@ -254,7 +348,7 @@ fn draw(state: *const State) void {
     const height = @max(@as(usize, viewport.rows), 18);
     const list_height = @min(state.endpoints.len, @max(@as(usize, 3), @min(@as(usize, 12), height / 3)));
     const start = if (state.selected >= list_height) state.selected - list_height + 1 else 0;
-    const response_lines = @max(@as(usize, 3), height -| (list_height + 12));
+    const response_lines = @max(@as(usize, 3), height -| list_height -| 12);
 
     std.debug.print("\x1b[H\x1b[2J\x1b[1;36m AKAMATA API CLIENT \x1b[0m  {s}  ", .{state.base_url});
     if (state.manual_mode) std.debug.print("\x1b[33m[MANUAL]\x1b[0m\n", .{}) else std.debug.print("\x1b[32m[DISCOVERED]\x1b[0m\n", .{});
@@ -409,4 +503,21 @@ test "TUI parses route metadata without an exposed endpoint" {
 test "inspection runner is only used by applications that opt in" {
     try std.testing.expect(hasInspectionMarker("if (arg == \"akamata-openapi\") {}"));
     try std.testing.expect(!hasInspectionMarker("pub fn main() void {}"));
+}
+
+test "source discovery parses typed and bare route registrations" {
+    const source =
+        \\_ = try app.endpoint(.PATCH, "/tasks/:id", update, am.openapi.Spec(.{}));
+        \\_ = try app.get("/health", health);
+        \\// _ = try app.delete("/commented", nope);
+    ;
+    var list: std.ArrayList(Endpoint) = .empty;
+    defer list.deinit(std.testing.allocator);
+    try parseSourceRoutes(std.testing.allocator, source, "src/setup.zig", &list);
+    defer for (list.items) |item| {
+        std.testing.allocator.free(item.path);
+        std.testing.allocator.free(item.summary);
+    };
+    try std.testing.expectEqual(@as(usize, 2), list.items.len);
+    try std.testing.expectEqualStrings("/tasks/{id}", list.items[0].path);
 }
