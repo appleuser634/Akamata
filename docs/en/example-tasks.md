@@ -224,7 +224,9 @@ pub fn openapiSpec(c: *Ctx) !void {
 }
 ```
 
-`am.openapi.generate` walks `app.routes` and includes only routes registered in `app.endpoint(method, path, handler, am.openapi.Spec(.{...}))` in spec. **comptime reflection** derives the JSON Schema from each request/response type, so editing the Zig structure updates the specification at the same time — no ``code-to-document'' accidents.
+`am.openapi.generate` walks every registered route. Ordinary route helpers are
+included without typed schemas; `app.endpoint(...)` additionally uses
+**comptime reflection** to derive JSON Schema from request and response types.
 
 `am.client_gen.generate(...)` also reads the same route table, but you can choose the output target from TS / Zig. Incorporate `/client.ts` into your frontend build to ensure API signature changes are detected at compile time.
 
@@ -236,7 +238,7 @@ pub fn openapiSpec(c: *Ctx) !void {
 2. **App building** — `am.App(App).init(alloc, state)`
 3. **Return link** — `state().framework_app = @ptrCast(app_ptr)`
 4. **Middleware** — `useAll` in outer-first
-5. **Root** — `app.endpoint(...)` (documented) and `app.get(...)` (otherwise)
+5. **Routes** — `app.endpoint(...)` for typed schemas and `app.get(...)` for an untyped operation
 
 The order of middleware is important:
 

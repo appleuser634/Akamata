@@ -99,6 +99,7 @@ Workers WebSockets use the provided Workers/Durable Object integration pattern.
 | Get running | [Quick Start](docs/en/quickstart.md) | [クイックスタート](docs/ja/quickstart.md) |
 | Learn step by step | [Tutorial](docs/en/tutorial.md) | [チュートリアル](docs/ja/tutorial.md) |
 | Tour the framework | [Handbook](docs/en/handbook.md) | [ハンドブック](docs/ja/handbook.md) |
+| Upgrade from v0.0.1 | [Upgrade guide](docs/en/upgrading.md) | [アップグレードガイド](docs/ja/upgrading.md) |
 | Find a topic | [Documentation home](docs/en/README.md) | [ドキュメントホーム](docs/ja/README.md) |
 | Present Akamata | [Slides (PDF)](docs/en/slides.pdf) | [スライド (PDF)](docs/ja/slides.pdf) |
 
@@ -117,6 +118,11 @@ Workers WebSockets use the provided Workers/Durable Object integration pattern.
 Backend availability and API details are documented in the
 [Handler API](docs/en/handler-api.md), [DB backends](docs/en/db-backends.md),
 and [WebSocket guide](docs/en/websocket.md).
+
+`am.Router` / `am.Ctx` / `am.Server` are compatibility APIs for existing
+applications. New code should use `am.App` / `am.Context` / `app.serve()`;
+the compatibility surface receives no new features and will be progressively
+confined to the legacy namespace before 1.0.
 
 ## Examples
 

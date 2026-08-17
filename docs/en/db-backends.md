@@ -8,7 +8,7 @@
 pub const Db = struct {
     pub fn prepare(self: Db, sql: []const u8) !Stmt
     pub fn exec(self: Db, sql: []const u8) !void
-    pub fn execAll(self: Db, script: []const u8) !void   // Execute semicolon-separated statements
+    pub fn execAll(self: Db, script: []const u8) !void   // Execute a SQL script
     pub fn close(self: Db) void
 };
 
@@ -18,11 +18,18 @@ pub const Stmt = struct {
     pub fn step(self: Stmt) !StepResult                   // .row | .done
     pub fn fetchOne(self: Stmt, comptime T: type) !T      // Map one row to a struct
     pub fn readRow(self: Stmt, comptime T: type) !T
+    pub fn columnIsNull(self: Stmt, idx: usize) !bool
     pub fn columnInt/Float/Text/Blob(self: Stmt, idx) !...
     pub fn reset(self: Stmt) !void
     pub fn deinit(self: Stmt) void
 };
 ```
+
+SQLite passes the whole script to SQLite's parser. Other backends use a
+splitter that understands quoted strings, identifiers, line comments, and
+block comments; an unterminated quote or block comment returns
+`error.InvalidSqlScript`. `columnIsNull()` distinguishes SQL `NULL` from zero,
+`false`, and empty text. Repository mapping uses it for optional fields.
 
 ## Transparent selection with URL schema
 
@@ -187,6 +194,11 @@ Use the scaffold migration path first so schema changes remain reviewable:
 Fresh native scaffolds also run `am.model.migrate.diff/apply` at startup for
 local development. Workers scaffolds run `migrate_once.run` on the first
 request. Prefer reviewed, versioned files for production deployments.
+
+On SQLite and Turso, each migration file and its version record are one
+transaction and are rolled back together on failure. D1 cannot provide that
+transaction through this bridge; keep D1 migrations idempotent and use the
+platform migration workflow for production.
 
 ## Advanced / low-level migration
 

@@ -13,6 +13,7 @@
 - [Tutorial](tutorial.md) — アプリケーションを段階的に構築します
 - [Handbook](handbook.md) — model、repository、migration、deployを短時間で確認します
 - [Tasks example](example-tasks.md) — example applicationを題材に学びます
+- [アップグレードガイド](upgrading.md) — v0.0.1以降の挙動変更
 
 ## Guide
 

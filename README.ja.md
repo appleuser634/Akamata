@@ -97,6 +97,7 @@ Workers/Durable Object integration patternを使用します。
 | まず動かす | [クイックスタート](docs/ja/quickstart.md) | [Quick Start](docs/en/quickstart.md) |
 | 順番に学ぶ | [チュートリアル](docs/ja/tutorial.md) | [Tutorial](docs/en/tutorial.md) |
 | 全体を把握する | [ハンドブック](docs/ja/handbook.md) | [Handbook](docs/en/handbook.md) |
+| v0.0.1から移行する | [アップグレードガイド](docs/ja/upgrading.md) | [Upgrade guide](docs/en/upgrading.md) |
 | 目的別に探す | [ドキュメントホーム](docs/ja/README.md) | [Documentation home](docs/en/README.md) |
 | Akamataを紹介する | [スライド (PDF)](docs/ja/slides.pdf) | [Slides (PDF)](docs/en/slides.pdf) |
 
@@ -113,6 +114,10 @@ Workers/Durable Object integration patternを使用します。
 
 backend対応状況とAPI詳細は、[Handler API](docs/ja/handler-api.md)、
 [DBバックエンド](docs/ja/db-backends.md)、[WebSocketガイド](docs/ja/websocket.md)を参照してください。
+
+`am.Router` / `am.Ctx` / `am.Server` は既存application向け互換APIです。新規実装は
+`am.App` / `am.Context` / `app.serve()`を使用してください。互換APIには新機能を追加せず、
+1.0までに段階的にnamespace内へ限定します。
 
 ## Examples
 

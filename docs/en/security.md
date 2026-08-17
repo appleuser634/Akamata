@@ -6,7 +6,12 @@ Akamata rejects ambiguous HTTP/1 framing at the framework boundary. HTTP/1.1 req
 
 The threaded native runtime separates acceptance from bounded connection workers. Defaults are: 10 s header deadline, 30 s body deadline, 5 s keep-alive idle deadline, 60 s total request deadline, 100 requests per connection, 1,024 concurrent connections, 64 KiB headers, and 4 MiB bodies. Configure these through `ServeOptions`. Put a maintained TLS reverse proxy in front for public deployments, but do not rely on a proxy to repair malformed framing.
 
-Never trust `X-Forwarded-For` unless the immediate peer is a proxy you control and you validate the proxy chain. Akamata's in-process rate limiter is bounded but local to one process/isolate; multi-node enforcement needs a shared limiter.
+`ServeOptions.trust_proxy_headers` defaults to `false`, so `c.req.ip()` ignores
+`X-Forwarded-For`, `CF-Connecting-IP`, and `X-Real-IP`. The threaded native
+server reports the socket peer; targets without peer metadata may return
+`null`. Enable forwarding headers only when every direct connection is from a
+proxy you control. The in-process rate limiter is bounded but local to one
+process/isolate; multi-node enforcement needs a shared limiter.
 
 `secureHeaders` is applied before handlers so streaming responses receive the policy. Its HSTS default is for HTTPS production; disable `strict_transport_security` on plain-HTTP development hosts to avoid teaching a browser an unusable HTTPS policy.
 

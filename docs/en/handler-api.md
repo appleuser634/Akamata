@@ -52,6 +52,7 @@ _ = try app.put(path, handler);
 _ = try app.delete(path, handler);
 _ = try app.patch(path, handler);
 _ = try app.options(path, handler);
+_ = try app.head(path, handler);
 
 // Match all HTTP methods
 _ = try app.all(path, handler);
@@ -63,7 +64,7 @@ _ = try app.ws(path, handler);
 _ = try app.useAll(am.mw.logger(State));            // Apply to every route
 _ = try app.use("/api/*", am.mw.bearerAuth(State, .{ .token = "x" }));  // Path match
 
-// Groups (basePath returns *App(State) with a prefix)
+// Groups are lightweight values backed by the parent App
 var api = try app.basePath("/api/v1");
 _ = try api.get("/users", listUsers);
 
@@ -74,6 +75,20 @@ app.onError(myErrorHandler);
 // Start (automatically selects the backend)
 try app.serve(.{ .port = 8080 });
 ```
+
+`prepare()` builds the static index and freezes the route table. The first
+dispatch and `serve()` call it automatically. Later registration returns
+`error.RoutesFrozen`. Registration also rejects duplicate/equivalent routes,
+ambiguous parameter routes, repeated capture names, non-terminal wildcards,
+and more than 16 captures. A `Group` borrows its parent; only the parent is
+deinitialized.
+
+Without an explicit `HEAD` route, `HEAD` uses `GET` but sends no body. A known
+path with the wrong method returns `405` and a deduplicated `Allow` header;
+`GET` implies `HEAD`.
+
+`c.req.ip()` uses only the direct peer by default. Enable forwarding headers
+with `trust_proxy_headers = true` only behind a trusted proxy.
 
 ## Context
 
@@ -223,6 +238,10 @@ Behavior of `c.input(T)`:
 - Missing field/constraint violation → write 422 (`{error_kind, errors:[{field,rule,message}]}`) and null
 - Success → return T
 
+Every non-optional field without a default is required structurally, even if
+it is absent from `__schema.validates`. Use an optional field or a default for
+PATCH-style input.
+
 Internally, there are two steps: permissive parse to "projection with all fields optional", run validate, and missing fields are converted to 422 using the `required` rule. Even if I send `{}`, I get a field-level error of 422 instead of 400.
 
 ### PATCH optional field
@@ -288,6 +307,10 @@ fn openapiSpec(c: *am.Context(State)) !void {
     try c.res.writeAll(spec);
 }
 ```
+
+Generation includes every registered HTTP route. Ordinary helpers produce an
+untyped operation; `endpoint()` adds reflected request, response, and query
+metadata. Complete route registration before serving a generated artifact.
 
 It will be null for routes that do not go through `app.dispatch`, such as unit test.
 

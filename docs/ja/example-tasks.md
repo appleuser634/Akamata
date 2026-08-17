@@ -224,7 +224,9 @@ pub fn openapiSpec(c: *Ctx) !void {
 }
 ```
 
-`am.openapi.generate` は `app.routes` を歩き、`app.endpoint(method, path, handler, am.openapi.Spec(.{...}))` で登録されたルートだけを spec に含めます。**comptime reflection** で各リクエスト / レスポンス型から JSON Schema を導出するので、Zig 構造体を編集すれば仕様も同時に更新されます — 「コードとドキュメントがズレる」事故が起きません。
+`am.openapi.generate`は登録済みrouteを全て収録します。通常のroute helperは型schemaなしで
+収録され、`app.endpoint(...)`ではさらに**comptime reflection**でrequest／response型から
+JSON Schemaを導出します。
 
 `am.client_gen.generate(...)` も同じルート表を読みますが、出力ターゲットを TS / Zig から選べます。`/client.ts` をフロントエンドのビルドに組み込めば、API シグネチャ変更がコンパイル時に検出できるようになります。
 
@@ -236,7 +238,7 @@ pub fn openapiSpec(c: *Ctx) !void {
 2. **App 構築** — `am.App(App).init(alloc, state)`
 3. **戻りリンク** — `state().framework_app = @ptrCast(app_ptr)`
 4. **ミドルウェア** — outer-first で `useAll`
-5. **ルート** — `app.endpoint(...)` (ドキュメント対象) と `app.get(...)` (それ以外)
+5. **ルート** — typed schema付きの`app.endpoint(...)`とuntyped operationの`app.get(...)`
 
 ミドルウェアの順序は重要です:
 

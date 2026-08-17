@@ -263,6 +263,10 @@ akamata migrate generate add_users        # migrations/<ts>_add_users.sql を生
 
 生成applicationには`akamata migrate up`が使用するrunnerが含まれます。`DATABASE_URL`を読み、`am.model.migrate.Migrator`で未適用fileを実行し、versionを`schema_migrations`へ記録します。空の`migrations/` directoryは何も適用せず成功し、再実行時は記録済みversionをskipします。D1には引き続き`akamata db <file> --remote`またはdeploy commandの`--migrate=<file>`を使用します。
 
+SQLiteとTursoではmigration fileとversion記録を1 transactionで適用します。D1 bridgeは
+非transactionalなので、D1 migrationは小さくidempotentにし、レビュー済みplatform
+workflowから適用してください。
+
 ---
 
 ## 8. デプロイ (3 分)

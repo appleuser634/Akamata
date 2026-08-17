@@ -8,7 +8,7 @@
 pub const Db = struct {
     pub fn prepare(self: Db, sql: []const u8) !Stmt
     pub fn exec(self: Db, sql: []const u8) !void
-    pub fn execAll(self: Db, script: []const u8) !void   // ; 区切りで複数実行
+    pub fn execAll(self: Db, script: []const u8) !void   // SQL scriptを実行
     pub fn close(self: Db) void
 };
 
@@ -18,11 +18,17 @@ pub const Stmt = struct {
     pub fn step(self: Stmt) !StepResult                   // .row | .done
     pub fn fetchOne(self: Stmt, comptime T: type) !T      // 1 行を struct にマップ
     pub fn readRow(self: Stmt, comptime T: type) !T
+    pub fn columnIsNull(self: Stmt, idx: usize) !bool
     pub fn columnInt/Float/Text/Blob(self: Stmt, idx) !...
     pub fn reset(self: Stmt) !void
     pub fn deinit(self: Stmt) void
 };
 ```
+
+SQLiteはscript全体をSQLite自身のparserへ渡します。他のbackendでは文字列、quoted
+identifier、line comment、block commentを認識するsplitterを使い、閉じていないquoteや
+block commentは`error.InvalidSqlScript`になります。`columnIsNull()`はSQL `NULL`を
+0、`false`、空文字列と区別し、repositoryのoptional field mappingにも使われます。
 
 ## URL スキーマで透過選択
 
@@ -189,6 +195,10 @@ native scaffold は local development のため起動時に
 `am.model.migrate.diff/apply` も実行します。Workers scaffold は最初の
 request で `migrate_once.run` を実行します。本番ではレビュー済みの
 versioned file を優先してください。
+
+SQLiteとTursoでは、migration fileの適用とversion記録が1 transactionになり、失敗時は
+まとめてrollbackされます。D1 bridgeでは同等のtransactionを提供できないため、D1の
+migrationはidempotentにし、本番ではplatformのmigration workflowを使用してください。
 
 ## Advanced / low-level migration
 

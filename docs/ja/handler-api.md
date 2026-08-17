@@ -47,6 +47,7 @@ _ = try app.put(path, handler);
 _ = try app.delete(path, handler);
 _ = try app.patch(path, handler);
 _ = try app.options(path, handler);
+_ = try app.head(path, handler);
 
 // すべてのメソッドにマッチ
 _ = try app.all(path, handler);
@@ -58,7 +59,7 @@ _ = try app.ws(path, handler);
 _ = try app.useAll(am.mw.logger(State));            // 全ルートに適用
 _ = try app.use("/api/*", am.mw.bearerAuth(State, .{ .token = "x" }));  // パスマッチ
 
-// グループ (basePath の戻り値は *App(State)、prefix が積まれる)
+// グループ (親Appを参照する軽量Group。ルート/state/所有権は親に集約)
 var api = try app.basePath("/api/v1");
 _ = try api.get("/users", listUsers);
 
@@ -69,6 +70,17 @@ app.onError(myErrorHandler);
 // 起動 (backend で自動分岐)
 try app.serve(.{ .port = 8080 });
 ```
+
+`prepare()`はstatic indexを構築してroute tableをfreezeします。最初のdispatchと
+`serve()`が自動的に呼びます。それ以降の登録は`error.RoutesFrozen`です。同一または
+等価なroute、曖昧なparameter route、末尾以外のwildcard、重複parameter名、captureが
+16個を超えるrouteも拒否されます。`Group`は親Appをborrowし、親だけを`deinit()`します。
+`HEAD`は明示routeがなければ`GET`へfallbackし、
+pathが存在してmethodだけが違う場合は`405`と`Allow`を返します。
+
+`c.req.ip()`はdefaultではsocket peerだけを返します。管理下のreverse proxyからのみ
+接続される構成では`app.serve(.{ .trust_proxy_headers = true })`を明示し、
+`X-Forwarded-For`等を有効にしてください。
 
 ## Context
 
@@ -214,6 +226,9 @@ fn create(c: *am.Context(State)) !void {
 - 不足フィールド / 制約違反 → 422 (`{error_kind, errors:[{field,rule,message}]}`) を書いて null
 - 成功 → T を返す
 
+non-optionalかつdefaultのないfieldは、`__schema.validates`に記載がなくても構造上の
+required fieldです。PATCH形式ではoptional fieldまたはdefaultを使用してください。
+
 内部では「全フィールドを optional にした projection」へ permissive parse し、validate を走らせ、欠落しているフィールドは `required` ルールで 422 に変換するという二段構えになっています。`{}` を送っても 400 ではなく 422 で field-level なエラーが返ります。
 
 ### PATCH 系の optional フィールド
@@ -279,6 +294,10 @@ fn openapiSpec(c: *am.Context(State)) !void {
     try c.res.writeAll(spec);
 }
 ```
+
+生成対象には登録済みHTTP routeが全て含まれます。通常のhelperはuntyped operationとなり、
+`endpoint()`はreflectionしたrequest／response／query metadataを追加します。生成物を配信する
+前にroute登録を完了してください。
 
 unit test など `app.dispatch` を介さない経路では null になります。
 

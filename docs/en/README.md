@@ -13,6 +13,7 @@ branch is development-oriented; pin a tagged release for reproducible builds.
 - [Tutorial](tutorial.md) — build an application step by step
 - [Handbook](handbook.md) — concise tour of models, repositories, migrations, and deployment
 - [Tasks example](example-tasks.md) — guided example application
+- [Upgrade guide](upgrading.md) — behavior changes after v0.0.1
 
 ## Guides
 

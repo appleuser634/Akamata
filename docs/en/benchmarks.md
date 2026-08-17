@@ -1,5 +1,10 @@
 # Benchmarks
 
+> **Historical data:** the figures below did not retain an exact commit and
+> raw output, so they are not claims about the current revision. Run
+> `OUTDIR=./benchmark-results bash examples/bench/runall_ext.sh` and retain
+> the generated JSON, which records the commit, UTC timestamp, and OS.
+
 These measurements compare Akamata with several server implementations under specific local workloads. They are historical snapshots, not performance guarantees.
 
 The recorded runs date from May 2026. Their exact Git commit was not captured in the original results; use the commands and sources linked below to reproduce them on the current revision.
@@ -76,7 +81,8 @@ This time too, the error `responses:` is displayed, and the throughput numbers a
 | Hono on Bun | 1.26 ms / 2.40 ms | 1.77 ms / 2.53 ms | 1.69 ms / 3.46 ms |
 | Node + Fastify | 2.76 ms / 66.4 ms | 3.59 ms / 93.8 ms | 3.18 ms / 22.8 ms |
 
-→ **`/hello` Akamata threaded on P99 is 30x faster than the runner-up (Bun raw 2.29 ms)**.
+The historical run recorded a large P99 difference. Treat it as reference data
+until the current script reproduces it with retained JSON output.
 
 ### Binary/Runtime
 

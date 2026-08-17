@@ -1,5 +1,10 @@
 # Benchmarks
 
+> **履歴資料:** 以下の数値はcommitとraw outputを保存していない過去の測定であり、
+> 現行revisionの性能主張には使用しません。現在の比較は
+> `OUTDIR=./benchmark-results bash examples/bench/runall_ext.sh`で実行し、生成される
+> commit hash・UTC時刻・OS情報付きJSONを成果物として保存してください。
+
 特定のlocal workloadでAkamataと複数のserver実装を比較した測定記録です。過去のsnapshotであり、他の環境における性能を保証するものではありません。
 
 記録された測定は2026年5月に実施されました。元の結果には正確なGit commitが残っていないため、現在のrevisionでは後述するcommandとsource codeから再測定してください。
@@ -76,7 +81,7 @@ wrk -t8 -c256 -d10s --latency
 | Hono on Bun          | 1.26 ms / 2.40 ms | 1.77 ms / 2.53 ms | 1.69 ms / 3.46 ms |
 | Node + Fastify       | 2.76 ms / 66.4 ms | 3.59 ms / 93.8 ms | 3.18 ms / 22.8 ms |
 
-→ **`/hello` P99 で Akamata threaded は次点 (Bun raw 2.29 ms) の 30× 高速**。
+当時の測定では大きな差が記録されていますが、再検証までは参考値として扱います。
 
 ### バイナリ / ランタイム
 

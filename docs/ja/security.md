@@ -6,7 +6,11 @@ Akamataは、解釈が曖昧なHTTP/1 framingをframework boundaryで拒否し�
 
 threaded native runtimeではaccept処理と、上限付きのconnection workerを分離しています。defaultはheader 10秒、body 30秒、keep-alive idle 5秒、request全体60秒、1 connectionあたり100 requests、同時1,024 connections、header 64 KiB、body 4 MiBです。`ServeOptions`で変更できます。Internetへ公開する場合は継続的に保守されているTLS reverse proxyを前段に置いてください。ただし、不正なframingをproxyが修正することには依存しないでください。
 
-直前のpeerが自分で管理するproxyで、proxy chainを検証できる場合を除き、`X-Forwarded-For`を信用してはいけません。Akamataのrate limiterはentry数に上限がありますが、process／isolate内だけで動作します。複数nodeで共通の制限を適用する場合はshared limiterが必要です。
+`ServeOptions.trust_proxy_headers`のdefaultは`false`で、`c.req.ip()`は
+`X-Forwarded-For`、`CF-Connecting-IP`、`X-Real-IP`を無視します。threaded native
+serverはsocket peerを返し、peer metadataがないtargetでは`null`になり得ます。直前の
+接続元が全て自分で管理するproxyの場合だけforwarding headerを有効にしてください。
+Akamataのrate limiterはprocess／isolate内だけで動作します。複数nodeではshared limiterが必要です。
 
 `secureHeaders`はhandlerより前に適用されるため、streaming responseにもsecurity policyが付きます。HSTSのdefaultはHTTPS本番環境向けです。平文HTTPの開発hostでは、browserへ利用できないHTTPS policyを記憶させないよう`strict_transport_security`を無効にしてください。
 

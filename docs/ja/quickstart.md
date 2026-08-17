@@ -107,6 +107,9 @@ akamata migrate up
 
 適用済みversionは`schema_migrations`へ記録され、同じ`migrate up`を再実行してもskipされます。別directoryには`--dir=PATH`、特定versionまでの適用には`--target=VERSION`を指定します。
 
+SQLiteとTursoではfile単位でatomicです。D1 bridgeは非transactionalなので、D1 migrationは
+idempotentにし、レビュー済みdeploy経路を使用してください。
+
 ## 4. その他のtargetをビルドする
 
 Workers:

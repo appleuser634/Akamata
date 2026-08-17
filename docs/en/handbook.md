@@ -268,6 +268,10 @@ directory succeeds without applying anything; repeated runs skip recorded
 versions. For D1, continue to use `akamata db <file> --remote` or the deploy
 command's `--migrate=<file>` option.
 
+SQLite and Turso apply each migration file and its version record in one
+transaction. D1 is non-transactional through this bridge, so keep D1
+migrations small and idempotent and use the reviewed platform workflow.
+
 ---
 
 ## 8. Deploy (3 minutes)

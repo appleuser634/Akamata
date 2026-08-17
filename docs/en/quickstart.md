@@ -107,6 +107,9 @@ akamata migrate up
 
 Applied versions are recorded in `schema_migrations`; running `migrate up` again skips them. Use `--dir=PATH` for another directory or `--target=VERSION` to stop at a version.
 
+Each file is atomic on SQLite and Turso. D1 is non-transactional through the
+bridge, so keep D1 migrations idempotent and use the reviewed deployment path.
+
 ## 4. Build other targets
 
 Workers:
