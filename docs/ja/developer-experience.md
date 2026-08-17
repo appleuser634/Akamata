@@ -51,7 +51,7 @@ akamata api diff old-openapi.json new-openapi.json
 
 resource generatorはmodel/repository、OpenAPI contract付きの型付きlist/create handler、factory test、timestamp付きmigrationを作成します。route wiringは暗黙に編集しません。`Resource.Routes(State)`をinstantiateして`register`を明示的に呼び出してください。destroyは誤ったdata消失を避けるためmigrationを残します。
 
-`api diff`はpathまたはHTTP operationが削除されると失敗します。現時点では削除を検出し、schema levelの互換性までは推論しません。
+`api diff`はpath／HTTP operationの削除に加え、schema／property削除、type変更、required property追加をbreaking changeとして検出します。
 
 ## Migration
 
@@ -77,3 +77,28 @@ try std.testing.expect(audit.ok());
 ```
 
 auditは型情報のないrouteと、空でない`operation_id`の重複を報告します。`am.testing.factory`はschema defaultとoverrideの適用前にdeterministicなzero値から開始します。必須pointer／slice fieldは引き続きtestで指定してください。
+
+## 型付きhandler binding
+
+`contract.Bound`はinput structのfieldからrequest extractionをcomptime生成し、runtime reflectionなしで通常のhandlerへ変換します。fieldには`Path`、`Query`、`Header`、`Cookie`、`Json`を指定し、parse済み値を`.value`から取得します。
+
+## Lifecycleとresource budget
+
+`app.lifecycle(.{ .startup = startup, .shutdown = shutdown })`はserver開始前のsetupと`app.deinit`時のteardownを一度だけ実行します。endpoint contractの`limits`ではrequest／response byte、timeout、DB query数、outbound request数、streaming属性を宣言できます。非streaming budgetはrequest-scoped counterとdurationからrouterが強制し、全項目をOpenAPIの`x-akamata-limits`へ出力します。
+
+route moduleで`comptime am.contract.validateGraph(.{ List, Create, Show });`を呼ぶと、App初期化前にmethod／pathとoperation IDの重複を拒否します。
+
+DB testでは`am.testing.DatabaseSandbox`が明示的にcommitしない変更をrollbackします。`malformedJsonCorpus`はcontract fuzz test用のdeterministic seedです。
+
+## Route、configuration、doctor
+
+```console
+akamata routes [--json]
+akamata routes explain GET /notes/{id}
+akamata doctor [--json]
+akamata config <show|check>
+akamata test [--watch]
+akamata runner <command> [args]
+```
+
+`routes`は非HTTP inspection runnerからroute graphを読み、`routes explain`はoperation metadata、適用middleware chain、budgetを表示します。`config`は`.env`のkeyと設定有無だけを表示し、secret値を出力しません。`doctor`はentrypoint、build manifest、deployment config、migrationを検査します。`test`はproject testを実行し、`runner`は生成applicationのtyped management-command protocolへ委譲します。新規projectには`db-check`例が含まれます。`akamata api diff`はschema／property削除、type変更、required property追加もbreaking changeとして検出します。

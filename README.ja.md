@@ -111,6 +111,8 @@ Workers/Durable Object integration patternを使用します。
 - native/Workers outbound HTTP、MQTT QoS 0、任意のFCM support
 - request ID、access log、Prometheus metrics、軽量span、`Server-Timing`
 - OpenAPI生成、typed client生成、testing client、job、cron
+- comptime型付きhandler binding、lifecycle hook、route単位resource budget、
+  route inspection、project doctor、schema-aware API diff
 
 backend対応状況とAPI詳細は、[Handler API](docs/ja/handler-api.md)、
 [DBバックエンド](docs/ja/db-backends.md)、[WebSocketガイド](docs/ja/websocket.md)を参照してください。

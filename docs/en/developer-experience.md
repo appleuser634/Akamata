@@ -51,7 +51,7 @@ Use [`akamata client`](cli-client.md) with no arguments for the full-screen endp
 
 The resource generator creates a model/repository, typed list/create handlers with OpenAPI contracts, a factory test, and a timestamped migration. It deliberately does not edit route wiring: instantiate `Resource.Routes(State)` and call `register` explicitly. Destroy removes generated source files but retains migrations to avoid accidental data loss.
 
-`api diff` fails when a path or HTTP operation was removed. It currently detects removals; schema-level compatibility is not inferred.
+`api diff` fails when a path or HTTP operation is removed and also detects removed schemas/properties, type changes, and newly required properties.
 
 ## Migrations
 
@@ -77,3 +77,26 @@ try std.testing.expect(audit.ok());
 ```
 
 The audit reports untyped routes and duplicate non-empty operation IDs. `am.testing.factory` now starts from deterministic zeroed storage before applying schema defaults and overrides; required pointer and slice fields should still be supplied by the test.
+
+## Typed handlers, lifecycle, and budgets
+
+`contract.Bound` generates request extraction from an input struct at comptime and adapts it to the regular handler ABI without runtime reflection. Fields use `Path`, `Query`, `Header`, `Cookie`, or `Json` and expose parsed values through `.value`.
+
+Register one-time setup and teardown with `app.lifecycle(.{ .startup = startup, .shutdown = shutdown })`. Endpoint specs accept `limits` for request/response bytes, timeout, DB queries, outbound requests, and streaming. Non-streaming budgets are enforced from request-scoped counters and timing; all fields are emitted as `x-akamata-limits`.
+
+Call `comptime am.contract.validateGraph(.{ List, Create, Show });` in a route module to reject duplicate method/path pairs and operation IDs before application initialization.
+
+`am.testing.DatabaseSandbox` rolls database tests back unless explicitly committed. `malformedJsonCorpus` supplies deterministic contract-fuzzing seeds.
+
+## Route and project inspection
+
+```console
+akamata routes [--json]
+akamata routes explain GET /notes/{id}
+akamata doctor [--json]
+akamata config <show|check>
+akamata test [--watch]
+akamata runner <command> [args]
+```
+
+Routes come from the non-HTTP inspection runner. `routes explain` includes operation metadata, the effective middleware chain, and declared budgets. Configuration output reveals keys and presence only, never values. Doctor checks project manifests, the entry point, deployment files, and migrations. Test wraps the project test command, while runner delegates to the generated application's typed management-command protocol; new projects include a `db-check` example.

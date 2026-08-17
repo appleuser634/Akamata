@@ -114,6 +114,8 @@ Workers WebSockets use the provided Workers/Durable Object integration pattern.
 - Request IDs, access logs, Prometheus metrics, lightweight spans, and
   `Server-Timing`
 - OpenAPI generation, typed client generation, testing client, jobs, and cron
+- Compile-time typed handler binding, lifecycle hooks, per-route resource
+  budgets, route inspection, project doctor, and schema-aware API diff
 
 Backend availability and API details are documented in the
 [Handler API](docs/en/handler-api.md), [DB backends](docs/en/db-backends.md),
