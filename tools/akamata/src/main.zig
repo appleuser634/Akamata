@@ -1387,7 +1387,32 @@ fn resourceGenerate(alloc: std.mem.Allocator, name: []const u8, args: []const [:
         if (!validIdentifier(field[0..colon]) or colon + 1 == field.len) return error.InvalidField;
         try aw.writer.print("    {s}: {s},\n", .{ field[0..colon], field[colon + 1 ..] });
     }
-    try aw.writer.print("\n    pub const __schema = .{{ .table = \"{s}s\", .primary_key = \"id\" }};\n}};\n\npub const Repo = am.model.repo({s});\n", .{ name, name });
+    try aw.writer.print(
+        "\n    pub const __schema = .{{ .table = \"{s}s\", .primary_key = \"id\" }};\n}};\n\npub const Repo = am.model.repo({s});\n\n" ++
+            "/// Typed CRUD endpoints. Instantiate with your application State and call register.\n" ++
+            "pub fn Routes(comptime State: type) type {{\n" ++
+            "    return struct {{\n" ++
+            "        const Ctx = am.Context(State);\n" ++
+            "        fn list(c: *Ctx) !void {{\n" ++
+            "            const rows = try Repo.all(c.db(), c.arena);\n" ++
+            "            try c.json(.{{ .items = rows }}, 200);\n" ++
+            "        }}\n" ++
+            "        fn create(c: *Ctx) !void {{\n" ++
+            "            const input = (try c.input({s})) orelse return;\n" ++
+            "            try c.json(try Repo.create(c.db(), c.arena, input), 201);\n" ++
+            "        }}\n" ++
+            "        const List = am.contract.Endpoint(.GET, \"/{s}s\", list, .{{\n" ++
+            "            .response = []const {s}, .operation_id = \"list_{s}s\", .tags = &.{{\"{s}s\"}},\n" ++
+            "        }});\n" ++
+            "        const Create = am.contract.Endpoint(.POST, \"/{s}s\", create, .{{\n" ++
+            "            .request = {s}, .response = {s}, .success_status = 201,\n" ++
+            "            .operation_id = \"create_{s}\", .tags = &.{{\"{s}s\"}},\n" ++
+            "        }});\n" ++
+            "        pub fn register(app: *am.App(State)) !void {{ try List.register(app); try Create.register(app); }}\n" ++
+            "    }};\n" ++
+            "}}\n",
+        .{ name, name, name, name, name, name, name, name, name, name, name, name },
+    );
     try aw.writer.flush();
     const model_path = try std.fmt.allocPrint(alloc, "src/{s}.zig", .{name});
     defer alloc.free(model_path);
