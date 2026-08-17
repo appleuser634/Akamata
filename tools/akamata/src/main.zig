@@ -253,6 +253,10 @@ fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     const alloc = arena_state.allocator();
 
     var opts: InitOpts = .{ .name = std.mem.sliceTo(args[0], 0) };
+    if (!validAppName(opts.name)) {
+        std.debug.print("init: app name must contain only ASCII letters, digits, '-' or '_'\n", .{});
+        return error.UsageError;
+    }
     for (args[1..]) |raw| {
         const a = std.mem.sliceTo(raw, 0);
         if (std.mem.startsWith(u8, a, "--target=")) {
@@ -272,11 +276,15 @@ fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     try renderFile(alloc, opts.name, "build.zig", tmpl_build_zig, &.{
         .{ .key = "{{NAME}}", .val = opts.name },
     });
-    const fingerprint_str = try std.fmt.allocPrint(alloc, "0x{x:0>16}", .{computeFingerprint(opts.name)});
+    const package_name = try alloc.dupe(u8, opts.name);
+    for (package_name) |*c| if (c.* == '-') {
+        c.* = '_';
+    };
+    const fingerprint_str = try std.fmt.allocPrint(alloc, "0x{x:0>16}", .{computeFingerprint(package_name)});
     defer alloc.free(fingerprint_str);
     try renderFile(alloc, opts.name, "build.zig.zon", tmpl_build_zon, &.{
         .{ .key = "{{NAME}}", .val = opts.name },
-        .{ .key = "{{NAME_ENUM}}", .val = opts.name },
+        .{ .key = "{{NAME_ENUM}}", .val = package_name },
         .{ .key = "{{FINGERPRINT}}", .val = fingerprint_str },
     });
     try renderFile(alloc, opts.name, "src/main.zig", tmpl_main, &.{
@@ -317,6 +325,15 @@ fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
         \\  zig build run           # native dev server
         \\
     , .{ opts.name, opts.name });
+}
+
+fn validAppName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 128) return false;
+    if (!(std.ascii.isAlphabetic(name[0]) or name[0] == '_')) return false;
+    for (name) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_')) return false;
+    }
+    return true;
 }
 
 /// Zig package fingerprint: lower 32 bits = CRC32 of the package name,
@@ -1018,6 +1035,15 @@ test "help flags are recognized before command execution" {
     try std.testing.expect(!isHelpArg("--workers"));
 }
 
+test "scaffold names are path-safe and support hyphens" {
+    try std.testing.expect(validAppName("release-smoke"));
+    try std.testing.expect(validAppName("app_2"));
+    try std.testing.expect(!validAppName("../escape"));
+    try std.testing.expect(!validAppName("bad/name"));
+    try std.testing.expect(!validAppName("2app"));
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, ".name = .{{NAME_ENUM}}") != null);
+}
+
 test "scaffold dependency is remote, pinned, and locally overridable" {
     try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, ".url = \"https://github.com/appleuser634/Akamata/archive/") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, ".hash = \"akamata-") != null);
@@ -1026,8 +1052,8 @@ test "scaffold dependency is remote, pinned, and locally overridable" {
 }
 
 test "scaffold dependency tracks the current stable release" {
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.0.1.tar.gz") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "akamata-0.0.1-uJIoIyrDpgGW_zcWhJ23IXuXNGR1Qz9T7-jhI0sKk3gg") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.0.2.tar.gz") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "akamata-0.0.2-uJIoI5T_KAFZkcv0y51rjhWLE5gk1A6Nj82GUN-GDKu8") != null);
 }
 
 test "Workers scaffold guards zero-length wasm memory access" {
