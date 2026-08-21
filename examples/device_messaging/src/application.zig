@@ -9,6 +9,7 @@ pub const State = struct {
     objects: am.storage.Store,
     jwt_secret: []const u8,
     login_secret: []const u8,
+    realtime: ?am.realtime.Service = null,
     schema_ready: bool = false,
 };
 const Ctx = am.Context(State);
@@ -20,6 +21,7 @@ pub fn register(app: *am.App(State)) !void {
     _ = try app.post("/login", login);
     _ = try app.post("/__akamata/realtime/authorize", authorizeRealtime);
     _ = try app.post("/realtime/message", realtimeMessage);
+    _ = try app.ws("/realtime/:resource", nativeRealtime);
     _ = try app.post("/records", createRecord);
     _ = try app.get("/records", listRecords);
     _ = try app.post("/reports", submitReport);
@@ -105,6 +107,73 @@ fn realtimeMessage(c: *Ctx) !void {
             .envelope = .{ .protocol_version = contracts.Protocol.protocol_version, .event_type = "signal", .payload = signal },
         }}, 200),
         .presence => return c.forbidden("client cannot publish presence"),
+    }
+}
+
+var next_connection_id: std.atomic.Value(u64) = .init(1);
+
+fn nativeRealtime(c: *Ctx) !void {
+    if (comptime am.backend != .native) return c.json(.{ .error_kind = "durable_object_gateway_required" }, 501);
+    const subject = authenticatedSubject(c) catch return c.unauthorized("invalid credential");
+    const requested = c.req.param("resource") catch return c.notFound();
+    if (!std.mem.eql(u8, requested, "default")) return c.forbidden("room access denied");
+    const room_id = try std.fmt.allocPrint(c.arena, "principal:{s}", .{subject});
+    const identity = try c.arena.dupe(u8, subject);
+    const principal_name = am.BoundedString(64).init(subject) catch return c.forbidden("principal exceeds protocol bound");
+    const principal: contracts.Principal = .{ .client = principal_name };
+    const service = c.state().realtime orelse return error.RealtimeUnavailable;
+    var connection = try am.ws.upgrade(Ctx, c, .{ .max_message_bytes = 64 * 1024 });
+    defer connection.deinit();
+    const connection_id = next_connection_id.fetchAdd(1, .monotonic);
+    const Transport = struct {
+        fn send(raw: ?*anyopaque, bytes: []const u8) am.realtime.Error!void {
+            const ws: *am.ws.Conn = @ptrCast(@alignCast(raw.?));
+            ws.sendText(bytes) catch return error.Closed;
+        }
+        fn close(raw: ?*anyopaque, details: am.realtime.Close) void {
+            const ws: *am.ws.Conn = @ptrCast(@alignCast(raw.?));
+            ws.close(details.code, details.reason);
+        }
+    };
+    const native: *am.realtime.Native = @ptrCast(@alignCast(service.backend.ptr));
+    try native.connectTransport(room_id, connection_id, identity, &connection, Transport.send, Transport.close);
+    defer native.detach(connection_id);
+    while (true) {
+        const message = connection.readMessage(c.arena) catch |err| switch (err) {
+            error.ClosedByPeer => return,
+            error.PayloadTooLarge => {
+                connection.close(1009, "message too large");
+                return;
+            },
+            error.InvalidFrame => {
+                connection.close(1007, "malformed event");
+                return;
+            },
+            else => return err,
+        };
+        if (message.opcode != .text) {
+            connection.close(1003, "text protocol required");
+            return;
+        }
+        am.realtime.handleInbound(contracts.Protocol, contracts.Principal, c.arena, service, .{
+            .connection_id = connection_id,
+            .principal = principal,
+            .logical_identity = identity,
+            .room = room_id,
+        }, message.payload, 64 * 1024, handleNativeEvent) catch |err| switch (err) {
+            error.UnsupportedVersion => connection.close(4002, "unsupported protocol version"),
+            error.UnknownEvent, error.MalformedPayload, error.MalformedEnvelope => connection.close(1007, "event rejected"),
+            error.MessageTooLarge => connection.close(1009, "message too large"),
+            else => return err,
+        };
+        if (connection.isClosed()) return;
+    }
+}
+
+fn handleNativeEvent(_: am.realtime.InboundContext(contracts.Principal), event: contracts.RealtimeEvent, responder: am.realtime.Responder(contracts.Protocol)) !void {
+    switch (event) {
+        .signal => |signal| _ = try responder.broadcastExceptSender(.{ .signal = signal }),
+        .presence => try responder.disconnect(responder.sender, .{ .code = 4003, .reason = "client cannot publish presence" }),
     }
 }
 

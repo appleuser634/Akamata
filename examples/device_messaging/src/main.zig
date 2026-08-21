@@ -11,6 +11,8 @@ pub fn main(_: std.process.Init) !void {
     var root = try std.Io.Dir.cwd().openDir(io, ".akamata-device-objects", .{ .iterate = true });
     defer root.close(io);
     var files = am.storage.filesystem.FileStore.init(allocator, io, root);
+    var realtime = am.realtime.Native.init(allocator);
+    defer realtime.deinit();
     const database = try am.db.openSqlite(allocator, "device_messaging.db");
     defer database.close();
     try application.ensureSchema(database);
@@ -18,7 +20,7 @@ pub fn main(_: std.process.Init) !void {
     defer allocator.free(jwt_secret);
     const login_secret = am.env.get(allocator, "LOGIN_SECRET") orelse try allocator.dupe(u8, "development-login-secret");
     defer allocator.free(login_secret);
-    var app = am.App(application.State).init(allocator, .{ .db = database, .objects = files.store(), .jwt_secret = jwt_secret, .login_secret = login_secret, .schema_ready = true });
+    var app = am.App(application.State).init(allocator, .{ .db = database, .objects = files.store(), .jwt_secret = jwt_secret, .login_secret = login_secret, .realtime = realtime.service(), .schema_ready = true });
     defer app.deinit();
     try application.register(&app);
     try app.serve(.{ .port = 8080 });
