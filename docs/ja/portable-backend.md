@@ -114,8 +114,8 @@ Native callback broadcastは1/10/100接続で145/178/644 ns/opでした。従来
 223 nsおよび211/256/697 nsです。WebSocket/network latencyではなくframework
 microbenchmarkです。credentialなしにDO/R2のproduction値は報告しません。
 
-ReleaseSmallの`device_messaging` referenceはNative 222,816→1,257,024 bytes、
-WASM 32,306→178,966 bytesへ増加しました。旧targetはhealthだけのcompile proof、
+ReleaseSmallの`device_messaging` referenceはNative 222,816→1,257,536 bytes、
+WASM 32,306→182,601 bytesへ増加しました。旧targetはhealthだけのcompile proof、
 新targetはJWT/SQL/Realtime/Storage/stream handlerをlinkするためcore単体の肥大化比較では
 ありませんが、実deploy costではあります。参照しないadditive moduleはZigのlazy
 analysis/dead-code eliminationでlinkされません。feature別size budgetは残課題です。

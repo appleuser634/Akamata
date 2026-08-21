@@ -142,8 +142,8 @@ not WebSocket/network latency. No live Durable Object/R2 result is reported
 without Cloudflare credentials. Existing HTTP/router benchmarks remain the
 request regression baseline.
 
-The ReleaseSmall `device_messaging` reference grew from 222,816 to 1,257,024
-bytes Native and from 32,306 to 178,966 bytes WASM. This is not core-only code
+The ReleaseSmall `device_messaging` reference grew from 222,816 to 1,257,536
+bytes Native and from 32,306 to 182,601 bytes WASM. This is not core-only code
 bloat: the old target was a health-only compile proof, while the new target
 links JWT, SQL, realtime, storage and streaming handlers. It is nevertheless a
 real deployment cost. Applications that do not reference these additive
