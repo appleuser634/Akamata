@@ -21,6 +21,7 @@ let lastD1Meta = { changes: 0, lastRowId: -1 };
 let activeEnv = null;
 const r2ops = new Map();
 let nextR2Id = 1;
+const r2lists = new Map();
 
 function stmtRegistryAlloc(entry) {
   const id = nextStmtId++;
@@ -355,11 +356,19 @@ async function instantiate(env) {
         if (!object) return -1;
         if (!object.body) return -3;
         const id = nextR2Id++;
-        r2ops.set(id, { kind: "read", reader: object.body.getReader(), pending: new Uint8Array(0), size: Number(object.range?.length ?? object.size) });
+        r2ops.set(id, {
+          kind: "read", reader: object.body.getReader(), pending: new Uint8Array(0),
+          size: Number(object.range?.length ?? object.size), etag: object.httpEtag ?? object.etag ?? "",
+          contentType: object.httpMetadata?.contentType ?? "",
+          customMetadata: JSON.stringify(object.customMetadata ?? {}),
+        });
         return id;
       } catch { return -5; }
     }),
     akamata_r2_get_size(id) { return BigInt(r2ops.get(id)?.size ?? 0); },
+    akamata_r2_get_etag(id, ptr, cap) { return copyR2String(r2ops.get(id)?.etag ?? "", ptr, cap); },
+    akamata_r2_get_content_type(id, ptr, cap) { return copyR2String(r2ops.get(id)?.contentType ?? "", ptr, cap); },
+    akamata_r2_get_custom_metadata(id, ptr, cap) { return copyR2String(r2ops.get(id)?.customMetadata ?? "", ptr, cap); },
     akamata_r2_get_read: suspending(async (id, outPtr, outCap) => {
       const op = r2ops.get(id); if (op?.kind !== "read") return -5;
       try {
@@ -383,7 +392,27 @@ async function instantiate(env) {
       const bucket = env?.[readString(bindingPtr, bindingLen)]; if (!bucket?.head) return -2n;
       try { const object = await bucket.head(readString(keyPtr, keyLen)); return object ? BigInt(object.size) : -1n; } catch { return -5n; }
     }),
+    akamata_r2_list_begin: suspending(async (bindingPtr, bindingLen, prefixPtr, prefixLen, cursorPtr, cursorLen, limit) => {
+      const bucket = env?.[readString(bindingPtr, bindingLen)]; if (!bucket?.list) return -2;
+      try {
+        const options = { prefix: readString(prefixPtr, prefixLen), limit: Math.min(Number(limit), 1000) };
+        const cursor = readString(cursorPtr, cursorLen); if (cursor) options.cursor = cursor;
+        const page = await bucket.list(options);
+        const encoded = new TextEncoder().encode(JSON.stringify(page.objects.map(o => ({ key: o.key, size: o.size, etag: o.httpEtag ?? o.etag ?? null }))));
+        const id = nextR2Id++; r2lists.set(id, encoded); return id;
+      } catch { return -5; }
+    }),
+    akamata_r2_list_len(id) { return r2lists.get(id)?.length ?? 0; },
+    akamata_r2_list_copy(id, ptr, cap) { const bytes = r2lists.get(id); if (!bytes || bytes.length > cap) return -5; writeBytes(ptr, bytes); return bytes.length; },
+    akamata_r2_list_close(id) { r2lists.delete(id); },
   };
+
+  function copyR2String(value, ptr, cap) {
+    const bytes = new TextEncoder().encode(value);
+    if (bytes.length > cap) return -5;
+    writeBytes(ptr, bytes);
+    return bytes.length;
+  }
 
   const imports = {
     akamata_env: envBridge,

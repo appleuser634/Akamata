@@ -203,6 +203,9 @@ pub fn build(b: *std.Build) void {
         "tests/security_middleware_test.zig",
         "tests/docs_examples_test.zig",
         "tests/comptime_framework_test.zig",
+        "src/storage.zig",
+        "src/realtime.zig",
+        "src/protocol_gen.zig",
     };
 
     const integration_step = b.step("integration", "build integration test (manual run)");

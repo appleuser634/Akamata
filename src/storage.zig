@@ -85,7 +85,11 @@ pub fn parseRange(value: []const u8, size: u64) !Range {
 /// semantics. The fixed buffer bounds application memory for firmware-sized
 /// and larger downloads on both Native and Workers adapters.
 pub fn serveDownload(c: anytype, store: Store, key: []const u8) !void {
-    const full = try store.head(key);
+    // Open once without a range so metadata slices can be owned by the object
+    // reader state. This avoids unsafe adapter-global scratch buffers.
+    var probe = try store.get(key, .{});
+    defer probe.body.close();
+    const full = probe.metadata;
     const requested_range = if (c.req.header("range")) |value| parseRange(value, full.size) catch {
         c.status(416);
         try c.header("content-range", try std.fmt.allocPrint(c.arena, "bytes */{d}", .{full.size}));
@@ -100,8 +104,6 @@ pub fn serveDownload(c: anytype, store: Store, key: []const u8) !void {
         c.status(412);
         return;
     }
-    var object = try store.get(key, .{ .range = requested_range });
-    defer object.body.close();
     const length = if (requested_range) |range| range.length orelse (full.size - range.offset) else full.size;
     c.status(if (requested_range != null) 206 else 200);
     try c.header("accept-ranges", "bytes");
@@ -110,10 +112,19 @@ pub fn serveDownload(c: anytype, store: Store, key: []const u8) !void {
     if (full.etag) |etag| try c.header("etag", etag);
     if (requested_range) |range| try c.header("content-range", try std.fmt.allocPrint(c.arena, "bytes {d}-{d}/{d}", .{ range.offset, range.offset + length - 1, full.size }));
     if (std.ascii.eqlIgnoreCase(c.req.method(), "HEAD")) return;
+    if (requested_range) |range| {
+        var ranged = try store.get(key, .{ .range = range });
+        defer ranged.body.close();
+        return streamDownloadBody(c, ranged.body, length);
+    }
+    return streamDownloadBody(c, probe.body, length);
+}
+
+fn streamDownloadBody(c: anytype, body: stream.Reader, length: u64) !void {
     const writer = try c.startStream(.{ .content_length = length });
     var buffer: [64 * 1024]u8 = undefined;
     while (true) {
-        const n = try object.body.read(&buffer);
+        const n = try body.read(&buffer);
         if (n == 0) break;
         try writer.writeAll(buffer[0..n]);
         try writer.flush();
