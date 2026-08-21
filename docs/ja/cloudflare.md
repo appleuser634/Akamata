@@ -43,6 +43,20 @@ wrangler deploy
 
 WS 接続 (`/rooms/:id/ws`) は JS 側で `request.headers.get("Upgrade")` を検知して直接 `CHAT_ROOM` DO にルーティング。DO 内で WS セッションを保持 + DO 内蔵 SQLite に永続化する。Zig 側の WS ハンドラは Workers モードでは呼ばれない。
 
+portable Realtimeでは`/realtime/:resource`を使います。`:resource`は信頼済みroom ID
+ではありません。WorkerはAuthorization headerを必須とし、共通Zig handler
+`POST /__akamata/realtime/authorize`へ渡します。applicationが認証・参加許可した後に
+Principalからroom/logical identityを導出します。client由来`X-Akamata-*` headerは
+破棄されます。
+
+Durable Objectは受信messageを自動転送しません。64 KiB、text、JSON envelopeを検査し、
+`AKAMATA_REALTIME_HANDLER` service binding経由でapplication handlerを呼びます。
+direct/broadcast/sender除外/disconnectの明示actionだけを適用します。
+
+`am.platform.workers.R2Store`はR2 streamとJSPIを使い64 KiB chunkで転送します。
+ただし現在のHTTP→WASM bridgeは最初に`request.arrayBuffer()`するためupload全体としては
+zero-copyではありません。R2 listとETag/custom metadata完全伝播も残課題です。
+
 ## wrangler.toml の要点
 
 ```toml

@@ -24,10 +24,17 @@ id、payload を持つ versioned envelope を生成します。未知 event は�
 `am.jobs`、Workers adapter は Cloudflare Queues を利用します。
 
 `am.realtime.Service` は ephemeral／session-oriented な経路です。typed room は
-direct send、broadcast、disconnect、presence と同一 identity の複数接続を扱います。
-Native は既存 WebSocket の send callback を登録します。Workers の
-`/realtime/:room` は hibernation API、WebSocket attachment、per-room SQLite を
-使う汎用 `AkamataRealtimeRoom` Durable Object へ routing されます。
+direct、broadcast、senderを除くbroadcast、実transport close、presence、同一
+identityの複数接続を扱います。接続時はcredential抽出→application認証→typed
+Principal→参加許可→Principalからidentity/実roomを導出、の順を必須にします。
+pathはauthorization入力であってroom keyではなく、queryやclientの
+`X-Akamata-*` headerをPrincipalとして信頼しません。
+
+受信messageはsize上限、typed decode、version検査の後にapplication handlerへ
+渡ります。Durable Objectは自動broadcastしません。handlerがdirect／broadcast／
+sender除外／disconnectを明示した場合だけ作用します。Nativeも同じdecode/handler
+contractを使い、`disconnectWithReason`はregistry cleanupだけでなく実WebSocketを
+closeします。
 
 ## Principal、binding、capability
 
@@ -50,12 +57,37 @@ transport、backend、duration、normalized error のみを記録します。
 `am.storage.Store` は put/get/delete/head/list、metadata、Range、conditional を
 共通化します。body は pull 型の `am.stream.Reader`／`Writer` で渡し buffering と
 backpressure を明示します。`parseRange` と `evaluate` は filesystem/R2 間で
-HTTP Range／ETag 判定を共有します。`am.net.Connector` は timeout と将来の TLS
+HTTP Range／ETag 判定を共有します。filesystemはpositional read、R2はJSPI越しの
+ReadableStream/WritableStreamを利用し、いずれも64 KiB chunkで転送します。
+`serveDownload`はHEAD/200/206/304/412/416、Content-Length、Content-Range、
+Accept-Rangesを扱い、固定長streamはchunk framingと混在させません。absolute、
+空segment、backslash、`..`を含むobject keyはadapter到達前に拒否します。
+`am.net.Connector` は timeout と将来の TLS
 方針を持つ portable outbound TCP contract です。
 
 `am.protocol_gen.generate` は TypeScript realtime union／envelope／WebSocket
-helper、または C struct／event metadata を生成します。C slice は pointer と長さを
-明示し runtime reflection を使いません。既存 REST TypeScript generator は互換です。
+helper、または C struct／event metadata を生成します。integer widthは`uint8_t`等へ
+予測可能にmappingし、fixed bytesはarray、bounded string/sliceはinline array+length、
+optionalはpresence flag、event payloadはtagged C unionになります。heapやruntime
+reflectionは不要です。既存 REST TypeScript generator は互換です。
+
+## Embedded向けportable reference
+
+`examples/device_messaging/src/application.zig`は両targetで共有され、login/JWT、
+persistent record、bounded report、認証済みRealtime、object upload、Range downloadを
+実装します。Native entryはSQLite/Native WS/filesystem、Workers entryはD1/DO/R2だけを
+wiringします。QueueはStateの必須依存にしていません。
+
+永続recordをcommitしてからephemeral notificationを送ってください。WebSocket通知を
+取り逃してもRESTで復元できることが原則であり、Realtimeをsource of truthにしません。
+
+## SQLite / D1 portable subset
+
+prepared statement、NULL、明示的`ORDER BY`、pagination、affected rows、insert idを
+共通範囲とします。SQLite transactionと異なり`Db.batch`のD1 fallbackはatomicでは
+ありません。atomicityが必要ならD1で保証されるworkflowまたはDOを使います。JSを
+通るD1整数は2^53-1までに制限するかtext/blobで保存してください。busy/retry、unique、
+foreign-key errorはまだ全backend共通のtyped errorへ完全正規化されていません。
 
 ## Native と Workers、現在の制約
 
@@ -63,22 +95,29 @@ helper、または C struct／event metadata を生成します。C slice は po
 |---|---|---|
 | HTTP/contract | `App(State)` | 同じ Zig API |
 | SQL | SQLite/Turso | portable `Db` 上の D1/Turso |
-| Realtime | Native adapter + 既存 WS | hibernation 対応 DO |
+| Realtime | 認証WS + typed handler | 認証gateway + hibernation DO |
 | Background | SQLite jobs adapter | Queues adapter contract |
-| Object | filesystem adapter contract | R2 adapter contract |
+| Object | streaming filesystem adapter | streaming R2 adapter |
 | TCP | native connector contract | Workers Socket contract |
 
-一部 platform adapter は contract-complete ですが end-to-end production-complete
-ではありません。Workers HTTP→WASM bridge は request 全体を buffer します。
-真の zero-copy request streaming、streaming multipart、完全な R2/Queue/TCP host
-bridge、live Cloudflare integration test は残課題です。`examples/device_messaging`
-は一つの application contract が Native／Workers 両方で compile することを検証します。
+Workers HTTP→WASM bridgeは受信request全体を現在もbufferするためzero-copyでは
+ありません。R2 list、ETag/custom metadataの完全伝播、streaming multipart、TCP実adapter、
+live WebSocket自動probeは残課題です。`zig build cloudflare-live-test`は3つの
+`AKAMATA_LIVE_*`環境変数を明示した場合だけdeployed D1/R2を確認し、通常CIはunit/mockを
+利用します。
 
 ## Performance と trade-off
 
-Apple Silicon／ReleaseFast（2026-08-21）で typed JSON event encode は 223 ns/op、
-broadcast は 1/10/100 接続で 211/256/697 ns/op でした。network throughput ではなく
-framework microbenchmark です。HTTP regression は既存 router benchmark を使います。
+Apple Silicon／ReleaseFast（2026-08-21）でtyped JSON event encodeは130 ns/op、
+Native callback broadcastは1/10/100接続で145/178/644 ns/opでした。従来記録は
+223 nsおよび211/256/697 nsです。WebSocket/network latencyではなくframework
+microbenchmarkです。credentialなしにDO/R2のproduction値は報告しません。
+
+ReleaseSmallの`device_messaging` referenceはNative 222,816→1,257,024 bytes、
+WASM 32,306→178,966 bytesへ増加しました。旧targetはhealthだけのcompile proof、
+新targetはJWT/SQL/Realtime/Storage/stream handlerをlinkするためcore単体の肥大化比較では
+ありませんが、実deploy costではあります。参照しないadditive moduleはZigのlazy
+analysis/dead-code eliminationでlinkされません。feature別size budgetは残課題です。
 
 tagged union specialization は runtime schema lookup を除く一方、event type 数に応じ
 code size と build time を増やします。platform 境界は VTable を維持し backend 実装

@@ -43,6 +43,46 @@ Set `binding = "DB"` in `[[d1_databases]]` of `deploy/wrangler.toml`. Replace `d
 
 WS connection (`/rooms/:id/ws`) detects `request.headers.get("Upgrade")` on JS side and routes directly to `CHAT_ROOM` DO. Retain WS session within DO + persist to DO built-in SQLite. The Zig side WS handler is not called in Workers mode.
 
+For the portable realtime API use `/realtime/:resource`. `:resource` is not a
+trusted room id. The Worker requires an `Authorization` header and calls the
+shared Zig `POST /__akamata/realtime/authorize` handler. That handler returns a
+Principal-derived room/logical identity only after application authorization.
+The gateway discards client `X-Akamata-*` headers before forwarding the trusted
+context to `AKAMATA_REALTIME`.
+
+Inbound messages are never automatically relayed. The hibernating Durable
+Object enforces 64 KiB/text/JSON-envelope bounds and invokes the application
+through `AKAMATA_REALTIME_HANDLER`. Only explicit direct/broadcast/
+broadcast-except/disconnect actions are applied. Configure the service binding:
+
+```toml
+[[services]]
+binding = "AKAMATA_REALTIME_HANDLER"
+service = "akamata-chat"
+```
+
+The reference uses a self service binding so the same Zig application owns
+authorization and inbound policy. Never log Authorization, source credentials,
+or payload bodies.
+
+### R2 streaming
+
+`am.platform.workers.R2Store` implements the portable Store using JSPI and R2
+streams. Zig moves at most a 64 KiB body chunk at a time after the request has
+entered the adapter. The current generic HTTP-to-WASM bridge still calls
+`request.arrayBuffer()` first, so inbound uploads are bounded but not zero-copy.
+Downloads support byte ranges through R2 and exact fixed-length HTTP streaming.
+R2 list and complete ETag/custom metadata propagation remain incomplete.
+
+Run the deployed D1/R2 opt-in smoke test with:
+
+```bash
+AKAMATA_LIVE_BASE_URL=https://example.workers.dev \
+AKAMATA_LIVE_SUBJECT=test-client \
+AKAMATA_LIVE_LOGIN_SECRET='...' \
+zig build cloudflare-live-test
+```
+
 ## Main points of wrangler.toml
 
 ```toml
