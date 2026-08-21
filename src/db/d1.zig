@@ -106,7 +106,7 @@ pub const Backend = struct {
         if (h == -2) return D1Error.BridgeNotImplemented;
         if (h < 0) return D1Error.PrepareFailed;
         const s = try self.gpa.create(StmtBackend);
-        s.* = .{ .handle = h, .gpa = self.gpa };
+        s.* = .{ .handle = h, .gpa = self.gpa, .column_allocations = .empty };
         return .{ .ptr = s, .vt = &stmt_vtable };
     }
 
@@ -124,6 +124,14 @@ const StmtBackend = struct {
     /// Whether `d1_run` has executed the query yet. The first `step()` runs it
     /// (after all binds), subsequent steps just advance the JS-side cursor.
     ran: bool = false,
+    /// D1 materialises rows in JS. Text/blob columns copied into WASM remain
+    /// valid for the statement lifetime and are reclaimed on reset/deinit.
+    column_allocations: std.ArrayList([]u8),
+
+    fn clearColumns(self: *StmtBackend) void {
+        for (self.column_allocations.items) |bytes| self.gpa.free(bytes);
+        self.column_allocations.clearRetainingCapacity();
+    }
 };
 
 fn bindStmt(ptr: *anyopaque, idx: usize, v: db_mod.Value) anyerror!void {
@@ -173,7 +181,9 @@ fn columnTextFn(ptr: *anyopaque, idx: usize) anyerror![]const u8 {
     const len = d1_column_text_len(self.handle, @intCast(idx));
     if (len == 0) return "";
     const buf = try self.gpa.alloc(u8, len);
+    errdefer self.gpa.free(buf);
     const got = d1_column_text_copy(self.handle, @intCast(idx), buf.ptr, len);
+    try self.column_allocations.append(self.gpa, buf);
     return buf[0..got];
 }
 
@@ -195,6 +205,7 @@ fn columnCountFn(ptr: *anyopaque) usize {
 fn resetStmt(ptr: *anyopaque) anyerror!void {
     const self: *StmtBackend = @ptrCast(@alignCast(ptr));
     d1_reset(self.handle);
+    self.clearColumns();
     // Re-stepping after a reset must re-run the query.
     self.ran = false;
 }
@@ -202,6 +213,8 @@ fn resetStmt(ptr: *anyopaque) anyerror!void {
 fn deinitStmt(ptr: *anyopaque) void {
     const self: *StmtBackend = @ptrCast(@alignCast(ptr));
     d1_finalize(self.handle);
+    self.clearColumns();
+    self.column_allocations.deinit(self.gpa);
     self.gpa.destroy(self);
 }
 
