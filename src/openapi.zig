@@ -524,6 +524,27 @@ fn writeJsonString(w: *std.Io.Writer, s: []const u8) !void {
 /// `#/components/schemas/...` entry).
 fn writeTypeSchema(comptime T: type, ctx: *SpecBuilder, w: *std.Io.Writer) anyerror!void {
     const info = @typeInfo(T);
+    const can_have_decls = switch (info) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => true,
+        else => false,
+    };
+    if (can_have_decls and @hasDecl(T, "contract_kind") and @hasDecl(T, "max_len")) {
+        const kind = @tagName(T.contract_kind);
+        if (std.mem.eql(u8, kind, "bounded_string")) {
+            try w.print("{{\"type\":\"string\",\"maxLength\":{d}}}", .{T.max_len});
+            return;
+        }
+        if (std.mem.eql(u8, kind, "fixed_bytes")) {
+            try w.print("{{\"type\":\"string\",\"contentEncoding\":\"base64\",\"minLength\":{d},\"maxLength\":{d}}}", .{ T.max_len, T.max_len });
+            return;
+        }
+        if (std.mem.eql(u8, kind, "bounded_slice")) {
+            try w.print("{{\"type\":\"array\",\"maxItems\":{d},\"items\":", .{T.max_len});
+            try writeTypeSchema(T.Element, ctx, w);
+            try w.writeAll("}");
+            return;
+        }
+    }
     switch (info) {
         .bool => try w.writeAll("{\"type\":\"boolean\"}"),
         .int => |i| {

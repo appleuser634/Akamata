@@ -51,6 +51,15 @@ pub const Backend = struct {
         if (rc != c.SQLITE_OK) return SqliteError.ExecFailed;
     }
 
+    fn execResultBackend(ptr: *anyopaque, sql: []const u8) anyerror!db_mod.ExecResult {
+        const self: *Backend = @ptrCast(@alignCast(ptr));
+        try execBackend(ptr, sql);
+        return .{
+            .affected_rows = @intCast(c.sqlite3_changes64(self.handle)),
+            .last_insert_id = c.sqlite3_last_insert_rowid(self.handle),
+        };
+    }
+
     fn prepareBackend(ptr: *anyopaque, sql: []const u8) anyerror!db_mod.Stmt {
         const self: *Backend = @ptrCast(@alignCast(ptr));
         var stmt: ?*c.sqlite3_stmt = null;
@@ -65,6 +74,7 @@ pub const Backend = struct {
         .prepare = prepareBackend,
         .exec = execBackend,
         .close = closeBackend,
+        .exec_result = execResultBackend,
     };
 };
 

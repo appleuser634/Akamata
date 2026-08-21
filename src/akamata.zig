@@ -35,6 +35,21 @@ pub const static_middleware = @import("static_middleware.zig");
 pub const capability = @import("capability.zig");
 pub const di = @import("di.zig");
 pub const diagnostics = @import("diagnostics.zig");
+pub const events = @import("events.zig");
+pub const binding = @import("binding.zig");
+pub const realtime = @import("realtime.zig");
+pub const queue = @import("queue.zig");
+pub const identity = @import("identity.zig");
+pub const stream = @import("stream.zig");
+pub const storage = @import("storage.zig");
+pub const net = @import("net.zig");
+pub const protocol_gen = @import("protocol_gen.zig");
+pub const platform = struct {
+    pub const workers = if (backend == .workers) @import("platform/workers.zig") else struct {};
+};
+pub const FixedBytes = contract.FixedBytes;
+pub const BoundedString = contract.BoundedString;
+pub const BoundedSlice = contract.BoundedSlice;
 
 // Built-in middlewares (new API: take comptime State)
 pub const mw = struct {
@@ -79,6 +94,7 @@ pub const mw = struct {
 
     pub const rateLimit = @import("mw/ratelimit.zig").rateLimit;
     pub const RateLimitOptions = @import("mw/ratelimit.zig").Options;
+    pub const RateLimitStore = @import("mw/ratelimit.zig").Store;
 
     pub const requestId = @import("mw/requestid.zig").requestId;
     pub const currentRequestId = @import("mw/requestid.zig").currentRequestId;
@@ -98,6 +114,9 @@ pub const observability = struct {
     pub const TraceContext = @import("observability/trace.zig").TraceContext;
     pub const Span = @import("observability/trace.zig").Span;
     pub const Backend = @import("observability/trace.zig").Backend;
+    pub const Activity = @import("observability/activity.zig").Activity;
+    pub const ActivityTransport = @import("observability/activity.zig").Transport;
+    pub const ActivityBackend = @import("observability/activity.zig").Backend;
 };
 
 // ===== Legacy (Router(App) + Ctx(App)) compatibility =====
@@ -182,6 +201,7 @@ pub const db = struct {
     pub const VTable = db_mod.VTable;
     pub const StmtVTable = db_mod.StmtVTable;
     pub const StepResult = db_mod.StepResult;
+    pub const ExecResult = db_mod.ExecResult;
     pub const Static = @import("db/static.zig").Database;
     pub const Query = @import("db/static.zig").Query;
     pub const Pool = @import("db/pool.zig").Pool;

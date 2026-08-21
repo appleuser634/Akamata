@@ -18,6 +18,19 @@ const Entry = struct {
     count: u32,
 };
 
+/// Portable atomic fixed-window state. Native memory and Workers Durable
+/// Object/D1 adapters implement this contract. `hit` must increment and return
+/// one decision atomically; Workers must not use isolate-local memory globally.
+pub const Store = struct {
+    ptr: *anyopaque,
+    hit_fn: *const fn (*anyopaque, []const u8, i64, u32, u32) anyerror!Decision,
+
+    pub const Decision = struct { count: u32, reset_in: u32 };
+    pub fn hit(self: Store, key: []const u8, now: i64, window_secs: u32, limit: u32) !Decision {
+        return self.hit_fn(self.ptr, key, now, window_secs, limit);
+    }
+};
+
 pub fn Options(comptime State: type) type {
     return struct {
         /// Returns the rate-limit key for this request. Most callers will
@@ -33,6 +46,9 @@ pub fn Options(comptime State: type) type {
         /// Amortize expired-entry cleanup rather than scanning per request.
         cleanup_interval: u32 = 64,
         now_fn: *const fn () i64 = clock.unixSeconds,
+        /// Optional process-external atomic state (Durable Object, D1, etc.).
+        /// When null, the bounded native in-memory implementation is used.
+        store: ?Store = null,
     };
 }
 
@@ -88,6 +104,12 @@ pub fn rateLimit(comptime State: type, comptime opts: Options(State)) app_mod.Mi
             const key = opts.key_fn(c);
             if (key.len == 0 or key.len > opts.max_key_bytes or opts.max_entries == 0) return reject(c, opts.window_secs);
             const now = opts.now_fn();
+
+            if (opts.store) |store| {
+                const decision = store.hit(key, now, opts.window_secs, opts.max_requests) catch return next.run(c);
+                if (decision.count > opts.max_requests) return reject(c, decision.reset_in);
+                return next.run(c);
+            }
 
             state.mu.lock();
             state.requests +%= 1;

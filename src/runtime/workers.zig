@@ -15,9 +15,15 @@ pub const FetchFn = *const fn (request_bytes: []const u8, out: *std.ArrayList(u8
 
 const page_alloc = std.heap.wasm_allocator;
 var dispatch_ptr: ?FetchFn = null;
+pub const QueueFn = *const fn (message_bytes: []const u8) anyerror!void;
+var queue_dispatch_ptr: ?QueueFn = null;
 
 pub fn setDispatch(f: FetchFn) void {
     dispatch_ptr = f;
+}
+
+pub fn setQueueDispatch(f: QueueFn) void {
+    queue_dispatch_ptr = f;
 }
 
 export fn alloc(len: usize) usize {
@@ -54,6 +60,16 @@ export fn handle_fetch(req_ptr: usize, req_len: usize) usize {
 
 export fn last_response_length() usize {
     return last_response_len;
+}
+
+/// Consume one serialized Cloudflare Queue message. A non-zero result asks
+/// the JS handler to retry the message; successful messages are acknowledged.
+export fn handle_queue(message_ptr: usize, message_len: usize) i32 {
+    if (message_ptr == 0) return -1;
+    const dispatch = queue_dispatch_ptr orelse return -2;
+    const ptr: [*]const u8 = @ptrFromInt(message_ptr);
+    dispatch(ptr[0..message_len]) catch return -1;
+    return 0;
 }
 
 // === JS-side reentrancy support ===

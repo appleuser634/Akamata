@@ -16,6 +16,7 @@ let jspi_supported = false;
 // === D1 statement registry ===
 const d1stmts = new Map();
 let nextStmtId = 1;
+let lastD1Meta = { changes: 0, lastRowId: -1 };
 let activeEnv = null;
 
 function stmtRegistryAlloc(entry) {
@@ -225,13 +226,19 @@ async function instantiate(env) {
         // for the rationale (D1 .exec requires ; + \n separation that our DDL
         // emitter doesn't produce).
         const sql = readString(sql_ptr, sql_len);
-        await d1.prepare(sql).run();
+        const result = await d1.prepare(sql).run();
+        lastD1Meta = {
+          changes: Number(result?.meta?.changes ?? result?.meta?.rows_written ?? 0),
+          lastRowId: Number(result?.meta?.last_row_id ?? -1),
+        };
         return 0;
       } catch (e) {
         console.error("d1_exec failed:", e?.message ?? e);
         return -3;
       }
     }),
+    d1_affected_rows() { return BigInt(lastD1Meta.changes); },
+    d1_last_insert_id() { return BigInt(lastD1Meta.lastRowId); },
   };
 
   // --- akamata_http: outbound HTTP via JS fetch() (used by Turso/libsql, …) ---
@@ -290,10 +297,28 @@ async function instantiate(env) {
     }),
   };
 
+  const queueBridge = {
+    akamata_queue_send: suspending(async (bindingPtr, bindingLen, metaPtr, metaLen, payloadPtr, payloadLen) => {
+      const binding = readString(bindingPtr, bindingLen);
+      const producer = env?.[binding];
+      if (!producer || typeof producer.send !== "function") return -2;
+      try {
+        const metadata = JSON.parse(readString(metaPtr, metaLen));
+        const payload = JSON.parse(readString(payloadPtr, payloadLen));
+        await producer.send({ ...metadata, payload });
+        return 0;
+      } catch (error) {
+        console.error(JSON.stringify({ message: "queue enqueue failed", binding, error: error instanceof Error ? error.message : String(error) }));
+        return -1;
+      }
+    }),
+  };
+
   const imports = {
     akamata_env: envBridge,
     akamata_d1: d1Bridge,
     akamata_http: httpBridge,
+    akamata_queue: queueBridge,
   };
 
   instance = await WebAssembly.instantiate(wasm, imports);
@@ -322,6 +347,10 @@ export default {
       const obj = env.CHAT_ROOM.get(id);
       return obj.fetch(request);
     }
+    const realtimeMatch = url.pathname.match(/^\/realtime\/([^/]+)$/);
+    if (realtimeMatch && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+      return env.AKAMATA_REALTIME.getByName(decodeURIComponent(realtimeMatch[1])).fetch(request);
+    }
 
     const bodyBuf = new Uint8Array(await request.arrayBuffer());
     const headers = [];
@@ -345,6 +374,34 @@ export default {
     exports_ref.dealloc(respPtr, respLen);
 
     return parseHttpResponse(respBytes);
+  },
+  async queue(batch, env) {
+    activeEnv = env;
+    await instantiate(env);
+    if (typeof exports_ref.handle_queue !== "function") {
+      for (const message of batch.messages) message.retry();
+      return;
+    }
+    const consume = jspi_supported ? WebAssembly.promising(exports_ref.handle_queue) : exports_ref.handle_queue;
+    for (const message of batch.messages) {
+      const bytes = new TextEncoder().encode(JSON.stringify({
+        body: message.body,
+        event_id: message.id,
+        attempt: message.attempts,
+        timestamp: message.timestamp.toISOString(),
+      }));
+      const ptr = exports_ref.alloc(bytes.length);
+      writeBytes(ptr, bytes);
+      try {
+        const rc = await consume(ptr, bytes.length);
+        if (rc === 0) message.ack(); else message.retry();
+      } catch (error) {
+        console.error(JSON.stringify({ message: "queue consumer failed", event_id: message.id, error: error instanceof Error ? error.message : String(error) }));
+        message.retry();
+      } finally {
+        exports_ref.dealloc(ptr, bytes.length);
+      }
+    }
   },
 };
 
@@ -372,3 +429,4 @@ function findHeaderEnd(bytes) {
 }
 
 export { ChatRoom } from "./chat_room.mjs";
+export { AkamataRealtimeRoom } from "./realtime_object.mjs";

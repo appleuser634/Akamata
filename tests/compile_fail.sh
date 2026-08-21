@@ -27,3 +27,5 @@ run_case incomplete_error_map 'missing HTTP mapping for handler error Unavailabl
 run_case unsupported_capability 'target workers does not provide it'
 run_case di_missing 'missing dependency provider'
 run_case di_cycle 'dependency cycle includes'
+run_case native_r2_binding 'target native does not provide it'
+run_case untagged_protocol 'realtime protocols must be tagged unions'

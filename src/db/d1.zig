@@ -68,6 +68,8 @@ extern "akamata_d1" fn d1_column_is_null(stmt: i32, idx: i32) i32;
 extern "akamata_d1" fn d1_reset(stmt: i32) void;
 extern "akamata_d1" fn d1_finalize(stmt: i32) void;
 extern "akamata_d1" fn d1_exec(sql_ptr: [*]const u8, sql_len: usize) i32;
+extern "akamata_d1" fn d1_affected_rows() i64;
+extern "akamata_d1" fn d1_last_insert_id() i64;
 
 pub const Backend = struct {
     gpa: std.mem.Allocator,
@@ -92,6 +94,12 @@ pub const Backend = struct {
         };
     }
 
+    fn execResultBackend(ptr: *anyopaque, sql: []const u8) anyerror!db_mod.ExecResult {
+        try execBackend(ptr, sql);
+        const inserted = d1_last_insert_id();
+        return .{ .affected_rows = @intCast(@max(d1_affected_rows(), 0)), .last_insert_id = if (inserted < 0) null else inserted };
+    }
+
     fn prepareBackend(ptr: *anyopaque, sql: []const u8) anyerror!db_mod.Stmt {
         const self: *Backend = @ptrCast(@alignCast(ptr));
         const h = d1_prepare(sql.ptr, sql.len);
@@ -106,6 +114,7 @@ pub const Backend = struct {
         .prepare = prepareBackend,
         .exec = execBackend,
         .close = closeBackend,
+        .exec_result = execResultBackend,
     };
 };
 

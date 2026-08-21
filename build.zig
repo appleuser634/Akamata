@@ -1,14 +1,14 @@
 const std = @import("std");
 
 pub const Backend = enum { native, workers };
-pub const Example = enum { chat, guestbook, bench, tasks };
+pub const Example = enum { chat, guestbook, bench, tasks, device_messaging };
 pub const BenchRouter = enum { runtime, static };
 pub const BenchRouteKind = enum { static, parameter, wildcard };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const backend = b.option(Backend, "backend", "deployment backend (native | workers)") orelse .native;
-    const example = b.option(Example, "example", "which example to build (chat | guestbook | bench | tasks)") orelse .chat;
+    const example = b.option(Example, "example", "which example to build (chat | guestbook | bench | tasks | device_messaging)") orelse .chat;
     // OpenSSL is opt-in and only needed for FCM RS256 signing. The HTTPS
     // client and Turso path now use std.crypto.tls — no OpenSSL needed.
     // Enable with `-Dopenssl=true` if you build the FCM push example.
@@ -77,12 +77,14 @@ pub fn build(b: *std.Build) void {
         },
         .bench => "examples/bench/src/main.zig",
         .tasks => "examples/tasks/src/main.zig",
+        .device_messaging => if (backend == .workers) "examples/device_messaging/src/worker.zig" else "examples/device_messaging/src/main.zig",
     };
     const example_name = switch (example) {
         .chat => if (backend == .workers) "chat_worker" else "chat",
         .guestbook => if (backend == .workers) "guestbook_worker" else "guestbook",
         .bench => "bench",
         .tasks => "tasks",
+        .device_messaging => if (backend == .workers) "device_messaging_worker" else "device_messaging",
     };
 
     const exe = b.addExecutable(.{
@@ -145,6 +147,17 @@ pub fn build(b: *std.Build) void {
     const router_bench_exe = b.addExecutable(.{ .name = "router-bench", .root_module = router_bench_mod });
     const install_router_bench = b.addInstallArtifact(router_bench_exe, .{});
     b.step("router-bench", "build the route/middleware scaling benchmark").dependOn(&install_router_bench.step);
+
+    const portable_bench_mod = b.createModule(.{
+        .root_source_file = b.path("benchmark/portable.zig"),
+        .target = native_target,
+        .optimize = .ReleaseFast,
+        .imports = &.{.{ .name = "akamata", .module = am_mod }},
+    });
+    portable_bench_mod.link_libc = true;
+    const portable_bench_exe = b.addExecutable(.{ .name = "portable-bench", .root_module = portable_bench_mod });
+    const run_portable_bench = b.addRunArtifact(portable_bench_exe);
+    b.step("portable-bench", "benchmark typed events and realtime fan-out").dependOn(&run_portable_bench.step);
 
     // End-to-end scaffold regression test. Kept as an explicit step because
     // the default scaffold resolves its commit-pinned dependency over HTTPS.

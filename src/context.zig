@@ -236,6 +236,7 @@ pub fn Context(comptime State: type) type {
         /// Reserved for middleware-to-handler data passing (e.g. JWT claims).
         user_data: ?*anyopaque = null,
         auth_data: ?*anyopaque = null,
+        principal_data: ?*anyopaque = null,
         session_data: ?*anyopaque = null,
         /// State owned by the currently executing middleware registration.
         /// Middleware factories use this to keep mutable state App-local.
@@ -251,6 +252,20 @@ pub fn Context(comptime State: type) type {
 
         pub fn state(self: *Self) *State {
             return self.app_state;
+        }
+
+        /// Attach a typed browser/device/service principal for this request.
+        /// Storage is request-owned; existing JWT auth_data remains intact.
+        pub fn setPrincipal(self: *Self, value_to_attach: anytype) !void {
+            const T = @TypeOf(value_to_attach);
+            const value = try self.arena.create(T);
+            value.* = value_to_attach;
+            self.principal_data = value;
+        }
+
+        pub fn principal(self: *Self, comptime T: type) ?*const T {
+            const erased = self.principal_data orelse return null;
+            return @ptrCast(@alignCast(erased));
         }
 
         /// Explicit name for the allocator whose allocations live until the

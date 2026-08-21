@@ -16,6 +16,7 @@ pub const DbError = error{
 };
 
 pub const StepResult = enum { row, done };
+pub const ExecResult = struct { affected_rows: u64 = 0, last_insert_id: ?i64 = null };
 
 pub const StmtVTable = struct {
     bind: *const fn (ptr: *anyopaque, idx: usize, v: Value) anyerror!void,
@@ -136,6 +137,7 @@ pub const VTable = struct {
     prepare: *const fn (ptr: *anyopaque, sql: []const u8) anyerror!Stmt,
     exec: *const fn (ptr: *anyopaque, sql: []const u8) anyerror!void,
     close: *const fn (ptr: *anyopaque) void,
+    exec_result: ?*const fn (ptr: *anyopaque, sql: []const u8) anyerror!ExecResult = null,
 };
 
 pub const Db = struct {
@@ -164,6 +166,20 @@ pub const Db = struct {
             return err;
         };
         self.trace.?.recordDb(self.backend, .exec, clock.elapsedNs(t0), false);
+    }
+    pub fn execResult(self: Db, sql: []const u8) !ExecResult {
+        if (self.vt.exec_result) |run| return run(self.ptr, sql);
+        try self.exec(sql);
+        return .{};
+    }
+
+    /// Execute independent statements in order. D1 adapters may specialize
+    /// this into one platform batch; the portable fallback preserves errors.
+    pub fn batch(self: Db, allocator: std.mem.Allocator, statements: []const []const u8) ![]ExecResult {
+        const results = try allocator.alloc(ExecResult, statements.len);
+        errdefer allocator.free(results);
+        for (statements, 0..) |sql, i| results[i] = try self.execResult(sql);
+        return results;
     }
     pub fn execAll(self: Db, script: []const u8) !void {
         // sqlite3_exec is a real script engine and correctly handles trigger

@@ -1,5 +1,9 @@
 //! Compile-time endpoint contracts and typed request inputs.
 const std = @import("std");
+
+pub const FixedBytes = @import("contract/bounded.zig").FixedBytes;
+pub const BoundedString = @import("contract/bounded.zig").BoundedString;
+pub const BoundedSlice = @import("contract/bounded.zig").BoundedSlice;
 const openapi = @import("openapi.zig");
 const context = @import("context.zig");
 

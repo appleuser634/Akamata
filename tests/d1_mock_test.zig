@@ -28,3 +28,17 @@ test "Value union round-trips through Db vtable" {
     try std.testing.expectEqualStrings("hello", try sel.columnText(2));
     try std.testing.expectEqualStrings("\x00\x01\x02", try sel.columnBlob(3));
 }
+
+test "portable exec result and batch expose write metadata" {
+    const alloc = std.testing.allocator;
+    var db = try am.db.openSqlite(alloc, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT UNIQUE)");
+    const result = try db.execResult("INSERT INTO records(value) VALUES('one')");
+    try std.testing.expectEqual(@as(u64, 1), result.affected_rows);
+    try std.testing.expect(result.last_insert_id != null);
+    const results = try db.batch(alloc, &.{ "INSERT INTO records(value) VALUES('two')", "UPDATE records SET value='three' WHERE value='two'" });
+    defer alloc.free(results);
+    try std.testing.expectEqual(@as(usize, 2), results.len);
+    try std.testing.expectEqual(@as(u64, 1), results[1].affected_rows);
+}

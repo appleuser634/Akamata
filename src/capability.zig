@@ -12,9 +12,14 @@ pub const Kind = enum {
     d1,
     durable_objects,
     outbound_http,
+    outbound_tcp,
+    r2,
+    queues,
     websocket,
     persistent_disk,
+    persistent_storage,
     crypto_random,
+    web_crypto,
 };
 
 pub const Set = struct {
@@ -43,7 +48,7 @@ pub fn require(comptime package_name: []const u8, comptime capabilities: Set, co
 pub fn available(comptime target: Target, comptime kind: Kind) bool {
     return switch (target) {
         .native => switch (kind) {
-            .d1, .durable_objects => false,
+            .d1, .durable_objects, .r2, .queues, .web_crypto => false,
             else => true,
         },
         .workers => switch (kind) {
@@ -51,7 +56,7 @@ pub fn available(comptime target: Target, comptime kind: Kind) bool {
             else => true,
         },
         .containers => switch (kind) {
-            .d1, .durable_objects => false,
+            .d1, .durable_objects, .r2, .queues, .web_crypto => false,
             else => true,
         },
     };
