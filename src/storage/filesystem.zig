@@ -51,7 +51,7 @@ pub const FileStore = struct {
             };
             if (storage.evaluate(old.etag, null, options.if_match) != .send) return error.PreconditionFailed;
         }
-        if (std.fs.path.dirname(key)) |parent| self.root.makePath(self.io, parent) catch return error.BackendFailure;
+        if (std.fs.path.dirname(key)) |parent| self.root.createDirPath(self.io, parent) catch return error.BackendFailure;
         var file = self.root.createFile(self.io, key, .{ .resolve_beneath = true }) catch return error.BackendFailure;
         defer file.close(self.io);
         defer body.close();

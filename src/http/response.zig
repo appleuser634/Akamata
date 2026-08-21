@@ -1,6 +1,7 @@
 const std = @import("std");
 const status = @import("status.zig");
 const ChunkedWriter = @import("chunked.zig").ChunkedWriter;
+const FixedLengthWriter = @import("fixed_length.zig").FixedLengthWriter;
 
 pub const Header = struct {
     name: []const u8,
@@ -21,6 +22,8 @@ pub const StreamError = error{
     /// requires its own ReadableStream bridge — falling back here would
     /// silently produce truncated responses, so we fail loudly instead.
     UnsupportedOnTarget,
+    /// Content-Length and Transfer-Encoding must never be combined.
+    ConflictingFraming,
 };
 
 pub const StreamOptions = struct {
@@ -29,6 +32,9 @@ pub const StreamOptions = struct {
     /// flushed. Set them on `res` before calling `startStream`.
     /// content-type defaults to "application/octet-stream" if not set.
     content_type: ?[]const u8 = null,
+    /// When present, bytes are written without chunk framing and the writer
+    /// fails if the handler emits more or fewer bytes than promised.
+    content_length: ?u64 = null,
 };
 
 /// RFC 9110 §5.6.2 — token chars: `! # $ % & ' * + - . ^ _ ` | ~` + alnum.
@@ -77,6 +83,7 @@ pub const Response = struct {
     /// Once non-null, the response has committed to chunked streaming;
     /// `writeTo` becomes a no-op (the server only calls `endStream`).
     streaming: ?*ChunkedWriter = null,
+    fixed_streaming: ?*FixedLengthWriter = null,
 
     pub fn init(arena: std.mem.Allocator) Response {
         return .{ .arena = arena };
@@ -90,7 +97,7 @@ pub const Response = struct {
     /// only known to the handler, and pipelining a follow-up request on
     /// the same connection would race with the chunked terminator.
     pub fn startStream(self: *Response, opts: StreamOptions) !*std.Io.Writer {
-        if (self.streaming != null) return StreamError.AlreadyStreaming;
+        if (self.streaming != null or self.fixed_streaming != null) return StreamError.AlreadyStreaming;
         if (self.body.items.len > 0) return StreamError.AlreadyStreaming;
         const sw = self.socket_writer orelse return StreamError.UnsupportedOnTarget;
 
@@ -99,12 +106,17 @@ pub const Response = struct {
         // Ensure transfer-encoding: chunked and (optionally) content-type
         // are set, but only if the caller didn't pre-set them.
         var saw_te = false;
+        var saw_length = false;
         var saw_ct = false;
         for (self.headers.items) |h| {
             if (eqlIgnoreCase(h.name, "transfer-encoding")) saw_te = true;
+            if (eqlIgnoreCase(h.name, "content-length")) saw_length = true;
             if (eqlIgnoreCase(h.name, "content-type")) saw_ct = true;
         }
-        if (!saw_te) try self.header("transfer-encoding", "chunked");
+        if ((opts.content_length != null and saw_te) or (opts.content_length == null and saw_length))
+            return StreamError.ConflictingFraming;
+        if (opts.content_length == null and !saw_te) try self.header("transfer-encoding", "chunked");
+        if (opts.content_length) |length| if (!saw_length) try self.setHeaderFmt("content-length", "{d}", .{length});
         if (!saw_ct) {
             const ct = opts.content_type orelse "application/octet-stream";
             try self.header("content-type", ct);
@@ -122,6 +134,13 @@ pub const Response = struct {
         try sw.writeAll("\r\n");
         try sw.flush();
 
+        if (opts.content_length) |length| {
+            const fixed_buffer = try self.arena.alloc(u8, 8 * 1024);
+            const fixed = try self.arena.create(FixedLengthWriter);
+            fixed.* = FixedLengthWriter.init(sw, fixed_buffer, length);
+            self.fixed_streaming = fixed;
+            return &fixed.writer;
+        }
         // Allocate the ChunkedWriter + its buffer in the per-request arena.
         const cw_buf = try self.arena.alloc(u8, 8 * 1024);
         const cw = try self.arena.create(ChunkedWriter);
@@ -133,6 +152,7 @@ pub const Response = struct {
     /// Finalize a streaming response. Idempotent. Called by the server
     /// after the handler returns; handlers don't need to call this.
     pub fn endStream(self: *Response) !void {
+        if (self.fixed_streaming) |fixed| return fixed.end();
         const cw = self.streaming orelse return;
         try cw.end();
     }
@@ -189,7 +209,7 @@ pub const Response = struct {
     /// No-op when streaming: the status line + headers + chunks have already
     /// been written directly to the socket.
     pub fn writeTo(self: *Response, w: anytype) !void {
-        if (self.streaming != null) return;
+        if (self.streaming != null or self.fixed_streaming != null) return;
         const wire_status: u16 = if (validStatus(self.status_code)) self.status_code else 500;
         const code: status.Code = @enumFromInt(wire_status);
         try w.print("HTTP/1.1 {d} {s}\r\n", .{ wire_status, code.phrase() });

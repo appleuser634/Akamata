@@ -2,6 +2,7 @@
 //! to this VTable; metadata and range semantics stay application-facing.
 const std = @import("std");
 const stream = @import("stream.zig");
+const mime = @import("http/mime.zig");
 
 pub const Error = error{ NotFound, InvalidRange, PreconditionFailed, PermissionDenied, Unavailable, BackendFailure };
 pub const Range = struct { offset: u64, length: ?u64 = null };
@@ -105,11 +106,11 @@ pub fn serveDownload(c: anytype, store: Store, key: []const u8) !void {
     c.status(if (requested_range != null) 206 else 200);
     try c.header("accept-ranges", "bytes");
     try c.header("content-length", try std.fmt.allocPrint(c.arena, "{d}", .{length}));
-    try c.header("content-type", full.content_type orelse "application/octet-stream");
+    try c.header("content-type", full.content_type orelse mime.fromExt(key));
     if (full.etag) |etag| try c.header("etag", etag);
     if (requested_range) |range| try c.header("content-range", try std.fmt.allocPrint(c.arena, "bytes {d}-{d}/{d}", .{ range.offset, range.offset + length - 1, full.size }));
     if (std.ascii.eqlIgnoreCase(c.req.method(), "HEAD")) return;
-    const writer = try c.startStream(.{});
+    const writer = try c.startStream(.{ .content_length = length });
     var buffer: [64 * 1024]u8 = undefined;
     while (true) {
         const n = try object.body.read(&buffer);
