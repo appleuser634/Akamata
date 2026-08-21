@@ -124,9 +124,10 @@ the statement and are reclaimed on reset/deinit.
 
 The Workers HTTP-to-WASM bridge still buffers the full incoming request before
 Zig dispatch, so upload memory is bounded by the application's request limit
-but is not zero-copy. R2 `list` and complete ETag/custom-metadata propagation
-are not implemented by the Zig adapter yet. Filesystem content type currently
-falls back to extension inference. Streaming multipart, complete TCP adapters,
+but is not zero-copy. R2 `get` propagates ETag/content type/custom metadata and
+bounded `list` pages; its legacy `head` path currently returns size only.
+Filesystem stores ETag/content/custom metadata in internal sidecars and hides
+them from listings. Streaming multipart, complete TCP adapters,
 and automated live-WebSocket probing remain follow-up work. The opt-in
 `zig build cloudflare-live-test` exercises deployed D1 and R2 only when its
 three `AKAMATA_LIVE_*` variables are provided; default CI uses unit/mocks.

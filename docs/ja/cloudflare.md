@@ -56,7 +56,9 @@ direct/broadcast/sender除外/disconnectの明示actionだけを適用します�
 
 `am.platform.workers.R2Store`はR2 streamとJSPIを使い64 KiB chunkで転送します。
 ただし現在のHTTP→WASM bridgeは最初に`request.arrayBuffer()`するためupload全体としては
-zero-copyではありません。R2 listとETag/custom metadata完全伝播も残課題です。
+zero-copyではありません。`get`はETag/Content-Type/custom metadataを伝播し、`list`は
+bounded pageを返します。既存`head`のR2実装はsizeのみなのでconditional metadataが
+必要な場合は`serveDownload`または`get`を使います。
 
 ## wrangler.toml の要点
 

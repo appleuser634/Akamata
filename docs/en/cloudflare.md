@@ -73,7 +73,9 @@ streams. Zig moves at most a 64 KiB body chunk at a time after the request has
 entered the adapter. The current generic HTTP-to-WASM bridge still calls
 `request.arrayBuffer()` first, so inbound uploads are bounded but not zero-copy.
 Downloads support byte ranges through R2 and exact fixed-length HTTP streaming.
-R2 list and complete ETag/custom metadata propagation remain incomplete.
+`get` propagates ETag, Content-Type and custom metadata, and `list` returns a
+bounded page. The legacy `head` return shape exposes size only on R2; use
+`serveDownload`/`get` when conditional metadata is required.
 
 Run the deployed D1/R2 opt-in smoke test with:
 

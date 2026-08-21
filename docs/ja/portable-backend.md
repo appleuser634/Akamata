@@ -101,8 +101,9 @@ foreign-key errorはまだ全backend共通のtyped errorへ完全正規化され
 | TCP | native connector contract | Workers Socket contract |
 
 Workers HTTP→WASM bridgeは受信request全体を現在もbufferするためzero-copyでは
-ありません。R2 list、ETag/custom metadataの完全伝播、streaming multipart、TCP実adapter、
-live WebSocket自動probeは残課題です。`zig build cloudflare-live-test`は3つの
+ありません。R2 `get`はETag/content/custom metadata、bounded `list`を実装しましたが
+既存`head`はsizeのみです。filesystem metadataは内部sidecarへ保持しlistから隠します。
+streaming multipart、TCP実adapter、live WebSocket自動probeは残課題です。`zig build cloudflare-live-test`は3つの
 `AKAMATA_LIVE_*`環境変数を明示した場合だけdeployed D1/R2を確認し、通常CIはunit/mockを
 利用します。
 
