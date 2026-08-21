@@ -1,4 +1,5 @@
-// Cloudflare Workers entry for the chat example, with full D1 support via JSPI.
+// Cloudflare Workers entry for the selected Akamata application, with D1/R2/
+// Queue/Realtime support via JSPI.
 //
 // JSPI (JavaScript Promise Integration) lets async imports look synchronous
 // to wasm/Zig: we wrap each D1 call with `new WebAssembly.Suspending(fn)` and
@@ -8,7 +9,7 @@
 // Net effect: Zig handlers call `db.prepare(...).step()` against D1 with the
 // exact same code path used for SQLite/Turso.
 
-import wasm from "../../zig-out/bin/chat_worker.wasm";
+import wasm from "../../zig-out/bin/akamata_worker.wasm";
 
 let instance, memory, exports_ref, handleFetchAsync;
 let jspi_supported = false;

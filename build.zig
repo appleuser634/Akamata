@@ -100,6 +100,9 @@ pub fn build(b: *std.Build) void {
     if (backend == .workers) {
         exe.entry = .disabled;
         exe.rdynamic = true;
+        // Stable deployment alias: the selected Workers example supplies the
+        // application WASM without coupling the JS bridge to `chat`.
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(exe.getEmittedBin(), .bin, "akamata_worker.wasm").step);
     }
     b.installArtifact(exe);
 

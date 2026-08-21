@@ -20,7 +20,8 @@ wrangler deploy
 
 ## Cloudflare Workers (WASM)
 
-JS 薄ラッパーが `chat_worker.wasm` をロードしてリクエストを送り込む。
+JS薄ラッパーは`-Dexample=...`で選択したWorkers applicationの安定alias
+`akamata_worker.wasm`をロードしてリクエストを送り込む。
 
 ```bash
 zig build -Dbackend=workers -Doptimize=ReleaseSmall

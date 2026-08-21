@@ -20,7 +20,8 @@ Attention:
 
 ## Cloudflare Workers (WASM)
 
-JS thin wrapper loads `chat_worker.wasm` and sends the request.
+The JS thin wrapper loads `akamata_worker.wasm`, a stable alias produced for
+the Workers example selected by `-Dexample=...`, and dispatches the request.
 
 ```bash
 zig build -Dbackend=workers -Doptimize=ReleaseSmall
