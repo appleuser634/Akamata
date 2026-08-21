@@ -225,20 +225,35 @@ pub const Native = struct {
     fn broadcast(ptr: *anyopaque, room: []const u8, bytes: []const u8, except: ?ConnectionId) Error!usize {
         const self: *Native = @ptrCast(@alignCast(ptr));
         const Target = struct { ctx: ?*anyopaque, send_fn: SendFn };
-        var targets: std.ArrayList(Target) = .empty;
-        defer targets.deinit(self.allocator);
+        var stack_targets: [128]Target = undefined;
+        var heap_targets: ?[]Target = null;
+        defer if (heap_targets) |items| self.allocator.free(items);
         self.mutex.lock();
-        var it = self.connections.iterator();
-        while (it.next()) |entry| {
+        var count: usize = 0;
+        var first_pass = self.connections.iterator();
+        while (first_pass.next()) |entry| {
             if (except == entry.key_ptr.* or !std.mem.eql(u8, entry.value_ptr.room, room)) continue;
-            targets.append(self.allocator, .{ .ctx = entry.value_ptr.ctx, .send_fn = entry.value_ptr.send_fn }) catch {
+            if (count < stack_targets.len) stack_targets[count] = .{ .ctx = entry.value_ptr.ctx, .send_fn = entry.value_ptr.send_fn };
+            count += 1;
+        }
+        const targets = if (count <= stack_targets.len) stack_targets[0..count] else blk: {
+            const allocated = self.allocator.alloc(Target, count) catch {
                 self.mutex.unlock();
                 return error.Backpressure;
             };
-        }
+            heap_targets = allocated;
+            var index: usize = 0;
+            var second_pass = self.connections.iterator();
+            while (second_pass.next()) |entry| {
+                if (except == entry.key_ptr.* or !std.mem.eql(u8, entry.value_ptr.room, room)) continue;
+                allocated[index] = .{ .ctx = entry.value_ptr.ctx, .send_fn = entry.value_ptr.send_fn };
+                index += 1;
+            }
+            break :blk allocated;
+        };
         self.mutex.unlock();
         var delivered: usize = 0;
-        for (targets.items) |target| {
+        for (targets) |target| {
             target.send_fn(target.ctx, bytes) catch continue;
             delivered += 1;
         }
