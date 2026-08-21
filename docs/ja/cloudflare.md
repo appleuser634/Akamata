@@ -54,11 +54,21 @@ Durable Objectは受信messageを自動転送しません。64 KiB、text、JSON
 `AKAMATA_REALTIME_HANDLER` service binding経由でapplication handlerを呼びます。
 direct/broadcast/sender除外/disconnectの明示actionだけを適用します。
 
-`am.platform.workers.R2Store`はR2 streamとJSPIを使い64 KiB chunkで転送します。
-ただし現在のHTTP→WASM bridgeは最初に`request.arrayBuffer()`するためupload全体としては
-zero-copyではありません。`get`はETag/Content-Type/custom metadataを伝播し、`list`は
+`worker/realtime_handler.mjs`を`wrangler.realtime-handler.toml`で別Workerとして
+deployし、gatewayからnamed entrypoint `AkamataRealtimeApplication`へbindingします。
+handler Workerのdefault entrypointは常に404です。公開gatewayへのself bindingは
+使用しません。
+
+`am.platform.workers.R2Store`はJSPIを使います。現在のHTTP→WASM bridgeは最初に
+`request.arrayBuffer()`し、uploadはapplication上限まで集約するためzero-copyでは
+ありません。downloadも64 KiBずつreadしますが最終responseはWASM memoryへ集約します。
+`get`はETag/Content-Type/custom metadataを伝播し、`list`は
 bounded pageを返します。既存`head`のR2実装はsizeのみなのでconditional metadataが
 必要な場合は`serveDownload`または`get`を使います。
+
+optional live testはD1 write/read、R2 put/Range 206、認証済み2接続DO WebSocket relay、
+内部routeの公開拒否を検証します。Nativeの長時間WebSocket loopでは
+`am.realtime.MessageArena`を使い、各frame処理後にresetしてください。
 
 ## wrangler.toml の要点
 

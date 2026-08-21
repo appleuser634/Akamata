@@ -31,6 +31,12 @@ pub fn register(app: *am.App(State)) !void {
 }
 
 fn ensureSchemaMiddleware(c: *Ctx, next: am.Next(State)) anyerror!void {
+    // Realtime control-plane handlers run through a named service entrypoint
+    // and do not touch the application database. Avoid introducing D1 I/O
+    // into the Durable Object message path (and a self-service dependency).
+    if (std.mem.eql(u8, c.req.path(), "/realtime/message") or
+        std.mem.eql(u8, c.req.path(), "/__akamata/realtime/authorize"))
+        return next.run(c);
     if (!c.state().schema_ready) {
         try ensureSchema(c.state().db);
         c.state().schema_ready = true;
@@ -102,10 +108,14 @@ fn realtimeMessage(c: *Ctx) !void {
         else => return c.badRequest("malformed or unknown event"),
     };
     switch (event) {
-        .signal => |signal| try c.json(&.{.{
-            .kind = "broadcast_except_sender",
-            .envelope = .{ .protocol_version = contracts.Protocol.protocol_version, .event_type = "signal", .payload = signal },
-        }}, 200),
+        .signal => |signal| {
+            const envelope = try contracts.Protocol.encode(c.arena, .{ .signal = signal }, .{});
+            c.status(200);
+            try c.header("content-type", "application/json");
+            try c.body("[{\"kind\":\"broadcast_except_sender\",\"envelope\":");
+            try c.body(envelope);
+            try c.body("}]");
+        },
         .presence => return c.forbidden("client cannot publish presence"),
     }
 }
@@ -138,8 +148,12 @@ fn nativeRealtime(c: *Ctx) !void {
     const native: *am.realtime.Native = @ptrCast(@alignCast(service.backend.ptr));
     try native.connectTransport(room_id, connection_id, identity, &connection, Transport.send, Transport.close);
     defer native.detach(connection_id);
+    var message_arena = am.realtime.MessageArena.init(c.app().?.gpa);
+    defer message_arena.deinit();
     while (true) {
-        const message = connection.readMessage(c.arena) catch |err| switch (err) {
+        message_arena.reset();
+        const message_allocator = message_arena.allocator();
+        const message = connection.readMessage(message_allocator) catch |err| switch (err) {
             error.ClosedByPeer => return,
             error.PayloadTooLarge => {
                 connection.close(1009, "message too large");
@@ -155,7 +169,7 @@ fn nativeRealtime(c: *Ctx) !void {
             connection.close(1003, "text protocol required");
             return;
         }
-        am.realtime.handleInbound(contracts.Protocol, contracts.Principal, c.arena, service, .{
+        am.realtime.handleInbound(contracts.Protocol, contracts.Principal, message_allocator, service, .{
             .connection_id = connection_id,
             .principal = principal,
             .logical_identity = identity,

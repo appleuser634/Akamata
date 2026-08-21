@@ -39,16 +39,25 @@ export fn dealloc(ptr: usize, len: usize) void {
 
 var last_response_ptr: usize = 0;
 var last_response_len: usize = 0;
+var last_error_name: []const u8 = "";
 
 export fn handle_fetch(req_ptr: usize, req_len: usize) usize {
-    if (req_ptr == 0) return 0;
+    last_error_name = "";
+    if (req_ptr == 0) {
+        last_error_name = "InvalidRequestPointer";
+        return 0;
+    }
     const p: [*]const u8 = @ptrFromInt(req_ptr);
     const req_bytes = p[0..req_len];
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(page_alloc);
     if (dispatch_ptr) |d| {
-        d(req_bytes, &out) catch return 0;
+        d(req_bytes, &out) catch |err| {
+            last_error_name = @errorName(err);
+            return 0;
+        };
     } else {
+        last_error_name = "DispatchNotRegistered";
         return 0;
     }
     const buf = page_alloc.alloc(u8, out.items.len) catch return 0;
@@ -56,6 +65,14 @@ export fn handle_fetch(req_ptr: usize, req_len: usize) usize {
     last_response_ptr = @intFromPtr(buf.ptr);
     last_response_len = buf.len;
     return last_response_ptr;
+}
+
+export fn last_error_ptr() usize {
+    return @intFromPtr(last_error_name.ptr);
+}
+
+export fn last_error_length() usize {
+    return last_error_name.len;
 }
 
 export fn last_response_length() usize {

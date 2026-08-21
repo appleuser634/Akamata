@@ -59,20 +59,23 @@ broadcast-except/disconnect actions are applied. Configure the service binding:
 ```toml
 [[services]]
 binding = "AKAMATA_REALTIME_HANDLER"
-service = "akamata-chat"
+service = "akamata-realtime-handler"
+entrypoint = "AkamataRealtimeApplication"
 ```
 
-The reference uses a self service binding so the same Zig application owns
-authorization and inbound policy. Never log Authorization, source credentials,
-or payload bodies.
+Deploy `worker/realtime_handler.mjs` separately with
+`wrangler.realtime-handler.toml`, then set `service` to that Worker. Its default
+entrypoint always returns 404; only the named Service Binding can reach the
+control plane. Do not self-bind the public gateway. Never log Authorization,
+source credentials, or payload bodies.
 
 ### R2 streaming
 
-`am.platform.workers.R2Store` implements the portable Store using JSPI and R2
-streams. Zig moves at most a 64 KiB body chunk at a time after the request has
-entered the adapter. The current generic HTTP-to-WASM bridge still calls
-`request.arrayBuffer()` first, so inbound uploads are bounded but not zero-copy.
-Downloads support byte ranges through R2 and exact fixed-length HTTP streaming.
+`am.platform.workers.R2Store` implements the portable Store using JSPI. The
+current generic HTTP-to-WASM bridge calls `request.arrayBuffer()` first and R2
+uploads are capped at the application limit, so they are bounded but not
+zero-copy. Downloads support byte ranges; the current response ABI reads in
+64 KiB chunks but accumulates the final response in WASM memory.
 `get` propagates ETag, Content-Type and custom metadata, and `list` returns a
 bounded page. The legacy `head` return shape exposes size only on R2; use
 `serveDownload`/`get` when conditional metadata is required.
@@ -85,6 +88,11 @@ AKAMATA_LIVE_SUBJECT=test-client \
 AKAMATA_LIVE_LOGIN_SECRET='...' \
 zig build cloudflare-live-test
 ```
+
+The opt-in test covers D1 write/read, R2 put/Range 206, an authenticated
+two-connection Durable Object WebSocket relay, and public-route isolation.
+Native WebSocket loops should use `am.realtime.MessageArena` and reset it after
+each handled frame so decoded message allocations do not live with the socket.
 
 ## Main points of wrangler.toml
 

@@ -30,7 +30,8 @@ bucket_name = "akamata-files"
 # contains the shared Akamata application handlers (self in this reference).
 [[services]]
 binding = "AKAMATA_REALTIME_HANDLER"
-service = "akamata-chat"
+service = "akamata-realtime-handler"
+entrypoint = "AkamataRealtimeApplication"
 
 # === Durable Object (WebSocket ハブ + room SQLite) ===
 [[durable_objects.bindings]]

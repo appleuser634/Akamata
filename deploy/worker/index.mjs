@@ -10,6 +10,8 @@
 // exact same code path used for SQLite/Turso.
 
 import wasm from "../../zig-out/bin/akamata_worker.wasm";
+import { WorkerEntrypoint } from "cloudflare:workers";
+import { REALTIME_AUTHORIZE_PATH, REALTIME_MESSAGE_PATH, rejectPublicInternalRoute } from "./internal_routes.mjs";
 
 let instance, memory, exports_ref, handleFetchAsync;
 let jspi_supported = false;
@@ -324,24 +326,32 @@ async function instantiate(env) {
       if (!bucket?.put) return -2;
       try {
         const options = JSON.parse(readString(optionsPtr, optionsLen));
-        const stream = new TransformStream();
         const id = nextR2Id++;
         const putOptions = { httpMetadata: {}, customMetadata: {} };
         if (options.content_type) putOptions.httpMetadata.contentType = options.content_type;
         if (options.metadata_json) putOptions.customMetadata = JSON.parse(options.metadata_json);
         if (options.if_match) putOptions.onlyIf = { etagMatches: options.if_match };
-        const promise = bucket.put(readString(keyPtr, keyLen), stream.readable, putOptions);
-        r2ops.set(id, { kind: "write", writer: stream.writable.getWriter(), promise });
+        r2ops.set(id, { kind: "write", bucket, key: readString(keyPtr, keyLen), putOptions, chunks: [], size: 0 });
         return id;
       } catch { return -5; }
     }),
     akamata_r2_put_write: suspending(async (id, ptr, len) => {
       const op = r2ops.get(id); if (op?.kind !== "write") return -5;
-      try { await op.writer.write(readBytes(ptr, len).slice()); return 0; } catch { return -5; }
+      // dispatchWasm currently bounds the complete request body in WASM. Keep
+      // the R2 bridge equally bounded and avoid a length-unknown stream, which
+      // R2 rejects and can deadlock on TransformStream backpressure.
+      if (op.size + len > 8 * 1024 * 1024) return -5;
+      op.chunks.push(readBytes(ptr, len).slice()); op.size += len; return 0;
     }),
     akamata_r2_put_finish: suspending(async (id) => {
       const op = r2ops.get(id); if (op?.kind !== "write") return -5;
-      try { await op.writer.close(); await op.promise; return 0; } catch { return -5; } finally { r2ops.delete(id); }
+      try {
+        const bytes = new Uint8Array(op.size);
+        let offset = 0;
+        for (const chunk of op.chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+        await op.bucket.put(op.key, bytes, op.putOptions);
+        return 0;
+      } catch { return -5; } finally { r2ops.delete(id); }
     }),
     akamata_r2_get_begin: suspending(async (bindingPtr, bindingLen, keyPtr, keyLen, offset, length, hasRange, optionsPtr, optionsLen) => {
       const bucket = env?.[readString(bindingPtr, bindingLen)];
@@ -441,6 +451,11 @@ export default {
     await instantiate(env);
 
     const url = new URL(request.url);
+    // These handlers are an application/DO control plane, never public HTTP
+    // API. The DO reaches the message handler through the named entrypoint
+    // service binding below.
+    const rejected = rejectPublicInternalRoute(request);
+    if (rejected) return rejected;
     // Route WebSocket upgrades directly to the ChatRoom DO.
     const wsMatch = url.pathname.match(/^\/rooms\/(\d+)\/ws$/);
     if (wsMatch && request.headers.get("Upgrade") === "websocket") {
@@ -457,7 +472,7 @@ export default {
       if (!authorization || authorization.length > 8192) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
-      const authUrl = new URL("/__akamata/realtime/authorize", request.url);
+      const authUrl = new URL(REALTIME_AUTHORIZE_PATH, request.url);
       authUrl.searchParams.set("resource", resource);
       const authRequest = new Request(authUrl, {
         method: "POST",
@@ -515,11 +530,33 @@ export default {
   },
 };
 
+/// Service-binding-only control-plane entrypoint. Wrangler binds the Durable
+/// Object to this named entrypoint; it is not addressable via the Worker's
+/// public URL and accepts only the exact inbound-message contract.
+export class AkamataRealtimeApplication extends WorkerEntrypoint {
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method !== "POST" || url.pathname !== REALTIME_MESSAGE_PATH) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    activeEnv = this.env;
+    await instantiate(this.env);
+    return dispatchWasm(request);
+  }
+}
+
 async function dispatchWasm(request) {
     const url = new URL(request.url);
-    const bodyBuf = new Uint8Array(await request.arrayBuffer());
-    const headers = [];
-    for (const [k, v] of request.headers) headers.push(`${k}: ${v}`);
+  const bodyBuf = new Uint8Array(await request.arrayBuffer());
+  const headers = [];
+  // The synthetic HTTP/1 request owns Host and Content-Length. Workers
+  // exposes Host in Request.headers, so forwarding it as well creates a
+  // duplicate field that the strict Zig parser correctly rejects.
+  for (const [k, v] of request.headers) {
+    const lower = k.toLowerCase();
+    if (lower === "host" || lower === "content-length") continue;
+    headers.push(`${k}: ${v}`);
+  }
     const head = `${request.method} ${url.pathname}${url.search} HTTP/1.1\r\nhost: ${url.host}\r\n${headers.join("\r\n")}\r\ncontent-length: ${bodyBuf.length}\r\n\r\n`;
     const headBytes = new TextEncoder().encode(head);
     const total = headBytes.length + bodyBuf.length;
@@ -531,6 +568,9 @@ async function dispatchWasm(request) {
     const respPtr = await handleFetchAsync(ptr, total);
     const respLen = exports_ref.last_response_length();
     if (respPtr === 0) {
+      const errorLength = exports_ref.last_error_length?.() ?? 0;
+      const errorName = errorLength > 0 ? readString(exports_ref.last_error_ptr(), errorLength) : "UnknownWasmDispatchError";
+      console.error(JSON.stringify({ message: "akamata wasm dispatch failed", error: errorName }));
       exports_ref.dealloc(ptr, total);
       return new Response("internal error", { status: 500 });
     }

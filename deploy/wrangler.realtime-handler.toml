@@ -1,0 +1,16 @@
+name = "akamata-realtime-handler"
+main = "worker/realtime_handler.mjs"
+compatibility_date = "2026-08-17"
+compatibility_flags = ["nodejs_compat"]
+
+# This Worker has an inert public entrypoint (always 404). It exists so the
+# gateway's Durable Objects can invoke AkamataRealtimeApplication through a
+# named Service Binding without exposing application control-plane routes.
+[[d1_databases]]
+binding = "DB"
+database_name = "akamata"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "akamata-files"

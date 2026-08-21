@@ -102,7 +102,12 @@ export class AkamataRealtimeRoom {
       else ws.close(1007, "event rejected");
       return;
     }
-    const actions = await handlerResponse.json();
+    const responseText = await handlerResponse.text();
+    let actions;
+    try { actions = JSON.parse(responseText); } catch (error) {
+      console.error(JSON.stringify({ message: "invalid realtime handler JSON", error: error instanceof Error ? error.message : String(error) }));
+      ws.close(1011, "invalid handler response"); return;
+    }
     if (!Array.isArray(actions) || actions.length > 32) {
       ws.close(1011, "invalid handler response");
       return;
@@ -131,7 +136,9 @@ export class AkamataRealtimeRoom {
     if (attachment?.connectionId) {
       this.ctx.storage.sql.exec("DELETE FROM akamata_presence WHERE connection_id=?", attachment.connectionId);
     }
-    ws.close(code, reason);
+    // The peer is already closed. In particular, 1005/1006 are report-only
+    // status codes and passing them to WebSocket.close() is invalid.
+    void code; void reason;
   }
 
   async webSocketError(ws) {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AkamataRealtimeRoom } from "../deploy/worker/realtime_object.mjs";
+import { REALTIME_MESSAGE_PATH, rejectPublicInternalRoute } from "../deploy/worker/internal_routes.mjs";
 
 function socket(attachment) {
   return {
@@ -20,6 +21,14 @@ function room(handler) {
   };
   return { value: new AkamataRealtimeRoom(ctx, { AKAMATA_REALTIME_HANDLER: { fetch: handler } }), sockets };
 }
+
+test("internal realtime handlers are not public HTTP routes", async () => {
+  const message = rejectPublicInternalRoute(new Request(`https://public.example${REALTIME_MESSAGE_PATH}`, { method: "POST" }));
+  assert.equal(message.status, 404);
+  const authorize = rejectPublicInternalRoute(new Request("https://public.example/__akamata/realtime/authorize", { method: "POST" }));
+  assert.equal(authorize.status, 404);
+  assert.equal(rejectPublicInternalRoute(new Request("https://public.example/health")), null);
+});
 
 test("inbound event is never implicitly broadcast", async () => {
   const { value, sockets } = room(async () => Response.json([]));
