@@ -1,22 +1,26 @@
 const std = @import("std");
 const am = @import("akamata");
-const contracts = @import("contracts.zig");
+const application = @import("application.zig");
 
 pub const std_options: std.Options = .{ .logFn = noopLog };
 fn noopLog(comptime _: std.log.Level, comptime _: @TypeOf(.enum_literal), comptime _: []const u8, _: anytype) void {}
-const State = struct { objects: am.storage.Store };
-var app: am.App(State) = undefined;
+var app: am.App(application.State) = undefined;
 var r2: am.platform.workers.R2Store = undefined;
 var initialized = false;
 
-fn health(c: *am.Context(State)) !void {
-    try c.json(.{ .status = "ok", .protocol_version = contracts.Protocol.protocol_version }, 200);
-}
 fn init() !void {
     if (initialized) return;
     r2 = am.platform.workers.R2Store.init(std.heap.wasm_allocator, "FILES");
-    app = am.App(State).init(std.heap.wasm_allocator, .{ .objects = r2.store() });
-    _ = try app.get("/health", health);
+    const database = try am.db.openD1(std.heap.wasm_allocator);
+    const jwt_secret = am.env.get(std.heap.wasm_allocator, "JWT_SECRET") orelse return error.MissingJwtSecret;
+    const login_secret = am.env.get(std.heap.wasm_allocator, "LOGIN_SECRET") orelse return error.MissingLoginSecret;
+    app = am.App(application.State).init(std.heap.wasm_allocator, .{
+        .db = database,
+        .objects = r2.store(),
+        .jwt_secret = jwt_secret,
+        .login_secret = login_secret,
+    });
+    try application.register(&app);
     initialized = true;
 }
 pub fn main() !void {
