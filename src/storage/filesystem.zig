@@ -149,7 +149,16 @@ pub const FileStore = struct {
         if (prefix.len != 0) {
             if (prefix[0] == '/' or std.mem.indexOf(u8, prefix, "..") != null or std.mem.indexOfScalar(u8, prefix, '\\') != null) return error.PermissionDenied;
         }
-        var walker = self.root.walk(allocator) catch return error.Unavailable;
+        // A directory handle used for traversal must have been opened with
+        // `.iterate = true`. The caller-owned root is also used for ordinary
+        // file operations, so do not assume that property (or transfer its
+        // ownership to the walker). A dedicated handle keeps listing portable:
+        // macOS tolerated the non-iterable handle while Linux returned BADF.
+        var listing_root = self.root.openDir(self.io, ".", .{
+            .iterate = true,
+        }) catch return error.BackendFailure;
+        defer listing_root.close(self.io);
+        var walker = listing_root.walk(allocator) catch return error.Unavailable;
         defer walker.deinit();
         var entries: std.ArrayList(storage.ListEntry) = .empty;
         errdefer {

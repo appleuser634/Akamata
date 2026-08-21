@@ -54,9 +54,16 @@ pub fn Server(comptime App: type) type {
 
         pub fn requestShutdown(self: *Self) void {
             self.shutdown_flag.store(true, .seq_cst);
-            // Closing the listener socket causes accept() to return SocketNotListening.
-            if (self.listener) |*l| {
-                if (!self.listener_closed.swap(true, .acq_rel)) l.socket.close(self.io);
+            // Closing a listening descriptor from another thread does not
+            // reliably interrupt a blocking accept(2) on Linux. Connect a
+            // short-lived local stream instead; the accept loop wakes, owns
+            // that stream normally, then observes shutdown_flag. The server
+            // thread remains the sole owner responsible for closing listener.
+            if (self.listener != null) {
+                var address = self.opts.address;
+                if (net.IpAddress.connect(&address, self.io, .{ .mode = .stream })) |wake| {
+                    wake.close(self.io);
+                } else |_| {}
             }
         }
 
