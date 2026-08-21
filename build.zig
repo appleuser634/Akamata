@@ -170,6 +170,9 @@ pub fn build(b: *std.Build) void {
     const compile_fail_command = b.addSystemCommand(&.{ "bash", "tests/compile_fail.sh" });
     const compile_fail_step = b.step("compile-fail-test", "verify compile-time diagnostics");
     compile_fail_step.dependOn(&compile_fail_command.step);
+    const workers_realtime_command = b.addSystemCommand(&.{ "node", "--test", "tests/workers_realtime_test.mjs" });
+    const workers_realtime_step = b.step("workers-realtime-test", "run Durable Object realtime contract tests");
+    workers_realtime_step.dependOn(&workers_realtime_command.step);
     const test_targets = [_][]const u8{
         "tests/http_parser_test.zig",
         "tests/ws_frame_test.zig",

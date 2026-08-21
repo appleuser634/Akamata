@@ -25,6 +25,13 @@ max_batch_timeout = 5
 binding = "FILES"
 bucket_name = "akamata-files"
 
+# The Durable Object sends validated inbound envelopes to the application
+# handler through a service binding. Point this at the Worker deployment that
+# contains the shared Akamata application handlers (self in this reference).
+[[services]]
+binding = "AKAMATA_REALTIME_HANDLER"
+service = "akamata-chat"
+
 # === Durable Object (WebSocket ハブ + room SQLite) ===
 [[durable_objects.bindings]]
 name = "CHAT_ROOM"

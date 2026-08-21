@@ -26,14 +26,21 @@ export class AkamataRealtimeRoom {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return Response.json(await this.presence());
     }
-    const url = new URL(request.url);
-    const connectionId = url.searchParams.get("connection_id") ?? crypto.randomUUID();
-    const identity = url.searchParams.get("identity");
-    const metadata = url.searchParams.get("metadata") ?? "{}";
+    // Only the trusted Worker gateway can set these headers. Durable Objects
+    // are not directly Internet-addressable, and the gateway never forwards
+    // client-supplied X-Akamata-* headers.
+    if (request.headers.get("X-Akamata-Authorized") !== "1") {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    const connectionId = request.headers.get("X-Akamata-Connection-Id");
+    const identity = request.headers.get("X-Akamata-Logical-Identity");
+    const principal = request.headers.get("X-Akamata-Principal");
+    const metadata = request.headers.get("X-Akamata-Metadata") ?? "{}";
+    if (!connectionId || !identity || !principal) return Response.json({ error: "invalid_authorization_context" }, { status: 500 });
     if (new TextEncoder().encode(metadata).byteLength > 4096) {
       return Response.json({ error: "metadata_too_large" }, { status: 413 });
     }
-    try { JSON.parse(metadata); } catch {
+    try { JSON.parse(metadata); JSON.parse(principal); } catch {
       return Response.json({ error: "invalid_metadata" }, { status: 400 });
     }
 
@@ -41,7 +48,7 @@ export class AkamataRealtimeRoom {
     const client = pair[0];
     const server = pair[1];
     const now = Date.now();
-    server.serializeAttachment({ connectionId, identity, metadata, connectedAt: now });
+    server.serializeAttachment({ connectionId, identity, principal, metadata, connectedAt: now });
     this.ctx.acceptWebSocket(server);
     this.ctx.storage.sql.exec(
       `INSERT INTO akamata_presence(connection_id, identity, metadata, connected_at, last_seen)
@@ -62,12 +69,60 @@ export class AkamataRealtimeRoom {
       );
     }
     const bytes = typeof message === "string" ? new TextEncoder().encode(message).byteLength : message.byteLength;
-    if (bytes > 1024 * 1024) {
+    if (bytes > 64 * 1024) {
       ws.close(1009, "message too large");
       return;
     }
-    for (const peer of this.ctx.getWebSockets()) {
-      if (peer !== ws) peer.send(message);
+    if (typeof message !== "string") {
+      ws.close(1003, "text protocol required");
+      return;
+    }
+    let envelope;
+    try { envelope = JSON.parse(message); } catch {
+      ws.close(1007, "malformed event");
+      return;
+    }
+    if (!envelope || !Number.isInteger(envelope.protocol_version) || typeof envelope.event_type !== "string" || !("payload" in envelope)) {
+      ws.close(1007, "malformed event");
+      return;
+    }
+    if (!this.env.AKAMATA_REALTIME_HANDLER || typeof this.env.AKAMATA_REALTIME_HANDLER.fetch !== "function") {
+      ws.close(1011, "application handler unavailable");
+      return;
+    }
+    const context = ws.deserializeAttachment();
+    const handlerResponse = await this.env.AKAMATA_REALTIME_HANDLER.fetch(new Request("https://akamata.internal/realtime/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context, envelope }),
+    }));
+    if (!handlerResponse.ok) {
+      if (handlerResponse.status === 401 || handlerResponse.status === 403) ws.close(4003, "authorization rejected");
+      else if (handlerResponse.status === 426) ws.close(4002, "unsupported protocol version");
+      else ws.close(1007, "event rejected");
+      return;
+    }
+    const actions = await handlerResponse.json();
+    if (!Array.isArray(actions) || actions.length > 32) {
+      ws.close(1011, "invalid handler response");
+      return;
+    }
+    for (const action of actions) await this.applyAction(ws, action);
+  }
+
+  async applyAction(sender, action) {
+    if (!action || typeof action !== "object") return;
+    const encoded = action.envelope == null ? null : JSON.stringify(action.envelope);
+    if (encoded && new TextEncoder().encode(encoded).byteLength > 64 * 1024) return;
+    if (action.kind === "direct" && typeof action.connection_id === "string" && encoded) {
+      await this.send(action.connection_id, encoded);
+    } else if (action.kind === "broadcast" && encoded) {
+      await this.broadcast(encoded);
+    } else if (action.kind === "broadcast_except_sender" && encoded) {
+      for (const peer of this.ctx.getWebSockets()) if (peer !== sender) peer.send(encoded);
+    } else if (action.kind === "disconnect") {
+      const code = Number.isInteger(action.code) ? action.code : 1000;
+      sender.close(code, typeof action.reason === "string" ? action.reason.slice(0, 123) : "closed");
     }
   }
 

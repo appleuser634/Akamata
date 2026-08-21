@@ -65,6 +65,13 @@ pub fn Protocol(comptime EventUnion: type, comptime version: u16) type {
         pub const protocol_version = version;
         pub const event_count = @typeInfo(EventUnion).@"union".fields.len;
 
+        pub const DecodeError = error{
+            MalformedEnvelope,
+            UnsupportedVersion,
+            UnknownEvent,
+            MalformedPayload,
+        };
+
         pub fn encode(allocator: std.mem.Allocator, event: EventUnion, meta: struct {
             event_id: ?[]const u8 = null,
             correlation_id: ?[]const u8 = null,
@@ -89,6 +96,32 @@ pub fn Protocol(comptime EventUnion: type, comptime version: u16) type {
             }
             try aw.writer.writeByte('}');
             return aw.toOwnedSlice();
+        }
+
+        /// Decode a versioned envelope into the protocol tagged union. The
+        /// caller supplies a bounded request/message arena; unknown fields are
+        /// ignored for forward-compatible additive changes.
+        pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) (DecodeError || std.mem.Allocator.Error)!EventUnion {
+            const Wire = struct {
+                protocol_version: u16,
+                event_type: []const u8,
+                payload: std.json.Value,
+            };
+            const wire = std.json.parseFromSliceLeaky(Wire, allocator, bytes, .{ .ignore_unknown_fields = true }) catch
+                return DecodeError.MalformedEnvelope;
+            if (wire.protocol_version != version) return DecodeError.UnsupportedVersion;
+
+            var payload_writer: std.Io.Writer.Allocating = .init(allocator);
+            std.json.Stringify.value(wire.payload, .{}, &payload_writer.writer) catch return error.OutOfMemory;
+            const payload_bytes = payload_writer.written();
+            inline for (@typeInfo(EventUnion).@"union".fields) |field| {
+                if (std.mem.eql(u8, wire.event_type, field.name)) {
+                    const payload = std.json.parseFromSliceLeaky(field.type, allocator, payload_bytes, .{ .ignore_unknown_fields = true }) catch
+                        return DecodeError.MalformedPayload;
+                    return @unionInit(EventUnion, field.name, payload);
+                }
+            }
+            return DecodeError.UnknownEvent;
         }
     };
 }
@@ -122,4 +155,10 @@ test "event descriptor and versioned protocol" {
     defer std.testing.allocator.free(bytes);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "\"protocol_version\":3") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "\"event_type\":\"created\"") != null);
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const decoded = try Protocol(Event, 3).decode(arena, bytes);
+    try std.testing.expectEqual(@as(u64, 42), decoded.created.id);
+    try std.testing.expectError(Protocol(Event, 2).DecodeError.UnsupportedVersion, Protocol(Event, 2).decode(arena, bytes));
 }

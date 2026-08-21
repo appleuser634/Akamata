@@ -349,31 +349,40 @@ export default {
     }
     const realtimeMatch = url.pathname.match(/^\/realtime\/([^/]+)$/);
     if (realtimeMatch && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
-      return env.AKAMATA_REALTIME.getByName(decodeURIComponent(realtimeMatch[1])).fetch(request);
+      // The requested resource is only an authorization input. The client
+      // never chooses the Durable Object key or logical identity directly.
+      const resource = decodeURIComponent(realtimeMatch[1]);
+      const authorization = request.headers.get("Authorization");
+      if (!authorization || authorization.length > 8192) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const authUrl = new URL("/__akamata/realtime/authorize", request.url);
+      authUrl.searchParams.set("resource", resource);
+      const authRequest = new Request(authUrl, {
+        method: "POST",
+        headers: { Authorization: authorization, Accept: "application/json" },
+      });
+      const authResponse = await dispatchWasm(authRequest);
+      if (!authResponse.ok) {
+        // Do not forward application diagnostics or credentials to the peer.
+        return Response.json({ error: authResponse.status === 403 ? "forbidden" : "unauthorized" }, { status: authResponse.status === 403 ? 403 : 401 });
+      }
+      let authorized;
+      try { authorized = await authResponse.json(); } catch { return Response.json({ error: "authorization_failed" }, { status: 500 }); }
+      if (!isAuthorizedConnection(authorized)) return Response.json({ error: "authorization_failed" }, { status: 500 });
+      const metadata = JSON.stringify(authorized.metadata ?? {});
+      if (new TextEncoder().encode(metadata).byteLength > 4096) return Response.json({ error: "metadata_too_large" }, { status: 500 });
+      const internal = new Headers();
+      internal.set("Upgrade", "websocket");
+      internal.set("X-Akamata-Connection-Id", crypto.randomUUID());
+      internal.set("X-Akamata-Logical-Identity", authorized.logical_identity);
+      internal.set("X-Akamata-Principal", JSON.stringify(authorized.principal));
+      internal.set("X-Akamata-Metadata", metadata);
+      internal.set("X-Akamata-Authorized", "1");
+      const doRequest = new Request(request.url, { method: "GET", headers: internal });
+      return env.AKAMATA_REALTIME.getByName(authorized.room).fetch(doRequest);
     }
-
-    const bodyBuf = new Uint8Array(await request.arrayBuffer());
-    const headers = [];
-    for (const [k, v] of request.headers) headers.push(`${k}: ${v}`);
-    const head = `${request.method} ${url.pathname}${url.search} HTTP/1.1\r\nhost: ${url.host}\r\n${headers.join("\r\n")}\r\ncontent-length: ${bodyBuf.length}\r\n\r\n`;
-    const headBytes = new TextEncoder().encode(head);
-    const total = headBytes.length + bodyBuf.length;
-
-    const ptr = exports_ref.alloc(total);
-    writeBytes(ptr, headBytes);
-    writeBytes(ptr + headBytes.length, bodyBuf);
-
-    const respPtr = await handleFetchAsync(ptr, total);
-    const respLen = exports_ref.last_response_length();
-    if (respPtr === 0) {
-      exports_ref.dealloc(ptr, total);
-      return new Response("internal error", { status: 500 });
-    }
-    const respBytes = new Uint8Array(memory.buffer, respPtr, respLen).slice();
-    exports_ref.dealloc(ptr, total);
-    exports_ref.dealloc(respPtr, respLen);
-
-    return parseHttpResponse(respBytes);
+    return dispatchWasm(request);
   },
   async queue(batch, env) {
     activeEnv = env;
@@ -404,6 +413,39 @@ export default {
     }
   },
 };
+
+async function dispatchWasm(request) {
+    const url = new URL(request.url);
+    const bodyBuf = new Uint8Array(await request.arrayBuffer());
+    const headers = [];
+    for (const [k, v] of request.headers) headers.push(`${k}: ${v}`);
+    const head = `${request.method} ${url.pathname}${url.search} HTTP/1.1\r\nhost: ${url.host}\r\n${headers.join("\r\n")}\r\ncontent-length: ${bodyBuf.length}\r\n\r\n`;
+    const headBytes = new TextEncoder().encode(head);
+    const total = headBytes.length + bodyBuf.length;
+
+    const ptr = exports_ref.alloc(total);
+    writeBytes(ptr, headBytes);
+    writeBytes(ptr + headBytes.length, bodyBuf);
+
+    const respPtr = await handleFetchAsync(ptr, total);
+    const respLen = exports_ref.last_response_length();
+    if (respPtr === 0) {
+      exports_ref.dealloc(ptr, total);
+      return new Response("internal error", { status: 500 });
+    }
+    const respBytes = new Uint8Array(memory.buffer, respPtr, respLen).slice();
+    exports_ref.dealloc(ptr, total);
+    exports_ref.dealloc(respPtr, respLen);
+
+    return parseHttpResponse(respBytes);
+}
+
+function isAuthorizedConnection(value) {
+  return value && typeof value === "object" &&
+    typeof value.room === "string" && value.room.length > 0 && value.room.length <= 256 &&
+    typeof value.logical_identity === "string" && value.logical_identity.length > 0 && value.logical_identity.length <= 256 &&
+    value.principal && typeof value.principal === "object";
+}
 
 function parseHttpResponse(bytes) {
   const sep = findHeaderEnd(bytes);
