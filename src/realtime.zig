@@ -209,30 +209,57 @@ pub const Native = struct {
     fn direct(ptr: *anyopaque, room: []const u8, id: ConnectionId, bytes: []const u8) Error!void {
         const self: *Native = @ptrCast(@alignCast(ptr));
         self.mutex.lock();
-        defer self.mutex.unlock();
-        const entry = self.connections.get(id) orelse return error.NotFound;
-        if (!std.mem.eql(u8, entry.room, room)) return error.NotFound;
-        return entry.send_fn(entry.ctx, bytes);
+        const entry = self.connections.get(id) orelse {
+            self.mutex.unlock();
+            return error.NotFound;
+        };
+        if (!std.mem.eql(u8, entry.room, room)) {
+            self.mutex.unlock();
+            return error.NotFound;
+        }
+        const callback = entry.send_fn;
+        const context = entry.ctx;
+        self.mutex.unlock();
+        return callback(context, bytes);
     }
     fn broadcast(ptr: *anyopaque, room: []const u8, bytes: []const u8, except: ?ConnectionId) Error!usize {
         const self: *Native = @ptrCast(@alignCast(ptr));
+        const Target = struct { ctx: ?*anyopaque, send_fn: SendFn };
+        var targets: std.ArrayList(Target) = .empty;
+        defer targets.deinit(self.allocator);
         self.mutex.lock();
-        defer self.mutex.unlock();
-        var sent: usize = 0;
         var it = self.connections.iterator();
         while (it.next()) |entry| {
             if (except == entry.key_ptr.* or !std.mem.eql(u8, entry.value_ptr.room, room)) continue;
-            try entry.value_ptr.send_fn(entry.value_ptr.ctx, bytes);
-            sent += 1;
+            targets.append(self.allocator, .{ .ctx = entry.value_ptr.ctx, .send_fn = entry.value_ptr.send_fn }) catch {
+                self.mutex.unlock();
+                return error.Backpressure;
+            };
         }
-        return sent;
+        self.mutex.unlock();
+        var delivered: usize = 0;
+        for (targets.items) |target| {
+            target.send_fn(target.ctx, bytes) catch continue;
+            delivered += 1;
+        }
+        return delivered;
     }
     fn disconnect(ptr: *anyopaque, room: []const u8, id: ConnectionId, close: Close) Error!void {
         const self: *Native = @ptrCast(@alignCast(ptr));
-        const entry = self.connections.get(id) orelse return error.NotFound;
-        if (!std.mem.eql(u8, entry.room, room)) return error.NotFound;
+        self.mutex.lock();
+        const current = self.connections.get(id) orelse {
+            self.mutex.unlock();
+            return error.NotFound;
+        };
+        if (!std.mem.eql(u8, current.room, room)) {
+            self.mutex.unlock();
+            return error.NotFound;
+        }
+        const entry = self.connections.fetchRemove(id).?.value;
+        self.mutex.unlock();
+        defer self.allocator.free(entry.room);
+        defer if (entry.identity) |identity| self.allocator.free(identity);
         if (entry.close_fn) |close_fn| close_fn(entry.ctx, close);
-        self.detach(id);
     }
     fn getPresence(ptr: *anyopaque, room: []const u8) Presence {
         const self: *Native = @ptrCast(@alignCast(ptr));
@@ -331,4 +358,24 @@ test "inbound events always pass through application handler" {
         .logical_identity = "client:9",
         .room = "authorized-room",
     }, bytes, 1, Handler.handle));
+}
+
+test "native transport callbacks execute outside registry lock" {
+    const E = union(enum) { ping: struct {} };
+    const P = events.Protocol(E, 1);
+    const Callback = struct {
+        service: Service,
+        observed: usize = 0,
+        fn send(raw: ?*anyopaque, _: []const u8) Error!void {
+            const self: *@This() = @ptrCast(@alignCast(raw.?));
+            // Re-entering presence would deadlock if send ran under the map lock.
+            self.observed = self.service.room(P, "room").presence().connections;
+        }
+    };
+    var native = Native.init(std.testing.allocator);
+    defer native.deinit();
+    var callback = Callback{ .service = native.service() };
+    try native.connect("room", 1, "client", &callback, Callback.send);
+    try callback.service.room(P, "room").send(std.testing.allocator, 1, .{ .ping = .{} });
+    try std.testing.expectEqual(@as(usize, 1), callback.observed);
 }
