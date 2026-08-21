@@ -19,6 +19,8 @@ is development-oriented; pin a tagged release for reproducible builds.
 
 ## Guides
 
+- [Portable Backend and Realtime Architecture](portable-backend.md)
+
 - [Cloudflare Workers and Containers](cloudflare.md)
 - [SQLite, D1, and Turso](db-backends.md)
 - [WebSocket](websocket.md)

@@ -19,6 +19,8 @@
 
 ## Guide
 
+- [Portable Backend / Realtime アーキテクチャ](portable-backend.md)
+
 - [Cloudflare Workers／Containers](cloudflare.md)
 - [SQLite／D1／Turso](db-backends.md)
 - [WebSocket](websocket.md)
