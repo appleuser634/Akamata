@@ -204,6 +204,7 @@ pub fn build(b: *std.Build) void {
         "tests/docs_examples_test.zig",
         "tests/comptime_framework_test.zig",
         "src/storage.zig",
+        "src/events.zig",
         "src/realtime.zig",
         "src/protocol_gen.zig",
     };

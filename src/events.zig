@@ -162,3 +162,13 @@ test "event descriptor and versioned protocol" {
     try std.testing.expectEqual(@as(u64, 42), decoded.created.id);
     try std.testing.expectError(Protocol(Event, 2).DecodeError.UnsupportedVersion, Protocol(Event, 2).decode(arena, bytes));
 }
+
+test "protocol honors bounded application wire values" {
+    const bounded = @import("contract/bounded.zig");
+    const Signal = struct { session_id: bounded.BoundedString(8), value: u8 };
+    const Event = union(enum) { signal: Signal };
+    const session = try bounded.BoundedString(8).init("live");
+    const encoded = try Protocol(Event, 1).encode(std.testing.allocator, .{ .signal = .{ .session_id = session, .value = 7 } }, .{});
+    defer std.testing.allocator.free(encoded);
+    try std.testing.expectEqualStrings("{\"protocol_version\":1,\"event_type\":\"signal\",\"payload\":{\"session_id\":\"live\",\"value\":7}}", encoded);
+}

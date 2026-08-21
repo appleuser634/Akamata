@@ -68,8 +68,10 @@ conditional operations. Bodies use bounded pull-based `am.stream.Reader` and
 `Writer`, making buffering and backpressure explicit. `parseRange` and
 `evaluate` share HTTP Range/ETag logic between filesystem and R2 adapters.
 `storage.filesystem.FileStore` uses positional reads and a 64 KiB transfer
-buffer. `platform.workers.R2Store` bridges R2 ReadableStream/WritableStream
-through JSPI in 64 KiB chunks. `serveDownload` emits HEAD/200/206/304/412/416,
+buffer. `platform.workers.R2Store` bridges R2 reads through JSPI in 64 KiB
+chunks. Workers uploads are currently collected up to the application limit
+(8 MiB in the reference) before `R2.put`; they do not use a length-unknown
+`TransformStream`. `serveDownload` emits HEAD/200/206/304/412/416,
 `Content-Length`, `Content-Range`, `Accept-Ranges` and bounded fixed-length
 streaming. Object keys are portable relative keys; absolute paths, empty
 segments, backslashes and `..` are rejected before an adapter is called.
@@ -77,7 +79,9 @@ segments, backslashes and `..` are rejected before an adapter is called.
 intent without committing to one TLS implementation.
 
 `am.protocol_gen.generate` emits framework-independent TypeScript realtime
-unions/envelopes/WebSocket helper or C structs/event metadata. C slices have
+unions/envelopes/WebSocket helper or C structs/event metadata. Its TypeScript
+envelope is the flat wire object (`protocol_version`, `event_type`, `payload`,
+optional ids), without a synthetic nested `event`. C slices have
 explicit pointer/length fields and need no runtime reflection. Integer widths
 map predictably to `uint8_t`/`uint16_t`/`uint32_t`/`uint64_t`; fixed bytes are
 arrays; bounded strings/slices are inline arrays plus a length; optionals have

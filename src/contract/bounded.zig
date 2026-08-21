@@ -37,6 +37,16 @@ pub fn BoundedString(comptime capacity: usize) type {
         pub fn slice(self: *const @This()) []const u8 {
             return self.bytes[0..self.len];
         }
+
+        pub fn jsonStringify(self: *const @This(), jws: anytype) !void {
+            try jws.write(self.slice());
+        }
+
+        pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) std.json.ParseError(@TypeOf(source.*))!@This() {
+            const value = try std.json.innerParse([]const u8, allocator, source, options);
+            if (value.len > capacity) return error.Overflow;
+            return init(value) catch unreachable;
+        }
     };
 }
 
@@ -67,4 +77,17 @@ test "bounded values reject overflow without allocating" {
     const s = try S.init("zig");
     try std.testing.expectEqualStrings("zig", s.slice());
     try std.testing.expectError(error.TooLong, S.init("akamata"));
+}
+
+test "bounded string uses its application wire value" {
+    const S = BoundedString(8);
+    const value = try S.init("device");
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.json.Stringify.value(value, .{}, &out.writer);
+    try std.testing.expectEqualStrings("\"device\"", out.written());
+    const parsed = try std.json.parseFromSlice(S, std.testing.allocator, "\"device\"", .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("device", parsed.value.slice());
+    try std.testing.expectError(error.Overflow, std.json.parseFromSlice(S, std.testing.allocator, "\"too-long!\"", .{}));
 }

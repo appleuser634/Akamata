@@ -7,6 +7,29 @@ pub const ConnectionId = u64;
 pub const Error = error{ NotFound, Closed, Backpressure, Unsupported, BackendFailure };
 pub const Close = struct { code: u16 = 1000, reason: []const u8 = "closed" };
 
+/// Scratch allocator for one inbound realtime message. Long-lived native
+/// WebSocket handlers reset it after each decoded/handled frame so payload
+/// allocations do not accumulate for the lifetime of the connection.
+pub const MessageArena = struct {
+    arena: std.heap.ArenaAllocator,
+
+    pub fn init(backing_allocator: std.mem.Allocator) MessageArena {
+        return .{ .arena = .init(backing_allocator) };
+    }
+
+    pub fn deinit(self: *MessageArena) void {
+        self.arena.deinit();
+    }
+
+    pub fn allocator(self: *MessageArena) std.mem.Allocator {
+        return self.arena.allocator();
+    }
+
+    pub fn reset(self: *MessageArena) void {
+        _ = self.arena.reset(.retain_capacity);
+    }
+};
+
 pub const ConnectionInfo = struct {
     id: ConnectionId,
     logical_identity: ?[]const u8 = null,

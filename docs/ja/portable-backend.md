@@ -57,8 +57,9 @@ transport、backend、duration、normalized error のみを記録します。
 `am.storage.Store` は put/get/delete/head/list、metadata、Range、conditional を
 共通化します。body は pull 型の `am.stream.Reader`／`Writer` で渡し buffering と
 backpressure を明示します。`parseRange` と `evaluate` は filesystem/R2 間で
-HTTP Range／ETag 判定を共有します。filesystemはpositional read、R2はJSPI越しの
-ReadableStream/WritableStreamを利用し、いずれも64 KiB chunkで転送します。
+HTTP Range／ETag 判定を共有します。filesystemはpositional read、R2 readはJSPI越しに
+64 KiB chunkで転送します。Workers uploadはapplication上限（referenceでは8 MiB）まで
+集約後に`R2.put`し、長さ不明の`TransformStream`は使用しません。
 `serveDownload`はHEAD/200/206/304/412/416、Content-Length、Content-Range、
 Accept-Rangesを扱い、固定長streamはchunk framingと混在させません。absolute、
 空segment、backslash、`..`を含むobject keyはadapter到達前に拒否します。
@@ -66,7 +67,9 @@ Accept-Rangesを扱い、固定長streamはchunk framingと混在させません
 方針を持つ portable outbound TCP contract です。
 
 `am.protocol_gen.generate` は TypeScript realtime union／envelope／WebSocket
-helper、または C struct／event metadata を生成します。integer widthは`uint8_t`等へ
+helper、または C struct／event metadata を生成します。TypeScript envelopeはwireと
+同じflat構造（`protocol_version`、`event_type`、`payload`、optional id）で、架空の
+`event`階層を追加しません。integer widthは`uint8_t`等へ
 予測可能にmappingし、fixed bytesはarray、bounded string/sliceはinline array+length、
 optionalはpresence flag、event payloadはtagged C unionになります。heapやruntime
 reflectionは不要です。既存 REST TypeScript generator は互換です。

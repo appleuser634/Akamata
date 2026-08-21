@@ -64,6 +64,9 @@ pub fn evaluate(etag: ?[]const u8, if_none_match: ?[]const u8, if_match: ?[]cons
 }
 
 pub fn parseRange(value: []const u8, size: u64) !Range {
+    // An empty representation has no satisfiable byte range, including a
+    // suffix range. Reject it before arithmetic used by Content-Range.
+    if (size == 0) return error.InvalidRange;
     if (!std.mem.startsWith(u8, value, "bytes=")) return error.InvalidRange;
     const raw = value[6..];
     const dash = std.mem.indexOfScalar(u8, raw, '-') orelse return error.InvalidRange;
@@ -121,7 +124,24 @@ pub fn serveDownload(c: anytype, store: Store, key: []const u8) !void {
 }
 
 fn streamDownloadBody(c: anytype, body: stream.Reader, length: u64) !void {
-    const writer = try c.startStream(.{ .content_length = length });
+    const writer = c.startStream(.{ .content_length = length }) catch |err| switch (err) {
+        // The current Workers ABI returns one complete HTTP response buffer;
+        // it has no socket writer to flush incrementally. Preserve portable
+        // semantics with bounded object reads until that ABI becomes streaming.
+        error.UnsupportedOnTarget => {
+            var fallback_buffer: [64 * 1024]u8 = undefined;
+            var remaining = length;
+            while (remaining > 0) {
+                const want: usize = @intCast(@min(remaining, fallback_buffer.len));
+                const n = try body.read(fallback_buffer[0..want]);
+                if (n == 0) break;
+                try c.body(fallback_buffer[0..n]);
+                remaining -= n;
+            }
+            return;
+        },
+        else => return err,
+    };
     var buffer: [64 * 1024]u8 = undefined;
     while (true) {
         const n = try body.read(&buffer);
@@ -134,6 +154,9 @@ fn streamDownloadBody(c: anytype, body: stream.Reader, length: u64) !void {
 test "HTTP range and conditionals" {
     try std.testing.expectEqual(Range{ .offset = 10, .length = 10 }, try parseRange("bytes=10-19", 100));
     try std.testing.expectEqual(Range{ .offset = 90, .length = 10 }, try parseRange("bytes=-10", 100));
+    try std.testing.expectError(error.InvalidRange, parseRange("bytes=0-0", 0));
+    try std.testing.expectError(error.InvalidRange, parseRange("bytes=0-", 0));
+    try std.testing.expectError(error.InvalidRange, parseRange("bytes=-1", 0));
     try std.testing.expectEqual(Conditional.not_modified, evaluate("v1", "v1", null));
 }
 

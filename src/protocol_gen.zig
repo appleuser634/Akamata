@@ -27,7 +27,10 @@ fn emitTypescript(comptime U: type, w: *std.Io.Writer, options: Options) !void {
     inline for (@typeInfo(U).@"union".fields, 0..) |field, i| {
         try w.print("  {s} {{ event_type: \"{s}\"; payload: {s}Payload }}\n", .{ if (i == 0) "=" else "|", field.name, title(field.name) });
     }
-    try w.print("export interface AkamataEnvelope<T extends {s} = {s}> {{ protocol_version: {d}; event_id?: string; correlation_id?: string; event: T }}\n", .{ options.name, options.name, options.version });
+    // events.Protocol uses a flat wire envelope: the discriminator and payload
+    // are siblings of the version/correlation metadata, not nested in `event`.
+    try w.print("export interface AkamataEnvelopeMeta {{ protocol_version: {d}; event_id?: string; correlation_id?: string }}\n", .{options.version});
+    try w.print("export type AkamataEnvelope = AkamataEnvelopeMeta & {s}\n", .{options.name});
     try w.writeAll(
         "export function connectAkamata(url: string, onEvent: (event: AkamataEnvelope) => void): WebSocket {\n" ++
             "  const ws = new WebSocket(url); ws.addEventListener(\"message\", e => onEvent(JSON.parse(String(e.data)))); return ws;\n}\n",
@@ -62,6 +65,18 @@ fn emitC(comptime U: type, w: *std.Io.Writer, options: Options) !void {
 }
 
 fn writeTsType(comptime T: type, w: *std.Io.Writer) !void {
+    if (@typeInfo(T) == .@"struct" and @hasDecl(T, "contract_kind")) {
+        switch (T.contract_kind) {
+            .bounded_string => try w.writeAll("string"),
+            .fixed_bytes => try w.writeAll("number[]"),
+            .bounded_slice => {
+                try writeTsType(T.Element, w);
+                try w.writeAll("[]");
+            },
+            else => unreachable,
+        }
+        return;
+    }
     switch (@typeInfo(T)) {
         .@"struct" => |s| {
             try w.writeAll("{");
@@ -143,6 +158,8 @@ test "generate TypeScript and C realtime clients" {
     const ts = try generate(E, std.testing.allocator, .{ .target = .typescript, .version = 2 });
     defer std.testing.allocator.free(ts);
     try std.testing.expect(std.mem.indexOf(u8, ts, "event_type: \"created\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "AkamataEnvelopeMeta & AkamataEvent") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "event: T") == null);
     const c = try generate(E, std.testing.allocator, .{ .target = .c, .version = 2 });
     defer std.testing.allocator.free(c);
     try std.testing.expect(std.mem.indexOf(u8, c, "AKAMATA_PROTOCOL_VERSION 2") != null);
