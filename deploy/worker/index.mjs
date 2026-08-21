@@ -18,6 +18,8 @@ const d1stmts = new Map();
 let nextStmtId = 1;
 let lastD1Meta = { changes: 0, lastRowId: -1 };
 let activeEnv = null;
+const r2ops = new Map();
+let nextR2Id = 1;
 
 function stmtRegistryAlloc(entry) {
   const id = nextStmtId++;
@@ -314,11 +316,80 @@ async function instantiate(env) {
     }),
   };
 
+  const r2Bridge = {
+    akamata_r2_put_begin: suspending(async (bindingPtr, bindingLen, keyPtr, keyLen, optionsPtr, optionsLen) => {
+      const bucket = env?.[readString(bindingPtr, bindingLen)];
+      if (!bucket?.put) return -2;
+      try {
+        const options = JSON.parse(readString(optionsPtr, optionsLen));
+        const stream = new TransformStream();
+        const id = nextR2Id++;
+        const putOptions = { httpMetadata: {}, customMetadata: {} };
+        if (options.content_type) putOptions.httpMetadata.contentType = options.content_type;
+        if (options.metadata_json) putOptions.customMetadata = JSON.parse(options.metadata_json);
+        if (options.if_match) putOptions.onlyIf = { etagMatches: options.if_match };
+        const promise = bucket.put(readString(keyPtr, keyLen), stream.readable, putOptions);
+        r2ops.set(id, { kind: "write", writer: stream.writable.getWriter(), promise });
+        return id;
+      } catch { return -5; }
+    }),
+    akamata_r2_put_write: suspending(async (id, ptr, len) => {
+      const op = r2ops.get(id); if (op?.kind !== "write") return -5;
+      try { await op.writer.write(readBytes(ptr, len).slice()); return 0; } catch { return -5; }
+    }),
+    akamata_r2_put_finish: suspending(async (id) => {
+      const op = r2ops.get(id); if (op?.kind !== "write") return -5;
+      try { await op.writer.close(); await op.promise; return 0; } catch { return -5; } finally { r2ops.delete(id); }
+    }),
+    akamata_r2_get_begin: suspending(async (bindingPtr, bindingLen, keyPtr, keyLen, offset, length, hasRange, optionsPtr, optionsLen) => {
+      const bucket = env?.[readString(bindingPtr, bindingLen)];
+      if (!bucket?.get) return -2;
+      try {
+        const options = JSON.parse(readString(optionsPtr, optionsLen));
+        const getOptions = {};
+        if (hasRange) getOptions.range = length > 0 ? { offset: Number(offset), length: Number(length) } : { offset: Number(offset) };
+        if (options.if_match) getOptions.onlyIf = { etagMatches: options.if_match };
+        if (options.if_none_match) getOptions.onlyIf = { etagDoesNotMatch: options.if_none_match };
+        const object = await bucket.get(readString(keyPtr, keyLen), getOptions);
+        if (!object) return -1;
+        if (!object.body) return -3;
+        const id = nextR2Id++;
+        r2ops.set(id, { kind: "read", reader: object.body.getReader(), pending: new Uint8Array(0), size: Number(object.range?.length ?? object.size) });
+        return id;
+      } catch { return -5; }
+    }),
+    akamata_r2_get_size(id) { return BigInt(r2ops.get(id)?.size ?? 0); },
+    akamata_r2_get_read: suspending(async (id, outPtr, outCap) => {
+      const op = r2ops.get(id); if (op?.kind !== "read") return -5;
+      try {
+        if (op.pending.length === 0) {
+          const next = await op.reader.read();
+          if (next.done) return 0;
+          op.pending = next.value;
+        }
+        const n = Math.min(outCap, op.pending.length);
+        writeBytes(outPtr, op.pending.subarray(0, n));
+        op.pending = op.pending.subarray(n);
+        return n;
+      } catch { return -5; }
+    }),
+    akamata_r2_get_close(id) { const op = r2ops.get(id); if (op?.reader) op.reader.cancel().catch(() => {}); r2ops.delete(id); },
+    akamata_r2_delete: suspending(async (bindingPtr, bindingLen, keyPtr, keyLen) => {
+      const bucket = env?.[readString(bindingPtr, bindingLen)]; if (!bucket?.delete) return -2;
+      try { await bucket.delete(readString(keyPtr, keyLen)); return 0; } catch { return -5; }
+    }),
+    akamata_r2_head: suspending(async (bindingPtr, bindingLen, keyPtr, keyLen) => {
+      const bucket = env?.[readString(bindingPtr, bindingLen)]; if (!bucket?.head) return -2n;
+      try { const object = await bucket.head(readString(keyPtr, keyLen)); return object ? BigInt(object.size) : -1n; } catch { return -5n; }
+    }),
+  };
+
   const imports = {
     akamata_env: envBridge,
     akamata_d1: d1Bridge,
     akamata_http: httpBridge,
     akamata_queue: queueBridge,
+    akamata_r2: r2Bridge,
   };
 
   instance = await WebAssembly.instantiate(wasm, imports);

@@ -17,6 +17,17 @@ pub const GetOptions = struct { range: ?Range = null, if_match: ?[]const u8 = nu
 pub const Object = struct { metadata: Metadata, body: stream.Reader };
 pub const ListEntry = struct { key: []const u8, metadata: Metadata };
 
+/// Object keys are portable relative paths, never filesystem paths or URLs.
+/// Adapters must call this at their trust boundary before accessing a backend.
+pub fn validateKey(key: []const u8) Error!void {
+    if (key.len == 0 or key.len > 1024 or key[0] == '/' or key[key.len - 1] == '/') return error.PermissionDenied;
+    if (std.mem.indexOfScalar(u8, key, 0) != null or std.mem.indexOfScalar(u8, key, '\\') != null) return error.PermissionDenied;
+    var parts = std.mem.splitScalar(u8, key, '/');
+    while (parts.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".") or std.mem.eql(u8, part, "..")) return error.PermissionDenied;
+    }
+}
+
 pub const Store = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -69,8 +80,61 @@ pub fn parseRange(value: []const u8, size: u64) !Range {
     return .{ .offset = start, .length = @min(end, size - 1) - start + 1 };
 }
 
+/// Stream an object into an Akamata Context with HTTP Range/conditional
+/// semantics. The fixed buffer bounds application memory for firmware-sized
+/// and larger downloads on both Native and Workers adapters.
+pub fn serveDownload(c: anytype, store: Store, key: []const u8) !void {
+    const full = try store.head(key);
+    const requested_range = if (c.req.header("range")) |value| parseRange(value, full.size) catch {
+        c.status(416);
+        try c.header("content-range", try std.fmt.allocPrint(c.arena, "bytes */{d}", .{full.size}));
+        return;
+    } else null;
+    const conditional = evaluate(full.etag, c.req.header("if-none-match"), c.req.header("if-match"));
+    if (conditional == .not_modified) {
+        c.status(304);
+        return;
+    }
+    if (conditional == .precondition_failed) {
+        c.status(412);
+        return;
+    }
+    var object = try store.get(key, .{ .range = requested_range });
+    defer object.body.close();
+    const length = if (requested_range) |range| range.length orelse (full.size - range.offset) else full.size;
+    c.status(if (requested_range != null) 206 else 200);
+    try c.header("accept-ranges", "bytes");
+    try c.header("content-length", try std.fmt.allocPrint(c.arena, "{d}", .{length}));
+    try c.header("content-type", full.content_type orelse "application/octet-stream");
+    if (full.etag) |etag| try c.header("etag", etag);
+    if (requested_range) |range| try c.header("content-range", try std.fmt.allocPrint(c.arena, "bytes {d}-{d}/{d}", .{ range.offset, range.offset + length - 1, full.size }));
+    if (std.ascii.eqlIgnoreCase(c.req.method(), "HEAD")) return;
+    const writer = try c.startStream(.{});
+    var buffer: [64 * 1024]u8 = undefined;
+    while (true) {
+        const n = try object.body.read(&buffer);
+        if (n == 0) break;
+        try writer.writeAll(buffer[0..n]);
+        try writer.flush();
+    }
+}
+
 test "HTTP range and conditionals" {
     try std.testing.expectEqual(Range{ .offset = 10, .length = 10 }, try parseRange("bytes=10-19", 100));
     try std.testing.expectEqual(Range{ .offset = 90, .length = 10 }, try parseRange("bytes=-10", 100));
     try std.testing.expectEqual(Conditional.not_modified, evaluate("v1", "v1", null));
+}
+
+test "portable object keys reject traversal" {
+    try validateKey("objects/a.bin");
+    try std.testing.expectError(error.PermissionDenied, validateKey("../secret"));
+    try std.testing.expectError(error.PermissionDenied, validateKey("objects//a"));
+    try std.testing.expectError(error.PermissionDenied, validateKey("/absolute"));
+    try std.testing.expectError(error.PermissionDenied, validateKey("objects\\a"));
+}
+
+pub const filesystem = @import("storage/filesystem.zig");
+
+test {
+    _ = filesystem;
 }
