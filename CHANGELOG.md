@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-26
+
+### Added
+
+- Compile-time route graphs, typed request contracts, error-to-response maps,
+  capability validation, static middleware composition, static DB dispatch,
+  and compile-time DI graph checks.
+- Typed, versioned event protocols with TypeScript and bounded C/embedded
+  metadata generation.
+- Portable realtime contracts with authenticated principals, room
+  authorization, presence, direct send, broadcast, sender exclusion, and
+  transport-backed disconnect for Native and Durable Objects.
+- Portable object storage with filesystem and R2 adapters, metadata, ETags,
+  conditional requests, bounded listing, byte ranges, and download helpers.
+- Portable Workers bindings and capability declarations for D1, R2, Durable
+  Objects, Queues, secrets, and variables.
+- Queue delivery metadata, generic identity/principal support, stream and
+  outbound-network contracts, and correlated activity observability.
+- Contract-aware CLI inspection, project diagnostics, API diffing, resource
+  generation, database sandboxing, and a full-screen API client TUI.
+- A portable `device_messaging` reference application sharing application
+  contracts between Native and Workers targets.
+
+### Changed
+
+- Akamata now supports additive Runtime and Static/comptime API layers over the
+  same `App`, `Context`, request, response, OpenAPI, and client-generation core.
+- D1 statement buffers, SQLite/Turso migration behavior, native realtime
+  fanout, and Workers deployment selection were hardened for production use.
+- Realtime messages must pass bounded typed decoding and application handlers;
+  the Workers control plane is isolated from public HTTP routes.
+- The generated TypeScript realtime client uses the same flat versioned wire
+  envelope as the Zig protocol.
+- The product-specific Mobus example and all related deployment assets were
+  removed.
+
+### Fixed
+
+- Streaming endpoint requests no longer hang the CLI client.
+- Native realtime uses per-message allocation and invokes transports outside
+  registry locks.
+- Ranged downloads use exact content lengths and reject ranges over empty
+  representations safely.
+- Filesystem object listing uses an iterable directory handle on Linux.
+- Native integration shutdown reliably wakes a blocking accept loop on Linux.
+
+### Testing
+
+- Added compile-fail coverage for route, input, error-map, capability, binding,
+  protocol, and DI failures.
+- Added Native/Workers realtime parity tests, D1 mocks, portable benchmarks,
+  storage tests, embedded protocol tests, and opt-in live Cloudflare D1/R2/DO/
+  WebSocket coverage.
+
+See the [compile-time architecture](docs/en/comptime-architecture.md),
+[portable backend guide](docs/en/portable-backend.md), and
+[Japanese documentation](docs/ja/README.md).
+
 ## [0.0.2] - 2026-08-17
 
 ### Changed

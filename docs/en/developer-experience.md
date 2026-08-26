@@ -1,6 +1,6 @@
 # Developer experience
 
-Akamata keeps route knowledge in Zig values so the compiler, runtime, OpenAPI generator, client generator, and tests can share it. This page covers the development tools introduced after v0.0.2; pin `main` until they appear in a tagged release.
+Akamata keeps route knowledge in Zig values so the compiler, runtime, OpenAPI generator, client generator, and tests can share it. The development tools on this page are available in v0.1.0.
 
 ## Endpoint contracts and typed inputs
 

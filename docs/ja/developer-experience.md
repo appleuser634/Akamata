@@ -1,6 +1,6 @@
 # 開発体験
 
-Akamataはroute情報をZigの値として保持し、compiler、runtime、OpenAPI生成、client生成、testで共有します。このページはv0.0.2以降に`main`へ追加された開発機能を説明します。tagged releaseに含まれるまでは`main`のrevisionを固定してください。
+Akamataはroute情報をZigの値として保持し、compiler、runtime、OpenAPI生成、client生成、testで共有します。このページの開発機能はv0.1.0で利用できます。
 
 ## Endpoint contractと型付きinput
 
