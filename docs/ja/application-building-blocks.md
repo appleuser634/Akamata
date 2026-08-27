@@ -21,6 +21,23 @@ const loaded = try am.model.preload.belongsTo(Part, "category", parts, db, arena
 
 Builderは等価、`IN`、order、pagingだけを扱います。JOIN、OR、aggregate、
 DB固有SQLにはraw SQLを使用してください。handlerでは
+Queryに応じて次の最小レイヤーを選びます。
+
+- primary key CRUDとpartial updateは`Repo(Model)`／`updateFields`
+- 単一tableのfilter、order、paginationは`Query`
+- 通常の外部keyをN+1なしで読む場合は`preload.belongsTo`
+- aggregateやprojectionを任意DTOへ写す場合は`am.db.fetchAll(DTO, ...)`
+- 複雑なJOIN、CTE、window関数、在庫引当、認可条件等の業務SQLは`Db.prepare`
+
+例えばparts一覧は`Query`とcategoryの`preload.belongsTo`で短くできますが、
+在庫予約はconstraintを伴う明示的なraw statementとして残します。Akamataは
+row mappingを共通化しても、業務transactionやD1非対応transactionを隠しません。
+
+byte stringはSQLite/D1共通で、`[N]u8`、`*[N]u8`、`[]u8`、`[]const u8`を
+全長N byteのTEXTとしてbindします。BLOBは`am.db.Value{ .blob = bytes }`を
+明示してください。他のarray/slice element型は誤変換せずcompile errorになります。
+
+handlerでは
 `(try c.validatedJson(Input)) orelse return`によりJSON parseとvalidationを
 一度に実行できます。`__schema.validates`を持つ任意DTOで利用でき、失敗は
 HTTP 422と`{"error_kind":"validation","errors":[...]}`に統一されます。
@@ -39,6 +56,12 @@ _ = try app.use(am.mw.csrf(State, .{
     .bind_to_session = true,
 }));
 ```
+
+tenantごとにHostが異なる場合は
+`.origin_verifier = am.mw.csrfOriginMatchesHost`、proxyでHostを書き換える場合は
+独自verifierを指定できます。`.session_verifier`によりアプリ独自DB sessionの
+token hashとも照合できます。hookを指定してもdouble-submitとFetch Metadata検証は
+無効になりません。
 
 標準の400/401/403/404/409/422/500変換は
 `try app.onError(am.errors.defaultHandler(State));`で登録できます。独自global

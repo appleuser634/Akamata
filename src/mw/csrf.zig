@@ -19,15 +19,38 @@ const session_mod = @import("session.zig");
 
 const b64url = std.base64.url_safe_no_pad;
 
+/// Dynamic origin policy for applications whose public host varies by tenant.
+/// It compares the serialized Origin authority with the request Host. Use it
+/// as `origin_verifier`; host-rewriting proxies should provide their own hook.
+pub fn originMatchesHost(request: @import("../http/request.zig").Request, _: *anyopaque) anyerror!bool {
+    const origin = request.header("origin") orelse return false;
+    const host = request.header("host") orelse return false;
+    const marker = std.mem.indexOf(u8, origin, "://") orelse return false;
+    const scheme = origin[0..marker];
+    if (!std.ascii.eqlIgnoreCase(scheme, "http") and !std.ascii.eqlIgnoreCase(scheme, "https")) return false;
+    const authority = origin[marker + 3 ..];
+    if (authority.len == 0 or std.mem.indexOfAny(u8, authority, "/?#@") != null) return false;
+    return std.ascii.eqlIgnoreCase(authority, host);
+}
+
 pub const Options = struct {
+    pub const OriginVerifier = *const fn (request: @import("../http/request.zig").Request, app_state: *anyopaque) anyerror!bool;
+    pub const SessionVerifier = *const fn (request: @import("../http/request.zig").Request, app_state: *anyopaque, token: []const u8, token_hash: [64]u8) anyerror!bool;
     cookie_name: []const u8 = "akamata_csrf",
     header_name: []const u8 = "x-csrf-token",
     cookie_path: []const u8 = "/",
     cookie_secure: bool = true,
     cookie_same_site: cookie_mod.SameSite = .lax,
     expected_origin: ?[]const u8 = null,
+    /// Application hook for dynamic tenant/proxy-aware origin policy. It runs
+    /// in addition to `expected_origin`, never instead of fetch metadata.
+    origin_verifier: ?OriginVerifier = null,
     enforce_fetch_metadata: bool = true,
     bind_to_session: bool = false,
+    /// Connect CSRF binding to an application-owned DB session schema. When
+    /// set, this verifier replaces only the built-in cookie-session hash
+    /// lookup. The double-submit and origin/fetch checks remain mandatory.
+    session_verifier: ?SessionVerifier = null,
     /// Methods that bypass token verification (and on which a fresh token is
     /// minted if the cookie is missing).
     safe_methods: []const []const u8 = &[_][]const u8{ "GET", "HEAD", "OPTIONS" },
@@ -68,21 +91,20 @@ pub fn csrf(comptime State: type, comptime opts: Options) app_mod.Middleware(Sta
                 const origin = c.req.header("origin") orelse return reject(c, "origin_missing");
                 if (!crypto_util.sameOrigin(origin, expected)) return reject(c, "origin_mismatch");
             }
+            if (opts.origin_verifier) |verify| {
+                if (!try verify(c.req.inner.*, @ptrCast(c.app_state))) return reject(c, "origin_mismatch");
+            }
 
             // Unsafe method: cookie + header must match.
             const cookie_v = existing orelse return reject(c, "csrf_cookie_missing");
             const header_v = c.req.header(opts.header_name) orelse return reject(c, "csrf_header_missing");
-            if (cookie_v.len != header_v.len) return reject(c, "csrf_token_mismatch");
-            if (!std.crypto.timing_safe.eql(u8, cookie_v[0..0], header_v[0..0])) {
-                // Same-length but not byte-for-byte equal — also reject.
-                if (!constantTimeEq(cookie_v, header_v)) return reject(c, "csrf_token_mismatch");
-            } else if (!constantTimeEq(cookie_v, header_v)) {
-                return reject(c, "csrf_token_mismatch");
-            }
-            if (opts.bind_to_session) {
+            if (!crypto_util.timingSafeEqual(cookie_v, header_v)) return reject(c, "csrf_token_mismatch");
+            const actual_hash = crypto_util.sha256Hex(cookie_v);
+            if (opts.session_verifier) |verify| {
+                if (!try verify(c.req.inner.*, @ptrCast(c.app_state), cookie_v, actual_hash)) return reject(c, "session_hash_mismatch");
+            } else if (opts.bind_to_session) {
                 const session = session_mod.currentSession(State, c) orelse return reject(c, "session_missing");
                 const expected_hash = try session.get("__csrf_hash") orelse return reject(c, "session_hash_missing");
-                const actual_hash = crypto_util.sha256Hex(cookie_v);
                 if (!crypto_util.timingSafeEqual(expected_hash, &actual_hash)) return reject(c, "session_hash_mismatch");
             }
             return next.run(c);
@@ -97,13 +119,6 @@ pub fn csrf(comptime State: type, comptime opts: Options) app_mod.Middleware(Sta
 
         fn reject(c: *app_mod.App(State).Ctx, reason: []const u8) anyerror!void {
             return c.json(.{ .error_kind = "csrf", .reason = reason }, 403);
-        }
-
-        fn constantTimeEq(a: []const u8, b: []const u8) bool {
-            if (a.len != b.len) return false;
-            var diff: u8 = 0;
-            for (a, b) |x, y| diff |= x ^ y;
-            return diff == 0;
         }
 
         fn mintToken(arena: std.mem.Allocator) ![]u8 {

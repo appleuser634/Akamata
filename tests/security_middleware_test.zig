@@ -5,6 +5,33 @@ const State = struct {};
 var fake_now: i64 = 100;
 var store_iface: am.mw.SessionStore = undefined;
 
+fn customCsrfSessionVerifier(request: am.Request, state: *anyopaque, token: []const u8, token_hash: [64]u8) anyerror!bool {
+    _ = request;
+    _ = state;
+    return token.len > 0 and token_hash.len == 64;
+}
+
+test "CSRF accepts an application-owned session verifier" {
+    const middleware = am.mw.csrf(State, .{ .session_verifier = customCsrfSessionVerifier });
+    try std.testing.expectEqualStrings("csrf", middleware.name);
+}
+
+test "CSRF dynamic origin helper matches the request Host" {
+    var state: State = .{};
+    const headers = [_]am.http.RequestHeader{
+        .{ .name = "host", .value = "tenant.example:8443" },
+        .{ .name = "origin", .value = "https://tenant.example:8443" },
+    };
+    const request: am.Request = .{ .method = .POST, .raw_method = "POST", .path = "/", .query = "", .version = "HTTP/1.1", .headers = &headers, .body = "", .keep_alive = false };
+    try std.testing.expect(try am.mw.csrfOriginMatchesHost(request, @ptrCast(&state)));
+    var bad = request;
+    bad.headers = &.{
+        .{ .name = "host", .value = "tenant.example:8443" },
+        .{ .name = "origin", .value = "https://evil.example" },
+    };
+    try std.testing.expect(!try am.mw.csrfOriginMatchesHost(bad, @ptrCast(&state)));
+}
+
 fn now() i64 {
     return fake_now;
 }

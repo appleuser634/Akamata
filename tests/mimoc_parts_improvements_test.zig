@@ -8,6 +8,17 @@ const Item = struct {
     pub const __schema = .{ .table = "items", .primary_key = "id" };
 };
 
+test "randomHex supports runtime byte counts" {
+    const cases = [_]usize{ 0, 1, 32, 11 };
+    var i: usize = 0;
+    while (i < cases.len) : (i += 1) {
+        const byte_count = cases[i];
+        const value = try am.crypto.randomHex(std.testing.allocator, byte_count);
+        defer std.testing.allocator.free(value);
+        try std.testing.expectEqual(byte_count * 2, value.len);
+    }
+}
+
 test "portable utility surface is available" {
     try std.testing.expect(am.crypto.timingSafeEqual("same", "same"));
     try std.testing.expect(am.crypto.sameOrigin("https://parts.example", "HTTPS://PARTS.EXAMPLE"));

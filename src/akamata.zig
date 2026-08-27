@@ -116,6 +116,7 @@ pub const mw = struct {
 
     pub const csrf = @import("mw/csrf.zig").csrf;
     pub const CsrfOptions = @import("mw/csrf.zig").Options;
+    pub const csrfOriginMatchesHost = @import("mw/csrf.zig").originMatchesHost;
 
     pub const rateLimit = @import("mw/ratelimit.zig").rateLimit;
     pub const RateLimitOptions = @import("mw/ratelimit.zig").Options;

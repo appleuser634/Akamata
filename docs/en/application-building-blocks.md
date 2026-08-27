@@ -21,6 +21,25 @@ const loaded = try am.model.preload.belongsTo(Part, "category", parts, db, arena
 
 The builder deliberately supports only equality, `IN`, ordering and paging.
 Use raw SQL for joins, OR expressions, aggregates and database-specific work.
+Choose the smallest layer that fits the query:
+
+- `Repo(Model)` for primary-key CRUD and `updateFields` partial updates;
+- `Query` for one-table filters, ordering, and pagination;
+- `preload.belongsTo` for a conventional foreign key without N+1 queries;
+- `am.db.fetchAll(DTO, ...)` for aggregates, projections, and raw SQL mapped
+  into a purpose-built DTO;
+- `Db.prepare` for conditional binding, complex joins, CTEs, window functions,
+  inventory allocation, authorization predicates, or other business SQL.
+
+For example, a parts screen can use `Query` for its page and
+`preload.belongsTo` for categories, while stock reservation remains an
+explicit constraint-backed statement. Akamata maps rows but does not hide the
+business transaction or pretend D1 provides transactions.
+
+Byte strings bind consistently on SQLite and D1: `[N]u8`, `*[N]u8`, `[]u8`,
+and `[]const u8` are TEXT values containing all N bytes. Use an explicit
+`am.db.Value{ .blob = bytes }` for BLOB semantics. Other array/slice element
+types fail at compile time instead of being coerced.
 Handlers can use `(try c.validatedJson(Input)) orelse return`; validation is
 available to any DTO with `__schema.validates`, not only persisted models.
 Errors use `{ "error_kind": "validation", "errors": [...] }` with HTTP 422.
@@ -39,6 +58,11 @@ _ = try app.use(am.mw.csrf(State, .{
     .bind_to_session = true,
 }));
 ```
+
+For tenant-specific hosts, set `.origin_verifier = am.mw.csrfOriginMatchesHost`
+or provide a proxy-aware custom verifier. `.session_verifier` connects the
+token hash to an application-owned database session. These hooks supplement
+the double-submit and Fetch Metadata checks; they do not disable them.
 
 Register `try app.onError(am.errors.defaultHandler(State));` for the standard
 400/401/403/404/409/422/500 mapping, or register an application handler.

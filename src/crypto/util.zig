@@ -10,14 +10,26 @@ pub fn randomHex(allocator: std.mem.Allocator, byte_count: usize) ![]u8 {
     const raw = try allocator.alloc(u8, byte_count);
     defer allocator.free(raw);
     random.fill(raw);
-    const out = try allocator.alloc(u8, byte_count * 2);
-    _ = std.fmt.bytesToHex(raw, .lower); // keep output sizing checked by std
+    const output_len = std.math.mul(usize, byte_count, 2) catch return error.OutOfMemory;
+    const out = try allocator.alloc(u8, output_len);
     for (raw, 0..) |byte, i| {
         const alphabet = "0123456789abcdef";
         out[i * 2] = alphabet[byte >> 4];
         out[i * 2 + 1] = alphabet[byte & 0x0f];
     }
     return out;
+}
+
+test "randomHex accepts zero, fixed, and runtime lengths" {
+    const lengths = [_]usize{ 0, 1, 32, 7 };
+    var runtime_index: usize = 0;
+    while (runtime_index < lengths.len) : (runtime_index += 1) {
+        const byte_count = lengths[runtime_index];
+        const value = try randomHex(std.testing.allocator, byte_count);
+        defer std.testing.allocator.free(value);
+        try std.testing.expectEqual(byte_count * 2, value.len);
+        for (value) |c| try std.testing.expect(std.ascii.isHex(c) and !std.ascii.isUpper(c));
+    }
 }
 
 pub fn sha256(bytes: []const u8) [32]u8 {

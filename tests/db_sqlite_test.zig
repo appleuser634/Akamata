@@ -134,3 +134,26 @@ test "database pool leases independent handles" {
     a.deinit();
     b.deinit();
 }
+test "byte arrays, pointers, and slices bind their complete value" {
+    const alloc = std.testing.allocator;
+    var db = try am.db.openSqlite(alloc, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE bytes (kind TEXT, value TEXT)");
+
+    var mutable: [64]u8 = [_]u8{'x'} ** 64;
+    const direct: [4]u8 = .{ 'a', 'b', 'c', 'd' };
+    const mutable_slice: []u8 = mutable[0..5];
+    const const_slice: []const u8 = mutable[0..7];
+    var stmt = try db.prepare("INSERT INTO bytes VALUES (?, ?), (?, ?), (?, ?), (?, ?)");
+    defer stmt.deinit();
+    try stmt.bindAll(.{ "array", direct, "pointer", &mutable, "mutable_slice", mutable_slice, "const_slice", const_slice });
+    _ = try stmt.step();
+
+    var rows = try db.prepare("SELECT length(value) FROM bytes ORDER BY rowid");
+    defer rows.deinit();
+    const expected = [_]i64{ 4, 64, 5, 7 };
+    for (expected) |length| {
+        try std.testing.expectEqual(am.db.StepResult.row, try rows.step());
+        try std.testing.expectEqual(length, try rows.columnInt(0));
+    }
+}
