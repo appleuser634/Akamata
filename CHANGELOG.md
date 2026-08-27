@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-27
+
+### Fixed
+
+- Made `am.crypto.randomHex` accept runtime byte counts on native and Workers
+  and removed its invalid compile-time-only formatting call.
+- Preserved the complete value when binding `[N]u8`, `*[N]u8`, `[]u8`, and
+  `[]const u8` through SQLite and the Workers/D1 bridge; unsupported element
+  types now fail explicitly at compile time.
+- Simplified CSRF token comparison to one timing-safe operation.
+
+### Added
+
+- Added dynamic request/Host origin verification and a custom session-hash
+  verifier hook without weakening double-submit or Fetch Metadata checks.
+- Documented when to use repositories, lightweight queries, preload, DTO raw
+  mapping, and explicit complex business SQL.
+
+### Testing
+
+- Added runtime random-hex length cases, byte-array SQLite/D1 binding contract
+  coverage, unsupported-bind compile failures, and CSRF hook regressions.
+
 ## [0.1.3] - 2026-08-27
 
 ### Added

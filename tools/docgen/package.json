@@ -1,6 +1,6 @@
 {
   "name": "akamata-docgen",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "description": "Internal tool: converts the framework's *.md docs into print-styled PDFs using marked + headless Chrome.",
