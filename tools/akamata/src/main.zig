@@ -105,7 +105,7 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 fn isHelpArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
@@ -159,7 +159,7 @@ fn editDistance(a: []const u8, b: []const u8) usize {
 fn usage() !void {
     const msg =
         \\Usage: akamata <command> [args]
-        \\Version: akamata 0.1.0 (use `akamata --version` for the version)
+        \\Version: akamata 0.1.1 (use `akamata --version` for the version)
         \\
         \\Commands:
         \\  init <name> [--target=native|workers|containers|both]
@@ -1169,14 +1169,20 @@ test "scaffold dependency is remote, pinned, and locally overridable" {
 }
 
 test "scaffold dependency tracks the current stable release" {
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.0.2.tar.gz") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "akamata-0.0.2-uJIoI5T_KAFZkcv0y51rjhWLE5gk1A6Nj82GUN-GDKu8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.1.0.tar.gz") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "akamata-0.1.0-uJIoI4fvKwH--xMKwulRpDc6xEEUfaP0oilU6-dfUqbw") != null);
 }
 
 test "Workers scaffold guards zero-length wasm memory access" {
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "l === 0 ? new Uint8Array(0)") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "if (b.length > 0) new Uint8Array(memory.buffer") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "new Uint8Array(memory.buffer, p, l)") != null);
+}
+
+test "Workers scaffold serializes the complete JSPI wasm dispatch" {
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "class WasmDispatchQueue") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "wasmDispatchQueue.run(() => dispatchWasm(request))") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "const respLen = exp.last_response_length()") != null);
 }
 
 test "Workers scaffold includes current observability clock imports" {

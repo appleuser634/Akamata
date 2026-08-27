@@ -176,6 +176,9 @@ pub fn build(b: *std.Build) void {
     const workers_realtime_command = b.addSystemCommand(&.{ "node", "--test", "tests/workers_realtime_test.mjs" });
     const workers_realtime_step = b.step("workers-realtime-test", "run Durable Object realtime contract tests");
     workers_realtime_step.dependOn(&workers_realtime_command.step);
+    const workers_wasm_dispatch_command = b.addSystemCommand(&.{ "node", "--test", "tests/workers_wasm_dispatch_test.mjs" });
+    const workers_wasm_dispatch_step = b.step("workers-wasm-dispatch-test", "run concurrent Workers WASM dispatch regression tests");
+    workers_wasm_dispatch_step.dependOn(&workers_wasm_dispatch_command.step);
     const cloudflare_live_command = b.addSystemCommand(&.{ "node", "tests/cloudflare_live.mjs" });
     const cloudflare_live_step = b.step("cloudflare-live-test", "run opt-in live D1/R2 smoke tests");
     cloudflare_live_step.dependOn(&cloudflare_live_command.step);

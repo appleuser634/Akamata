@@ -27,6 +27,7 @@ grep -F '.url = "https://github.com/appleuser634/Akamata/archive/' build.zig.zon
 grep -F '.hash = "akamata-' build.zig.zon >/dev/null
 grep -F 'l === 0 ? new Uint8Array(0)' deploy/worker/index.mjs >/dev/null
 grep -F 'if (b.length > 0) new Uint8Array(memory.buffer' deploy/worker/index.mjs >/dev/null
+grep -F 'wasmDispatchQueue.run(() => dispatchWasm(request))' deploy/worker/index.mjs >/dev/null
 
 zig build
 zig build -Dbackend=workers -Doptimize=ReleaseSmall

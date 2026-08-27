@@ -10,9 +10,12 @@
 // against D1 or Turso here, with no source changes.
 
 import wasm from "../../../zig-out/bin/guestbook_worker.wasm";
+import { WasmDispatchQueue } from "../../worker/wasm_dispatch.mjs";
 
 let instance, memory, exports_ref, handleFetchAsync;
+let instantiatePromise;
 let jspi_supported = false;
+const wasmDispatchQueue = new WasmDispatchQueue();
 
 const d1stmts = new Map();
 let nextStmtId = 1;
@@ -33,6 +36,13 @@ function suspending(fn) {
 
 async function instantiate(env) {
   if (instance) return;
+  if (instantiatePromise) return instantiatePromise;
+  instantiatePromise = instantiateOnce(env);
+  try { await instantiatePromise; }
+  catch (error) { instantiatePromise = undefined; throw error; }
+}
+
+async function instantiateOnce(env) {
   detectJspi();
 
   const envBridge = {
@@ -213,6 +223,11 @@ export default {
   async fetch(request, env, ctx) {
     await instantiate(env);
 
+    return wasmDispatchQueue.run(() => dispatchWasm(request));
+  },
+};
+
+async function dispatchWasm(request) {
     const url = new URL(request.url);
     const bodyBuf = new Uint8Array(await request.arrayBuffer());
     const headers = [];
@@ -247,9 +262,9 @@ export default {
       if (ci < 0) continue;
       respHeaders.set(lines[i].slice(0, ci).trim(), lines[i].slice(ci + 1).trim());
     }
+    if (!Number.isInteger(status) || status < 200 || status > 599) return new Response("invalid wasm response status", { status: 502 });
     return new Response(respBody, { status, headers: respHeaders });
-  },
-};
+}
 
 function findHeaderEnd(bytes) {
   for (let i = 0; i + 3 < bytes.length; i++) {

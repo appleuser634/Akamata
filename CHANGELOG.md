@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-27
+
+### Fixed
+
+- Serialized all dispatches into a shared Workers WebAssembly instance across
+  the complete request/response ABI transaction. Concurrent HTTP requests or
+  Queue deliveries can no longer race the JSPI-suspended `handle_fetch`,
+  response pointer and length, allocator, or bridge request state.
+- Coalesced concurrent first-request WebAssembly initialization and converted
+  malformed WASM response status lines into an explicit `502` response instead
+  of allowing the Workers `Response` constructor to throw a `RangeError`.
+
+### Testing
+
+- Added a 256-request concurrent Workers regression test that suspends each
+  simulated WASM dispatch and verifies response isolation, allocator cleanup,
+  FIFO serialization, and recovery after a rejected dispatch.
+
 ## [0.1.0] - 2026-08-26
 
 ### Added

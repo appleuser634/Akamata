@@ -12,15 +12,17 @@
 import wasm from "../../zig-out/bin/akamata_worker.wasm";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { REALTIME_AUTHORIZE_PATH, REALTIME_MESSAGE_PATH, rejectPublicInternalRoute } from "./internal_routes.mjs";
+import { WasmDispatchQueue } from "./wasm_dispatch.mjs";
 
 let instance, memory, exports_ref, handleFetchAsync;
+let instantiatePromise;
 let jspi_supported = false;
+const wasmDispatchQueue = new WasmDispatchQueue();
 
 // === D1 statement registry ===
 const d1stmts = new Map();
 let nextStmtId = 1;
 let lastD1Meta = { changes: 0, lastRowId: -1 };
-let activeEnv = null;
 const r2ops = new Map();
 let nextR2Id = 1;
 const r2lists = new Map();
@@ -51,7 +53,17 @@ function suspending(fn) {
 
 async function instantiate(env) {
   if (instance) return;
-  activeEnv = env;
+  if (instantiatePromise) return instantiatePromise;
+  instantiatePromise = instantiateOnce(env);
+  try {
+    await instantiatePromise;
+  } catch (error) {
+    instantiatePromise = undefined;
+    throw error;
+  }
+}
+
+async function instantiateOnce(env) {
   detectJspi();
 
   const envBridge = {
@@ -447,7 +459,6 @@ async function instantiate(env) {
 
 export default {
   async fetch(request, env, ctx) {
-    activeEnv = env;
     await instantiate(env);
 
     const url = new URL(request.url);
@@ -501,7 +512,6 @@ export default {
     return dispatchWasm(request);
   },
   async queue(batch, env) {
-    activeEnv = env;
     await instantiate(env);
     if (typeof exports_ref.handle_queue !== "function") {
       for (const message of batch.messages) message.retry();
@@ -515,16 +525,17 @@ export default {
         attempt: message.attempts,
         timestamp: message.timestamp.toISOString(),
       }));
-      const ptr = exports_ref.alloc(bytes.length);
-      writeBytes(ptr, bytes);
       try {
-        const rc = await consume(ptr, bytes.length);
+        const rc = await wasmDispatchQueue.run(async () => {
+          const ptr = exports_ref.alloc(bytes.length);
+          writeBytes(ptr, bytes);
+          try { return await consume(ptr, bytes.length); }
+          finally { exports_ref.dealloc(ptr, bytes.length); }
+        });
         if (rc === 0) message.ack(); else message.retry();
       } catch (error) {
         console.error(JSON.stringify({ message: "queue consumer failed", event_id: message.id, error: error instanceof Error ? error.message : String(error) }));
         message.retry();
-      } finally {
-        exports_ref.dealloc(ptr, bytes.length);
       }
     }
   },
@@ -539,13 +550,19 @@ export class AkamataRealtimeApplication extends WorkerEntrypoint {
     if (request.method !== "POST" || url.pathname !== REALTIME_MESSAGE_PATH) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
-    activeEnv = this.env;
     await instantiate(this.env);
     return dispatchWasm(request);
   }
 }
 
 async function dispatchWasm(request) {
+  // JSPI can yield in handle_fetch. The Zig runtime exposes response length,
+  // response storage, allocator state, and bridge registries on the shared
+  // instance, so the entire ABI transaction must remain indivisible.
+  return wasmDispatchQueue.run(() => dispatchWasmUnlocked(request));
+}
+
+async function dispatchWasmUnlocked(request) {
     const url = new URL(request.url);
   const bodyBuf = new Uint8Array(await request.arrayBuffer());
   const headers = [];
@@ -600,6 +617,9 @@ function parseHttpResponse(bytes) {
     const idx = lines[i].indexOf(":");
     if (idx < 0) continue;
     headers.set(lines[i].slice(0, idx).trim(), lines[i].slice(idx + 1).trim());
+  }
+  if (!Number.isInteger(status) || status < 200 || status > 599) {
+    return new Response("invalid wasm response status", { status: 502 });
   }
   return new Response(body, { status, headers });
 }

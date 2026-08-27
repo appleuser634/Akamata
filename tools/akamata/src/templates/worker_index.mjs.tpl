@@ -7,7 +7,20 @@
 import wasm from "../../zig-out/bin/{{NAME}}_worker.wasm";
 
 let instance, memory, exp, handleFetchAsync;
+let initPromise;
 let jspi = false;
+
+class WasmDispatchQueue {
+  #tail = Promise.resolve();
+  async run(dispatch) {
+    let release;
+    const previous = this.#tail;
+    this.#tail = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try { return await dispatch(); } finally { release(); }
+  }
+}
+const wasmDispatchQueue = new WasmDispatchQueue();
 
 const d1stmts = new Map();
 let nextStmtId = 1;
@@ -30,6 +43,13 @@ function suspending(fn) {
 
 async function init(env) {
   if (instance) return;
+  if (initPromise) return initPromise;
+  initPromise = initOnce(env);
+  try { await initPromise; }
+  catch (error) { initPromise = undefined; throw error; }
+}
+
+async function initOnce(env) {
   detectJspi();
 
   const envBridge = {
@@ -204,6 +224,11 @@ async function init(env) {
 export default {
   async fetch(request, env, ctx) {
     await init(env);
+    return wasmDispatchQueue.run(() => dispatchWasm(request));
+  },
+};
+
+async function dispatchWasm(request) {
     const url = new URL(request.url);
     const body = new Uint8Array(await request.arrayBuffer());
     const headers = [];
@@ -233,9 +258,9 @@ export default {
       if (ci < 0) continue;
       respHeaders.set(lines[i].slice(0, ci).trim(), lines[i].slice(ci + 1).trim());
     }
+    if (!Number.isInteger(status) || status < 200 || status > 599) return new Response("invalid wasm response status", { status: 502 });
     return new Response(respBody, { status, headers: respHeaders });
-  },
-};
+}
 
 function findHeaderEnd(bytes) {
   for (let i = 0; i + 3 < bytes.length; i++) {
