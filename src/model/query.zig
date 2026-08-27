@@ -122,6 +122,33 @@ pub fn Repo(comptime T: type) type {
             _ = try stmt.step();
         }
 
+        /// Update only fields present in `patch`; the primary key remains an
+        /// explicit argument. This is intentionally not a dirty-tracking ORM.
+        pub fn updateFields(database: db_mod.Db, arena: std.mem.Allocator, id: i64, patch: anytype) !void {
+            const P = @TypeOf(patch);
+            if (@typeInfo(P) != .@"struct") @compileError("updateFields expects a struct patch");
+            const fields = @typeInfo(P).@"struct".fields;
+            if (fields.len == 0) return;
+            var sql: std.ArrayList(u8) = .empty;
+            try sql.appendSlice(arena, "UPDATE " ++ table_def.table ++ " SET ");
+            inline for (fields, 0..) |field, i| {
+                if (i > 0) try sql.appendSlice(arena, ", ");
+                try sql.appendSlice(arena, comptime fieldSqlName(field.name));
+                try sql.appendSlice(arena, " = ?");
+            }
+            try sql.appendSlice(arena, " WHERE " ++ pk_sql_name ++ " = ?");
+            var stmt = try database.prepare(sql.items);
+            defer stmt.deinit();
+            inline for (fields, 0..) |field, i| try stmt.bind(i + 1, db_mod.Value.fromAny(@field(patch, field.name)));
+            try stmt.bind(fields.len + 1, .{ .int = id });
+            _ = try stmt.step();
+        }
+
+        /// Raw SQL escape hatch mapped into an arbitrary DTO rather than T.
+        pub fn fetchAllAs(comptime DTO: type, database: db_mod.Db, arena: std.mem.Allocator, sql: []const u8, args: anytype) ![]DTO {
+            return @import("row_mapper.zig").fetchAll(DTO, database, arena, sql, args);
+        }
+
         /// Escape hatch: run arbitrary SQL and map each row into `T`. The
         /// SQL must `SELECT` the model's columns in declaration order — i.e.
         /// the same columns the framework's auto-generated SELECTs use. For
@@ -239,64 +266,7 @@ pub fn Repo(comptime T: type) type {
 
         /// Read a row into T, duping all []const u8 fields into `arena`.
         fn readRowDupe(arena: std.mem.Allocator, stmt: db_mod.Stmt) !T {
-            var out: T = undefined;
-            const info = @typeInfo(T).@"struct";
-            inline for (info.fields, 0..) |f, i| {
-                const FT = f.type;
-                const fi = @typeInfo(FT);
-                // Enum fields with a `__schema.enums.<field>` mapping are stored
-                // as TEXT; we read the raw string and look it up in the map.
-                const enum_mapping_present = comptime schema_mod.enumStringsLookup(T, f.name) != null;
-                switch (fi) {
-                    .optional => |o| {
-                        if (try stmt.columnIsNull(i)) {
-                            @field(out, f.name) = null;
-                        } else switch (@typeInfo(o.child)) {
-                            .int => @field(out, f.name) = @intCast(try stmt.columnInt(i)),
-                            .float => @field(out, f.name) = @floatCast(try stmt.columnFloat(i)),
-                            .bool => @field(out, f.name) = (try stmt.columnInt(i)) != 0,
-                            .@"enum" => {
-                                if (!enum_mapping_present) {
-                                    @field(out, f.name) = @enumFromInt(try stmt.columnInt(i));
-                                } else {
-                                    const raw = try stmt.columnText(i);
-                                    if (raw.len == 0) {
-                                        @field(out, f.name) = null;
-                                    } else {
-                                        @field(out, f.name) = try schema_mod.enumFromText(T, f.name, o.child, raw);
-                                    }
-                                }
-                            },
-                            .pointer => |p| {
-                                if (p.size == .slice and p.child == u8) {
-                                    const raw = try stmt.columnText(i);
-                                    @field(out, f.name) = try arena.dupe(u8, raw);
-                                } else @compileError("readRowDupe: unsupported optional pointer for " ++ f.name);
-                            },
-                            else => @compileError("readRowDupe: unsupported optional inner " ++ @typeName(o.child)),
-                        }
-                    },
-                    .int => @field(out, f.name) = @intCast(try stmt.columnInt(i)),
-                    .float => @field(out, f.name) = @floatCast(try stmt.columnFloat(i)),
-                    .bool => @field(out, f.name) = (try stmt.columnInt(i)) != 0,
-                    .@"enum" => {
-                        if (!enum_mapping_present) {
-                            @field(out, f.name) = @enumFromInt(try stmt.columnInt(i));
-                        } else {
-                            const raw = try stmt.columnText(i);
-                            @field(out, f.name) = try schema_mod.enumFromText(T, f.name, FT, raw);
-                        }
-                    },
-                    .pointer => |p| {
-                        if (p.size == .slice and p.child == u8) {
-                            const raw = try stmt.columnText(i);
-                            @field(out, f.name) = try arena.dupe(u8, raw);
-                        } else @compileError("readRowDupe: unsupported pointer for " ++ f.name);
-                    },
-                    else => @compileError("readRowDupe: unsupported field type " ++ @typeName(FT)),
-                }
-            }
-            return out;
+            return @import("row_mapper.zig").read(T, arena, stmt);
         }
 
         /// Convert `value.<field>` into a Value, respecting enum→TEXT

@@ -21,6 +21,7 @@ const std = @import("std");
 const db_mod = @import("../db/db.zig");
 const schema_mod = @import("schema.zig");
 const relations_mod = @import("relations.zig");
+const row_mapper = @import("row_mapper.zig");
 
 /// Wrapper returned by `hasMany`. Keeps the parent unchanged and adds the
 /// preloaded children as a sibling field. Generated per-Owner+relation_name
@@ -30,6 +31,68 @@ pub fn Loaded(comptime Owner: type, comptime relation_name: []const u8) type {
         parent: Owner,
         related: []const relations_mod.RelTarget(Owner, relation_name),
     };
+}
+
+pub fn BelongsToLoaded(comptime Child: type, comptime relation_name: []const u8) type {
+    return struct { child: Child, parent: ?relations_mod.RelTarget(Child, relation_name) };
+}
+
+/// Batch-preload a belongs_to relation with one `IN` query.
+pub fn belongsTo(comptime Child: type, comptime relation_name: []const u8, children: []const Child, database: db_mod.Db, arena: std.mem.Allocator) ![]BelongsToLoaded(Child, relation_name) {
+    const Parent = relations_mod.RelTarget(Child, relation_name);
+    const spec = @field(Child.__schema.relations, relation_name);
+    if (!@hasField(@TypeOf(spec), "belongs_to")) @compileError(relation_name ++ " is not belongs_to");
+    const fk = spec.belongs_to.fk;
+    var ids: std.ArrayList(i64) = .empty;
+    for (children) |child| {
+        const raw = @field(child, fk);
+        const id: ?i64 = switch (@typeInfo(@TypeOf(raw))) {
+            .optional => if (raw) |v| @intCast(v) else null,
+            .int => @intCast(raw),
+            else => @compileError("belongs_to fk must be integer"),
+        };
+        if (id) |v| if (std.mem.indexOfScalar(i64, ids.items, v) == null) try ids.append(arena, v);
+    }
+    const td = comptime schema_mod.tableDef(Parent);
+    var pk_sql: []const u8 = td.primary_key;
+    inline for (td.columns) |column| if (std.mem.eql(u8, column.name, td.primary_key)) {
+        pk_sql = column.sql_name;
+    };
+    var columns: std.ArrayList(u8) = .empty;
+    inline for (td.columns, 0..) |column, i| {
+        if (i > 0) try columns.appendSlice(arena, ", ");
+        try columns.appendSlice(arena, column.sql_name);
+    }
+    var parents: []Parent = &.{};
+    if (ids.items.len > 0) {
+        var query = try @import("builder.zig").Query.init(database, arena, td.table, columns.items);
+        _ = try query.whereIn(pk_sql, ids.items);
+        parents = try query.fetchAll(Parent);
+    }
+    var loaded: std.ArrayList(BelongsToLoaded(Child, relation_name)) = .empty;
+    for (children) |child| {
+        const raw = @field(child, fk);
+        const id: ?i64 = switch (@typeInfo(@TypeOf(raw))) {
+            .optional => if (raw) |v| @intCast(v) else null,
+            .int => @intCast(raw),
+            else => unreachable,
+        };
+        var parent: ?Parent = null;
+        if (id) |wanted| for (parents) |candidate| {
+            const pk = @field(candidate, td.primary_key);
+            const actual: ?i64 = switch (@typeInfo(@TypeOf(pk))) {
+                .optional => if (pk) |v| @intCast(v) else null,
+                .int => @intCast(pk),
+                else => null,
+            };
+            if (actual != null and actual.? == wanted) {
+                parent = candidate;
+                break;
+            }
+        };
+        try loaded.append(arena, .{ .child = child, .parent = parent });
+    }
+    return loaded.toOwnedSlice(arena);
 }
 
 /// Fetch every child row for `parents` in one `WHERE fk IN (...)` query.
@@ -104,7 +167,7 @@ pub fn hasMany(
     }
     var rows: std.ArrayList(Target) = .empty;
     while ((try stmt.step()) == .row) {
-        const row = try readRowDupe(Target, arena, stmt);
+        const row = try row_mapper.read(Target, arena, stmt);
         try rows.append(arena, row);
     }
 
@@ -190,6 +253,9 @@ const PrePost = struct {
     pub const __schema = .{
         .table = "pre_posts",
         .primary_key = "id",
+        .relations = .{
+            .user = .{ .belongs_to = .{ .model = PreUser, .fk = "user_id" } },
+        },
     };
 };
 
@@ -250,6 +316,10 @@ test "preload.hasMany: one IN-query for N parents" {
             try testing.expectEqual(@as(usize, 0), row.related.len);
             found_carol = true;
         }
+        const all_posts = try Posts.all(database, arena);
+        const with_users = try belongsTo(PrePost, "user", all_posts, database, arena);
+        try testing.expectEqual(@as(usize, 3), with_users.len);
+        for (with_users) |loaded_post| try testing.expect(loaded_post.parent != null);
     }
     try testing.expect(found_alice);
     try testing.expect(found_bob);

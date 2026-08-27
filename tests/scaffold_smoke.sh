@@ -25,12 +25,17 @@ if grep -F '../Akamata' build.zig.zon >/dev/null; then
 fi
 grep -F '.url = "https://github.com/moribit/Akamata/archive/' build.zig.zon >/dev/null
 grep -F '.hash = "akamata-' build.zig.zon >/dev/null
-grep -F 'l === 0 ? new Uint8Array(0)' deploy/worker/index.mjs >/dev/null
-grep -F 'if (b.length > 0) new Uint8Array(memory.buffer' deploy/worker/index.mjs >/dev/null
-grep -F 'wasmDispatchQueue.run(() => dispatchWasm(request))' deploy/worker/index.mjs >/dev/null
+grep -F 'len === 0 ? new Uint8Array(0)' deploy/worker/index.mjs >/dev/null
+grep -F 'if (bytes.length > 0) new Uint8Array(memory.buffer' deploy/worker/index.mjs >/dev/null
+grep -F 'wasmDispatchQueue.run(() => dispatchWasmUnlocked(request))' deploy/worker/index.mjs >/dev/null
 grep -F 'await previous' deploy/worker/wasm_dispatch.mjs >/dev/null
 grep -F 'deploy/worker/index.mjs' .akamata/managed-files.json >/dev/null
-grep -F 'deploy/worker/realtime_object.mjs' .akamata/managed-files.json >/dev/null
+if grep -F 'deploy/worker/realtime_object.mjs' .akamata/managed-files.json >/dev/null; then
+  echo "default scaffold unexpectedly manages Realtime glue" >&2
+  exit 1
+fi
+test ! -e deploy/worker/realtime_object.mjs
+grep -F 'if (lower === "host" || lower === "content-length") continue' deploy/worker/index.mjs >/dev/null
 
 zig build
 zig build -Dbackend=workers -Doptimize=ReleaseSmall

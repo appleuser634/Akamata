@@ -169,6 +169,39 @@ pub fn RequestBuilder(comptime AppT: type) type {
             return s.header("cookie", v);
         }
 
+        /// Add the conventional CSRF cookie/header pair used by `am.mw.csrf`.
+        pub fn csrf(self: Self, token: []const u8) Self {
+            return self.cookie("akamata_csrf", token).header("x-csrf-token", token).header("sec-fetch-site", "same-origin");
+        }
+
+        pub fn multipart(self: Self, parts: []const MultipartPart) Self {
+            const boundary = "akamata-test-boundary";
+            var out: std.ArrayList(u8) = .empty;
+            for (parts) |part| {
+                out.appendSlice(self.gpa, "--" ++ boundary ++ "\r\nContent-Disposition: form-data; name=\"") catch unreachable;
+                out.appendSlice(self.gpa, part.name) catch unreachable;
+                out.appendSlice(self.gpa, "\"") catch unreachable;
+                if (part.filename) |filename| {
+                    out.appendSlice(self.gpa, "; filename=\"") catch unreachable;
+                    out.appendSlice(self.gpa, filename) catch unreachable;
+                    out.appendSlice(self.gpa, "\"") catch unreachable;
+                }
+                if (part.content_type) |content_type| {
+                    out.appendSlice(self.gpa, "\r\nContent-Type: ") catch unreachable;
+                    out.appendSlice(self.gpa, content_type) catch unreachable;
+                }
+                out.appendSlice(self.gpa, "\r\n\r\n") catch unreachable;
+                out.appendSlice(self.gpa, part.value) catch unreachable;
+                out.appendSlice(self.gpa, "\r\n") catch unreachable;
+            }
+            out.appendSlice(self.gpa, "--" ++ boundary ++ "--\r\n") catch unreachable;
+            const owned = out.toOwnedSlice(self.gpa) catch unreachable;
+            var next = self;
+            next.owned_strings.append(next.gpa, owned) catch unreachable;
+            next.body_bytes = owned;
+            return next.header("content-type", "multipart/form-data; boundary=" ++ boundary);
+        }
+
         /// Run the request through the app. Returns a Response that owns
         /// its arena and must be `.deinit()`ed.
         pub fn send(self: Self) !Response {
@@ -246,6 +279,58 @@ pub const Response = struct {
         return std.json.parseFromSliceLeaky(T, self.arena_state.allocator(), self.body, .{
             .ignore_unknown_fields = true,
         });
+    }
+
+    pub fn expectStatus(self: Response, expected: u16) !void {
+        try std.testing.expectEqual(expected, self.status);
+    }
+    pub fn expectHeader(self: Response, name: []const u8) ![]const u8 {
+        return self.header(name) orelse error.MissingExpectedHeader;
+    }
+};
+
+pub const MultipartPart = struct { name: []const u8, value: []const u8, filename: ?[]const u8 = null, content_type: ?[]const u8 = null };
+
+pub const CookieJar = struct {
+    allocator: std.mem.Allocator,
+    values: std.StringHashMap([]u8),
+    pub fn init(allocator: std.mem.Allocator) CookieJar {
+        return .{ .allocator = allocator, .values = .init(allocator) };
+    }
+    pub fn deinit(self: *CookieJar) void {
+        var it = self.values.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.values.deinit();
+    }
+    pub fn capture(self: *CookieJar, response: Response) !void {
+        for (response.headers) |header| if (std.ascii.eqlIgnoreCase(header.name, "set-cookie")) {
+            const pair = if (std.mem.indexOfScalar(u8, header.value, ';')) |i| header.value[0..i] else header.value;
+            const eq = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+            const name = pair[0..eq];
+            const value = pair[eq + 1 ..];
+            if (self.values.fetchRemove(name)) |old| {
+                self.allocator.free(old.key);
+                self.allocator.free(old.value);
+            }
+            try self.values.put(try self.allocator.dupe(u8, name), try self.allocator.dupe(u8, value));
+        };
+    }
+    pub fn apply(self: *CookieJar, builder: anytype) @TypeOf(builder) {
+        var out: std.ArrayList(u8) = .empty;
+        var it = self.values.iterator();
+        while (it.next()) |entry| {
+            if (out.items.len > 0) out.appendSlice(self.allocator, "; ") catch unreachable;
+            out.appendSlice(self.allocator, entry.key_ptr.*) catch unreachable;
+            out.append(self.allocator, '=') catch unreachable;
+            out.appendSlice(self.allocator, entry.value_ptr.*) catch unreachable;
+        }
+        const owned = out.toOwnedSlice(self.allocator) catch unreachable;
+        var next = builder;
+        next.owned_strings.append(next.gpa, owned) catch unreachable;
+        return next.header("cookie", owned);
     }
 };
 

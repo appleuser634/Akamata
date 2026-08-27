@@ -14,6 +14,8 @@ const std = @import("std");
 const app_mod = @import("../app.zig");
 const random = @import("../crypto/random.zig");
 const cookie_mod = @import("../http/cookie.zig");
+const crypto_util = @import("../crypto/util.zig");
+const session_mod = @import("session.zig");
 
 const b64url = std.base64.url_safe_no_pad;
 
@@ -23,6 +25,9 @@ pub const Options = struct {
     cookie_path: []const u8 = "/",
     cookie_secure: bool = true,
     cookie_same_site: cookie_mod.SameSite = .lax,
+    expected_origin: ?[]const u8 = null,
+    enforce_fetch_metadata: bool = true,
+    bind_to_session: bool = false,
     /// Methods that bypass token verification (and on which a fresh token is
     /// minted if the cookie is missing).
     safe_methods: []const []const u8 = &[_][]const u8{ "GET", "HEAD", "OPTIONS" },
@@ -48,8 +53,20 @@ pub fn csrf(comptime State: type, comptime opts: Options) app_mod.Middleware(Sta
                         .http_only = false,
                         .same_site = opts.cookie_same_site,
                     });
+                    if (opts.bind_to_session) if (session_mod.currentSession(State, c)) |session| {
+                        const digest = crypto_util.sha256Hex(tok);
+                        try session.set("__csrf_hash", &digest);
+                    };
                 }
                 return next.run(c);
+            }
+
+            if (opts.enforce_fetch_metadata) if (c.req.header("sec-fetch-site")) |site| {
+                if (!std.ascii.eqlIgnoreCase(site, "same-origin") and !std.ascii.eqlIgnoreCase(site, "same-site") and !std.ascii.eqlIgnoreCase(site, "none")) return reject(c, "cross_site_request");
+            };
+            if (opts.expected_origin) |expected| {
+                const origin = c.req.header("origin") orelse return reject(c, "origin_missing");
+                if (!crypto_util.sameOrigin(origin, expected)) return reject(c, "origin_mismatch");
             }
 
             // Unsafe method: cookie + header must match.
@@ -61,6 +78,12 @@ pub fn csrf(comptime State: type, comptime opts: Options) app_mod.Middleware(Sta
                 if (!constantTimeEq(cookie_v, header_v)) return reject(c, "csrf_token_mismatch");
             } else if (!constantTimeEq(cookie_v, header_v)) {
                 return reject(c, "csrf_token_mismatch");
+            }
+            if (opts.bind_to_session) {
+                const session = session_mod.currentSession(State, c) orelse return reject(c, "session_missing");
+                const expected_hash = try session.get("__csrf_hash") orelse return reject(c, "session_hash_missing");
+                const actual_hash = crypto_util.sha256Hex(cookie_v);
+                if (!crypto_util.timingSafeEqual(expected_hash, &actual_hash)) return reject(c, "session_hash_mismatch");
             }
             return next.run(c);
         }

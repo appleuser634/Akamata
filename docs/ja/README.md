@@ -19,6 +19,7 @@
 
 ## Guide
 
+- [アプリケーション向けbuilding blocks](application-building-blocks.md) — query、validation、session／CSRF、typed config、storage、testing、idempotency、D1 atomic pattern
 - [Portable Backend / Realtime アーキテクチャ](portable-backend.md)
 
 - [Cloudflare Workers／Containers](cloudflare.md)

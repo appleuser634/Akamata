@@ -402,6 +402,12 @@ pub fn Context(comptime State: type) type {
             return liftProjection(T, proj);
         }
 
+        /// Model-independent spelling for JSON parse + `T.__schema.validates`.
+        /// `input` remains as a compatibility alias.
+        pub fn validatedJson(self: *Self, comptime T: type) !?T {
+            return self.input(T);
+        }
+
         // ===== Response helpers =====
 
         pub fn status(self: *Self, code: u16) void {

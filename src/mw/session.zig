@@ -199,6 +199,12 @@ pub const Session = struct {
         try self.store.destroy(self.sid);
     }
 
+    /// Revoke server-side state and expire the browser cookie immediately.
+    pub fn revoke(self: Session, c: anytype) !void {
+        try self.destroy();
+        try c.setCookie(self.cookie_name, "", .{ .path = self.cookie_path, .max_age_secs = 0, .secure = self.cookie_secure, .http_only = self.cookie_http_only, .same_site = self.cookie_same_site });
+    }
+
     /// Rotate the SID after login or privilege changes. Existing data is
     /// deliberately destroyed to prevent fixation across trust boundaries.
     pub fn rotate(self: *Session, c: anytype) !void {

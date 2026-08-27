@@ -18,6 +18,9 @@ pub const query = @import("query.zig");
 pub const migrate = @import("migrate.zig");
 pub const relations = @import("relations.zig");
 pub const preload = @import("preload.zig");
+pub const row_mapper = @import("row_mapper.zig");
+pub const Query = @import("builder.zig").Query;
+pub const Order = @import("builder.zig").Order;
 
 pub const Repo = query.Repo;
 pub const repo = query.repo;

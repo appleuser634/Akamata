@@ -35,6 +35,9 @@ pub const static_middleware = @import("static_middleware.zig");
 pub const capability = @import("capability.zig");
 pub const di = @import("di.zig");
 pub const diagnostics = @import("diagnostics.zig");
+pub const config = @import("config.zig");
+pub const idempotency = @import("idempotency.zig");
+pub const management = @import("management.zig");
 pub const events = @import("events.zig");
 pub const binding = @import("binding.zig");
 pub const realtime = @import("realtime.zig");
@@ -42,6 +45,28 @@ pub const queue = @import("queue.zig");
 pub const identity = @import("identity.zig");
 pub const stream = @import("stream.zig");
 pub const storage = @import("storage.zig");
+pub const StorageOptions = struct {
+    r2_binding: []const u8 = "FILES",
+    native_io: ?std.Io = null,
+    native_root: ?std.Io.Dir = null,
+};
+pub const StorageFactory = if (backend == .native) struct {
+    owner: storage.filesystem.FileStore,
+    pub fn init(allocator: std.mem.Allocator, options: StorageOptions) !@This() {
+        return .{ .owner = .init(allocator, options.native_io orelse return error.MissingNativeIo, options.native_root orelse return error.MissingNativeRoot) };
+    }
+    pub fn store(self: *@This()) storage.Store {
+        return self.owner.store();
+    }
+} else struct {
+    owner: @import("platform/workers.zig").R2Store,
+    pub fn init(allocator: std.mem.Allocator, options: StorageOptions) !@This() {
+        return .{ .owner = .init(allocator, options.r2_binding) };
+    }
+    pub fn store(self: *@This()) storage.Store {
+        return self.owner.store();
+    }
+};
 pub const net = @import("net.zig");
 pub const protocol_gen = @import("protocol_gen.zig");
 pub const platform = struct {
@@ -171,6 +196,12 @@ pub const client_gen = @import("client_gen.zig");
 
 // In-process test client + factories.
 pub const testing = @import("testing.zig");
+pub const validation = struct {
+    pub const rule = @import("model/validate.zig").rule;
+    pub const Rule = @import("model/validate.zig").Rule;
+    pub const Error = @import("model/validate.zig").ValidationError;
+    pub const validate = @import("model/validate.zig").validate;
+};
 
 // Persistent SQLite-backed job queue + cron. Native-only. On Workers use
 // Cron Triggers + Durable Object Alarms instead.
@@ -202,6 +233,7 @@ pub const db = struct {
     pub const StmtVTable = db_mod.StmtVTable;
     pub const StepResult = db_mod.StepResult;
     pub const ExecResult = db_mod.ExecResult;
+    pub const fetchAll = @import("model/row_mapper.zig").fetchAll;
     pub const Static = @import("db/static.zig").Database;
     pub const Query = @import("db/static.zig").Query;
     pub const Pool = @import("db/pool.zig").Pool;
@@ -269,10 +301,17 @@ pub const Mutex = sync.Mutex;
 pub const auth = struct {
     pub const jwt = @import("auth/jwt.zig");
     pub const bcrypt = @import("auth/bcrypt.zig");
+    pub const session = @import("auth/session_identity.zig");
 };
 
 pub const crypto = struct {
     pub const rs256 = @import("crypto/rs256.zig");
+    pub const randomBytes = @import("crypto/util.zig").randomBytes;
+    pub const randomHex = @import("crypto/util.zig").randomHex;
+    pub const sha256 = @import("crypto/util.zig").sha256;
+    pub const sha256Hex = @import("crypto/util.zig").sha256Hex;
+    pub const timingSafeEqual = @import("crypto/util.zig").timingSafeEqual;
+    pub const sameOrigin = @import("crypto/util.zig").sameOrigin;
 };
 
 pub const http_client = @import("http_client.zig");

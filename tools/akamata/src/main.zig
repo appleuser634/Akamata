@@ -24,6 +24,8 @@ const tmpl_worker = @embedFile("templates/worker.zig.tpl");
 const tmpl_gitignore = @embedFile("templates/.gitignore.tpl");
 const tmpl_readme = @embedFile("templates/README.md.tpl");
 const tmpl_wrangler = @embedFile("templates/wrangler.toml.tpl");
+// Both `init` and `sync` pass this full bridge template through the same
+// capability-aware renderer below.
 const tmpl_worker_index = @embedFile("templates/worker_index.mjs.tpl");
 const tmpl_dockerfile = @embedFile("templates/Dockerfile.tpl");
 const tmpl_wasm_dispatch = @embedFile("templates/wasm_dispatch.mjs.tpl");
@@ -173,7 +175,7 @@ fn usage() !void {
         \\Version: akamata 0.1.2 (use `akamata --version` for the version)
         \\
         \\Commands:
-        \\  init <name> [--target=native|workers|containers|both]
+        \\  init <name> [--target=native|workers|containers|both] [--d1] [--r2] [--queue] [--realtime]
         \\      Scaffold a new Akamata app.
         \\  build [--workers|--containers] [--optimize=MODE]
         \\      Build the current app (native by default).
@@ -245,6 +247,7 @@ fn commandUsage(command: []const u8) !void {
         \\
         \\Options:
         \\  --target=native|workers|containers|both  Generated deployment targets (default: native)
+        \\  --d1 --r2 --queue --realtime             Select Workers capabilities and generated glue
         \\  -h, --help                               Show this help
         \\
     else if (std.mem.eql(u8, command, "build"))
@@ -395,6 +398,7 @@ fn commandUsage(command: []const u8) !void {
 const InitOpts = struct {
     name: []const u8,
     target: enum { native, workers, containers, both } = .native,
+    capabilities: WorkerCapabilities = .{},
 };
 
 fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
@@ -419,7 +423,7 @@ fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
                 std.debug.print("unknown --target value: {s}\n", .{v});
                 return error.UsageError;
             }
-        }
+        } else if (std.mem.eql(u8, a, "--d1")) opts.capabilities.d1 = true else if (std.mem.eql(u8, a, "--r2")) opts.capabilities.r2 = true else if (std.mem.eql(u8, a, "--queue")) opts.capabilities.queue = true else if (std.mem.eql(u8, a, "--realtime")) opts.capabilities.realtime = true;
     }
 
     // 1. Create directory `name`
@@ -454,21 +458,16 @@ fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
             .{ .key = "{{NAME}}", .val = opts.name },
         });
         try makeDirRecursive(try std.fmt.allocPrint(alloc, "{s}/deploy/worker", .{opts.name}));
-        try renderFile(alloc, opts.name, "deploy/wrangler.toml", tmpl_wrangler, &.{
-            .{ .key = "{{NAME}}", .val = opts.name },
-        });
-        try renderFile(alloc, opts.name, "deploy/worker/index.mjs", tmpl_worker_index, &.{
-            .{ .key = "{{NAME}}", .val = opts.name },
-        });
+        const wrangler = try renderWrangler(alloc, opts.name, opts.capabilities);
+        try renderFile(alloc, opts.name, "deploy/wrangler.toml", wrangler, &.{});
+        const worker_index = try renderWorkerIndex(alloc, opts.name, opts.capabilities);
+        try renderFile(alloc, opts.name, "deploy/worker/index.mjs", worker_index, &.{});
         try renderFile(alloc, opts.name, "deploy/worker/wasm_dispatch.mjs", tmpl_wasm_dispatch, &.{});
-        try renderFile(alloc, opts.name, "deploy/worker/internal_routes.mjs", tmpl_internal_routes, &.{});
-        try renderFile(alloc, opts.name, "deploy/worker/realtime_object.mjs", tmpl_realtime_object, &.{});
-        try writeInitialManagedManifest(alloc, opts.name, &.{
-            "deploy/worker/index.mjs",
-            "deploy/worker/wasm_dispatch.mjs",
-            "deploy/worker/internal_routes.mjs",
-            "deploy/worker/realtime_object.mjs",
-        });
+        if (opts.capabilities.realtime) {
+            try renderFile(alloc, opts.name, "deploy/worker/internal_routes.mjs", tmpl_internal_routes, &.{});
+            try renderFile(alloc, opts.name, "deploy/worker/realtime_object.mjs", tmpl_realtime_object, &.{});
+            try writeInitialManagedManifest(alloc, opts.name, &.{ "deploy/worker/index.mjs", "deploy/worker/wasm_dispatch.mjs", "deploy/worker/internal_routes.mjs", "deploy/worker/realtime_object.mjs" });
+        } else try writeInitialManagedManifest(alloc, opts.name, &.{ "deploy/worker/index.mjs", "deploy/worker/wasm_dispatch.mjs" });
     }
     if (opts.target == .containers or opts.target == .both) {
         try makeDirRecursive(try std.fmt.allocPrint(alloc, "{s}/deploy", .{opts.name}));
@@ -863,6 +862,72 @@ const ManagedFile = struct {
     content: []const u8,
 };
 
+const WorkerCapabilities = struct {
+    d1: bool = false,
+    r2: bool = false,
+    queue: bool = false,
+    realtime: bool = false,
+};
+
+fn activeToml(alloc: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |line| {
+        const before_comment = if (std.mem.indexOfScalar(u8, line, '#')) |i| line[0..i] else line;
+        try out.appendSlice(alloc, std.mem.trim(u8, before_comment, " \t\r"));
+        try out.append(alloc, '\n');
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+fn detectWorkerCapabilities(alloc: std.mem.Allocator, cfg: []const u8) !WorkerCapabilities {
+    const raw = try readFileAlloc(alloc, cfg, 4 * 1024 * 1024);
+    const toml = try activeToml(alloc, raw);
+    return .{
+        .d1 = std.mem.indexOf(u8, toml, "[[d1_databases]]") != null,
+        .r2 = std.mem.indexOf(u8, toml, "[[r2_buckets]]") != null,
+        .queue = std.mem.indexOf(u8, toml, "[[queues.producers]]") != null or std.mem.indexOf(u8, toml, "[[queues.consumers]]") != null,
+        .realtime = std.mem.indexOf(u8, toml, "AKAMATA_REALTIME") != null or std.mem.indexOf(u8, toml, "AkamataRealtimeRoom") != null,
+    };
+}
+
+fn renderWrangler(alloc: std.mem.Allocator, name: []const u8, caps: WorkerCapabilities) ![]u8 {
+    const base = try std.mem.replaceOwned(u8, alloc, tmpl_wrangler, "{{NAME}}", name);
+    var out: std.ArrayList(u8) = .empty;
+    try out.appendSlice(alloc, base);
+    if (caps.d1) try appendPrint(&out, alloc, "\n[[d1_databases]]\nbinding = \"DB\"\ndatabase_name = \"{s}\"\ndatabase_id = \"00000000-0000-0000-0000-000000000000\"\n", .{name});
+    if (caps.r2) try appendPrint(&out, alloc, "\n[[r2_buckets]]\nbinding = \"FILES\"\nbucket_name = \"{s}-files\"\n", .{name});
+    if (caps.queue) try appendPrint(&out, alloc, "\n[[queues.producers]]\nbinding = \"EVENTS\"\nqueue = \"{s}-events\"\n\n[[queues.consumers]]\nqueue = \"{s}-events\"\n", .{ name, name });
+    if (caps.realtime) try appendPrint(&out, alloc, "\n[[services]]\nbinding = \"AKAMATA_REALTIME_HANDLER\"\nservice = \"{s}\"\nentrypoint = \"AkamataRealtimeApplication\"\n\n[[durable_objects.bindings]]\nname = \"AKAMATA_REALTIME\"\nclass_name = \"AkamataRealtimeRoom\"\n\n[[migrations]]\ntag = \"v1\"\nnew_sqlite_classes = [\"AkamataRealtimeRoom\"]\n", .{name});
+    return out.toOwnedSlice(alloc);
+}
+
+fn removeSpan(alloc: std.mem.Allocator, bytes: []const u8, start_marker: []const u8, end_marker: []const u8) ![]u8 {
+    const start = std.mem.indexOf(u8, bytes, start_marker) orelse return try alloc.dupe(u8, bytes);
+    const end_start = std.mem.indexOfPos(u8, bytes, start + start_marker.len, end_marker) orelse return error.InvalidWorkerTemplate;
+    return std.mem.concat(alloc, u8, &.{ bytes[0..start], bytes[end_start..] });
+}
+
+fn renderWorkerIndex(alloc: std.mem.Allocator, name: []const u8, caps: WorkerCapabilities) ![]u8 {
+    const wasm_name = try std.fmt.allocPrint(alloc, "../../zig-out/bin/{s}_worker.wasm", .{name});
+    var rendered = try std.mem.replaceOwned(u8, alloc, tmpl_worker_index, "../../zig-out/bin/akamata_worker.wasm", wasm_name);
+    if (!caps.realtime) {
+        rendered = try std.mem.replaceOwned(u8, alloc, rendered, "import { WorkerEntrypoint } from \"cloudflare:workers\";\n", "");
+        rendered = try std.mem.replaceOwned(u8, alloc, rendered, "import { REALTIME_AUTHORIZE_PATH, REALTIME_MESSAGE_PATH, rejectPublicInternalRoute } from \"./internal_routes.mjs\";\n", "");
+        rendered = try removeSpan(alloc, rendered, "    const url = new URL(request.url);\n    // These handlers", "    return dispatchWasm(request);\n");
+        rendered = try removeSpan(alloc, rendered, "/// Service-binding-only control-plane entrypoint.", "async function dispatchWasm(request)");
+        rendered = try std.mem.replaceOwned(u8, alloc, rendered, "export { AkamataRealtimeRoom } from \"./realtime_object.mjs\";\n", "");
+    }
+    return rendered;
+}
+
+fn printCapabilities(caps: WorkerCapabilities) void {
+    std.debug.print("capabilities: D1={s}, R2={s}, Queue={s}, Realtime={s}\n", .{
+        if (caps.d1) "keep" else "disabled",    if (caps.r2) "keep" else "disabled",
+        if (caps.queue) "keep" else "disabled", if (caps.realtime) "keep" else "disabled",
+    });
+}
+
 const SyncOptions = struct {
     config_path: ?[]const u8 = null,
     force: bool = false,
@@ -871,6 +936,13 @@ const SyncOptions = struct {
 };
 
 const LEGACY_V010_WORKER_TEMPLATE_SHA256 = "9518deaaa60e8b843921648ce42224759794e9e9364e138e99db3c1897d50c19";
+const KNOWN_LEGACY_WORKER_SHA256 = [_][]const u8{
+    LEGACY_V010_WORKER_TEMPLATE_SHA256,
+    "f424b881c384520c63d41a37fc0f8b0369c7da643bcd7f899600ea81c0942a2f", // v0.1.0 repository glue
+    "1ffdffed7f4e0c7972b3c730fcff6c10939a79198060dd231faa50a0d5d4e423", // v0.1.1 scaffold
+    "dc5c464a61bc89324ec64cdf142b68574fd9d46c88967078b6df3bfa86aceb17", // v0.1.1 full-capability glue
+    "d1714c0ac56ec68ac4d42e0ca37f441b17c731f765590ff8fc6e830553d4a32d", // v0.1.2 scaffold before capability sync
+};
 
 fn sha256Hex(bytes: []const u8) [64]u8 {
     var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
@@ -938,15 +1010,18 @@ fn workerDir(alloc: std.mem.Allocator, cfg: []const u8) ![]u8 {
 
 fn buildManagedFiles(alloc: std.mem.Allocator, cfg: []const u8, name: []const u8) ![]ManagedFile {
     const dir = try workerDir(alloc, cfg);
-    const files = try alloc.alloc(ManagedFile, 4);
-    files[0] = .{
+    const caps = try detectWorkerCapabilities(alloc, cfg);
+    var files: std.ArrayList(ManagedFile) = .empty;
+    try files.append(alloc, .{
         .path = try std.fmt.allocPrint(alloc, "{s}/index.mjs", .{dir}),
-        .content = try std.mem.replaceOwned(u8, alloc, tmpl_worker_index, "{{NAME}}", name),
-    };
-    files[1] = .{ .path = try std.fmt.allocPrint(alloc, "{s}/wasm_dispatch.mjs", .{dir}), .content = try alloc.dupe(u8, tmpl_wasm_dispatch) };
-    files[2] = .{ .path = try std.fmt.allocPrint(alloc, "{s}/internal_routes.mjs", .{dir}), .content = try alloc.dupe(u8, tmpl_internal_routes) };
-    files[3] = .{ .path = try std.fmt.allocPrint(alloc, "{s}/realtime_object.mjs", .{dir}), .content = try alloc.dupe(u8, tmpl_realtime_object) };
-    return files;
+        .content = try renderWorkerIndex(alloc, name, caps),
+    });
+    try files.append(alloc, .{ .path = try std.fmt.allocPrint(alloc, "{s}/wasm_dispatch.mjs", .{dir}), .content = try alloc.dupe(u8, tmpl_wasm_dispatch) });
+    if (caps.realtime) {
+        try files.append(alloc, .{ .path = try std.fmt.allocPrint(alloc, "{s}/internal_routes.mjs", .{dir}), .content = try alloc.dupe(u8, tmpl_internal_routes) });
+        try files.append(alloc, .{ .path = try std.fmt.allocPrint(alloc, "{s}/realtime_object.mjs", .{dir}), .content = try alloc.dupe(u8, tmpl_realtime_object) });
+    }
+    return files.toOwnedSlice(alloc);
 }
 
 fn printManagedDiff(path: []const u8, old: ?[]const u8, new: []const u8) void {
@@ -974,7 +1049,7 @@ fn printManagedDiff(path: []const u8, old: ?[]const u8, new: []const u8) void {
     }
 }
 
-fn isLegacyV010WorkerIndex(alloc: std.mem.Allocator, bytes: []const u8) !bool {
+fn isKnownLegacyWorkerIndex(alloc: std.mem.Allocator, bytes: []const u8) !bool {
     const prefix = "import wasm from \"../../zig-out/bin/";
     const suffix = "_worker.wasm\";";
     const start = std.mem.indexOf(u8, bytes, prefix) orelse return false;
@@ -987,7 +1062,8 @@ fn isLegacyV010WorkerIndex(alloc: std.mem.Allocator, bytes: []const u8) !bool {
     try normalized.appendSlice(alloc, "{{NAME}}");
     try normalized.appendSlice(alloc, bytes[name_end..]);
     const hash = sha256Hex(normalized.items);
-    return std.mem.eql(u8, &hash, LEGACY_V010_WORKER_TEMPLATE_SHA256);
+    for (KNOWN_LEGACY_WORKER_SHA256) |known| if (std.mem.eql(u8, &hash, known)) return true;
+    return false;
 }
 
 fn syncManaged(alloc: std.mem.Allocator, opts: SyncOptions) !void {
@@ -1009,10 +1085,14 @@ fn syncManaged(alloc: std.mem.Allocator, opts: SyncOptions) !void {
         return error.UsageError;
     };
     const files = try buildManagedFiles(alloc, cfg, name);
+    const capabilities = try detectWorkerCapabilities(alloc, cfg);
+    printCapabilities(capabilities);
     var conflicts: usize = 0;
     var changes: usize = 0;
-    var changed = [_]bool{false} ** 4;
-    var modified = [_]bool{false} ** 4;
+    const changed = try alloc.alloc(bool, files.len);
+    @memset(changed, false);
+    const modified = try alloc.alloc(bool, files.len);
+    @memset(modified, false);
     // Preflight all managed files before writing any of them, so one local
     // edit cannot leave a project partially synchronized.
     for (files, 0..) |file, i| {
@@ -1031,8 +1111,8 @@ fn syncManaged(alloc: std.mem.Allocator, opts: SyncOptions) !void {
             if (try manifestHash(alloc, file.path)) |recorded| {
                 const current_hash = sha256Hex(current);
                 locally_modified = !std.mem.eql(u8, &current_hash, recorded);
-            } else if (std.mem.endsWith(u8, file.path, "/index.mjs") and try isLegacyV010WorkerIndex(alloc, current)) {
-                std.debug.print("  recognized unmodified legacy v0.1.0 template\n", .{});
+            } else if (std.mem.endsWith(u8, file.path, "/index.mjs") and try isKnownLegacyWorkerIndex(alloc, current)) {
+                std.debug.print("  recognized unmodified legacy Akamata template\n", .{});
             } else {
                 locally_modified = true;
             }
@@ -1045,6 +1125,26 @@ fn syncManaged(alloc: std.mem.Allocator, opts: SyncOptions) !void {
             std.debug.print("  would update {s}\n", .{file.path});
         }
     }
+    const managed_dir = try workerDir(alloc, cfg);
+    const stale_paths = [_][]const u8{
+        try std.fmt.allocPrint(alloc, "{s}/internal_routes.mjs", .{managed_dir}),
+        try std.fmt.allocPrint(alloc, "{s}/realtime_object.mjs", .{managed_dir}),
+    };
+    var stale_delete = [_]bool{false} ** stale_paths.len;
+    var stale_modified = [_]bool{false} ** stale_paths.len;
+    if (!capabilities.realtime) for (stale_paths, 0..) |path, i| {
+        const recorded = try manifestHash(alloc, path) orelse continue;
+        const current = readFileAlloc(alloc, path, 4 * 1024 * 1024) catch continue;
+        stale_delete[i] = true;
+        changes += 1;
+        const current_hash = sha256Hex(current);
+        stale_modified[i] = !std.mem.eql(u8, &current_hash, recorded);
+        std.debug.print("--- {s} (current)\n+++ /dev/null (capability disabled)\n  would delete {s}\n", .{ path, path });
+        if (stale_modified[i] and !opts.force) {
+            conflicts += 1;
+            std.debug.print("  REFUSED: local changes detected (use --force to back up and remove)\n", .{});
+        }
+    };
     if (conflicts > 0) {
         std.debug.print("sync: refused {d} locally modified file(s); no manifest update written.\n", .{conflicts});
         return error.ManagedFileModified;
@@ -1061,6 +1161,17 @@ fn syncManaged(alloc: std.mem.Allocator, opts: SyncOptions) !void {
             }
             try writeFileBytes(file.path, file.content);
             std.debug.print("updated    {s}\n", .{file.path});
+        }
+        for (stale_paths, 0..) |path, i| {
+            if (!stale_delete[i]) continue;
+            if (stale_modified[i] and opts.force) {
+                const current = try readFileAlloc(alloc, path, 4 * 1024 * 1024);
+                const backup = try std.fmt.allocPrint(alloc, "{s}.bak", .{path});
+                try writeFileBytes(backup, current);
+                std.debug.print("backup     {s}\n", .{backup});
+            }
+            try deleteFile(path);
+            std.debug.print("deleted    {s}\n", .{path});
         }
         try writeManagedManifest(alloc, files);
     }
@@ -1360,6 +1471,15 @@ fn writeFileBytes(path: []const u8, bytes: []const u8) !void {
     _ = Lib.fwrite(bytes.ptr, 1, bytes.len, f);
 }
 
+fn deleteFile(path: []const u8) !void {
+    const z = try std.heap.smp_allocator.dupeZ(u8, path);
+    defer std.heap.smp_allocator.free(z);
+    const Lib = struct {
+        extern "c" fn unlink(p: [*:0]const u8) c_int;
+    };
+    if (Lib.unlink(z.ptr) != 0) return error.DeleteFailed;
+}
+
 /// If the config's D1 database_id is the placeholder UUID, create the DB and
 /// write the real UUID back. If a D1 with that name already exists in the
 /// account, adopt its UUID instead (so re-running deploy after a failure
@@ -1526,15 +1646,14 @@ test "scaffold dependency tracks the current stable release" {
 }
 
 test "Workers scaffold guards zero-length wasm memory access" {
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "l === 0 ? new Uint8Array(0)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "if (b.length > 0) new Uint8Array(memory.buffer") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "new Uint8Array(memory.buffer, p, l)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "len === 0 ? new Uint8Array(0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "if (bytes.length > 0) new Uint8Array(memory.buffer") != null);
 }
 
 test "Workers scaffold serializes the complete JSPI wasm dispatch" {
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "./wasm_dispatch.mjs") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "wasmDispatchQueue.run(() => dispatchWasm(request))") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "const respLen = exp.last_response_length()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "wasmDispatchQueue.run(() => dispatchWasmUnlocked(request))") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "const respLen = exports_ref.last_response_length()") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_wasm_dispatch, "await previous") != null);
 }
 

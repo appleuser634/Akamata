@@ -173,6 +173,12 @@ pub const Db = struct {
         return .{};
     }
 
+    pub fn ping(self: Db) !void {
+        var stmt = try self.prepare("SELECT 1");
+        defer stmt.deinit();
+        if ((try stmt.step()) != .row or try stmt.columnInt(0) != 1) return error.HealthCheckFailed;
+    }
+
     /// Execute independent statements in order. D1 adapters may specialize
     /// this into one platform batch; the portable fallback preserves errors.
     pub fn batch(self: Db, allocator: std.mem.Allocator, statements: []const []const u8) ![]ExecResult {

@@ -46,10 +46,10 @@ test ! -e deploy/worker/wasm_dispatch.mjs
 
 "$cli" update --to=v0.1.2 --sync
 grep -F 'refs/tags/v0.1.2.tar.gz' build.zig.zon >/dev/null
-grep -F 'wasmDispatchQueue.run(() => dispatchWasm(request))' deploy/worker/index.mjs >/dev/null
+grep -F 'wasmDispatchQueue.run(() => dispatchWasmUnlocked(request))' deploy/worker/index.mjs >/dev/null
 grep -F 'await previous' deploy/worker/wasm_dispatch.mjs >/dev/null
-test -f deploy/worker/internal_routes.mjs
-test -f deploy/worker/realtime_object.mjs
+test ! -f deploy/worker/internal_routes.mjs
+test ! -f deploy/worker/realtime_object.mjs
 test -f .akamata/managed-files.json
 grep -F '# user-owned-wrangler-setting' deploy/wrangler.toml >/dev/null
 grep -F '// user-owned-source-marker' src/main.zig >/dev/null

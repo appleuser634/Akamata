@@ -170,6 +170,9 @@ pub fn build(b: *std.Build) void {
     const project_update_sync = b.addSystemCommand(&.{ "sh", "tests/project_update_sync.sh" });
     project_update_sync.addArtifactArg(cli_exe);
     b.step("project-update-test", "upgrade and sync a legacy Native/Workers project safely").dependOn(&project_update_sync.step);
+    const workers_capability_sync = b.addSystemCommand(&.{ "sh", "tests/workers_capability_sync.sh" });
+    workers_capability_sync.addArtifactArg(cli_exe);
+    b.step("workers-capability-sync-test", "preserve Workers capabilities while regenerating managed glue").dependOn(&workers_capability_sync.step);
 
     // === Tests ===
     const test_step = b.step("test", "run unit tests");
@@ -209,6 +212,7 @@ pub fn build(b: *std.Build) void {
         "tests/security_middleware_test.zig",
         "tests/docs_examples_test.zig",
         "tests/comptime_framework_test.zig",
+        "tests/mimoc_parts_improvements_test.zig",
         "src/storage.zig",
         "src/events.zig",
         "src/realtime.zig",

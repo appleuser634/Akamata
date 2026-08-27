@@ -19,6 +19,7 @@ is development-oriented; pin a tagged release for reproducible builds.
 
 ## Guides
 
+- [Application building blocks](application-building-blocks.md) — queries, validation, sessions/CSRF, typed config, storage, testing, idempotency, and D1 atomic patterns
 - [Portable Backend and Realtime Architecture](portable-backend.md)
 
 - [Cloudflare Workers and Containers](cloudflare.md)

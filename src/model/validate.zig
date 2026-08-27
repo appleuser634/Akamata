@@ -43,6 +43,8 @@ pub const Rule = struct {
         min_len,
         max_len,
         range,
+        min,
+        max,
         format,
         /// Calls `text_custom` for `[]const u8` (or optional thereof) fields.
         custom_text,
@@ -63,6 +65,12 @@ pub const rule = struct {
     }
     pub fn range(lo: i64, hi: i64) Rule {
         return .{ .kind = .range, .int_a = lo, .int_b = hi };
+    }
+    pub fn min(value: i64) Rule {
+        return .{ .kind = .min, .int_a = value };
+    }
+    pub fn max(value: i64) Rule {
+        return .{ .kind = .max, .int_a = value };
     }
     pub fn format(f: Format) Rule {
         return .{ .kind = .format, .format = f };
@@ -186,7 +194,7 @@ fn applyRule(
                 try errs.append(arena, .{ .field = field_name, .rule = .max_len, .message = msg });
             }
         },
-        .range => {
+        .range, .min, .max => {
             // Pull numeric value out, skipping null optionals.
             const num_opt: ?i64 = blk: {
                 if (vi == .optional) {
@@ -196,10 +204,9 @@ fn applyRule(
                 break :blk asI64(value);
             };
             if (num_opt) |n| {
-                if (n < r.int_a or n > r.int_b) {
-                    const msg = try std.fmt.allocPrint(arena, "must be between {d} and {d}", .{ r.int_a, r.int_b });
-                    try errs.append(arena, .{ .field = field_name, .rule = .range, .message = msg });
-                }
+                if (r.kind == .range and (n < r.int_a or n > r.int_b)) try errs.append(arena, .{ .field = field_name, .rule = .range, .message = try std.fmt.allocPrint(arena, "must be between {d} and {d}", .{ r.int_a, r.int_b }) });
+                if (r.kind == .min and n < r.int_a) try errs.append(arena, .{ .field = field_name, .rule = .min, .message = try std.fmt.allocPrint(arena, "must be at least {d}", .{r.int_a}) });
+                if (r.kind == .max and n > r.int_a) try errs.append(arena, .{ .field = field_name, .rule = .max, .message = try std.fmt.allocPrint(arena, "must be at most {d}", .{r.int_a}) });
             }
         },
         .format => {
@@ -313,8 +320,8 @@ const User = struct {
         .validates = .{
             .email = .{ rule.required, rule.max_len(255), rule.format(.email) },
             .name = .{ rule.required, rule.min_len(2), rule.max_len(80) },
-            .age = .{ rule.range(0, 150) },
-            .bio = .{ rule.max_len(20) },
+            .age = .{rule.range(0, 150)},
+            .bio = .{rule.max_len(20)},
         },
     };
 };
@@ -403,7 +410,7 @@ const CustomUser = struct {
     pub const __schema = .{
         .validates = .{
             .email = .{ rule.required, rule.custom(requireInternalDomain) },
-            .age = .{ rule.customInt(requireEvenAge) },
+            .age = .{rule.customInt(requireEvenAge)},
         },
     };
 };

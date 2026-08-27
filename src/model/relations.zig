@@ -38,6 +38,7 @@ const std = @import("std");
 const db_mod = @import("../db/db.zig");
 const schema_mod = @import("schema.zig");
 const query_mod = @import("query.zig");
+const row_mapper = @import("row_mapper.zig");
 
 /// `hasMany(Owner, "posts", db, arena, owner_id)` returns `[]Post`.
 pub fn hasMany(
@@ -150,7 +151,7 @@ fn whereOne(
     try stmt.bindAll(.{value});
     var out: std.ArrayList(T) = .empty;
     while ((try stmt.step()) == .row) {
-        const row = try readRowDupe(T, arena, stmt);
+        const row = try row_mapper.read(T, arena, stmt);
         try out.append(arena, row);
     }
     return out.toOwnedSlice(arena);
