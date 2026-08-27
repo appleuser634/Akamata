@@ -32,8 +32,8 @@ const tmpl_wasm_dispatch = @embedFile("templates/wasm_dispatch.mjs.tpl");
 const tmpl_internal_routes = @embedFile("templates/internal_routes.mjs.tpl");
 const tmpl_realtime_object = @embedFile("templates/realtime_object.mjs.tpl");
 
-const STABLE_VERSION = "v0.1.3";
-const STABLE_HASH = "akamata-0.1.3-uJIoIxf5LAFuRQ45_Lm7Axug4u7ZZApnO5XwzFmiVyQ8";
+const STABLE_VERSION = "v0.1.4";
+const STABLE_HASH = "akamata-0.1.4-uJIoIz4eLQGqoQAroTagXl8dVSYcQI4y-Pwxr2bGs9O_";
 const MANAGED_MANIFEST = ".akamata/managed-files.json";
 
 pub fn main(init: std.process.Init) !void {
@@ -1641,7 +1641,7 @@ test "scaffold dependency is remote, pinned, and locally overridable" {
 }
 
 test "scaffold dependency tracks the current stable release" {
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.1.3.tar.gz") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.1.4.tar.gz") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, STABLE_HASH) != null);
 }
 
