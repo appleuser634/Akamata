@@ -1,5 +1,40 @@
 # Upgrading from v0.0.1
 
+## Updating the framework and generated files
+
+Use the CLI that ships with the target Akamata release. Updating only
+`build.zig.zon` is insufficient for Workers projects because the generated
+JavaScript bridge is part of the framework/runtime ABI.
+
+```bash
+akamata update --to=v0.1.1 --sync
+```
+
+`akamata update` detects the pinned `.akamata` release, resolves the target
+archive hash, rewrites only that dependency's URL/hash, and validates a Native
+build plus a Workers build when a Wrangler config is present. With no `--to`,
+it selects the latest stable release bundled with that CLI. `--dry-run` prints
+planned changes without writing or building.
+
+`akamata sync` manages only files recorded in `.akamata/managed-files.json`:
+
+- `deploy/worker/index.mjs`
+- `deploy/worker/wasm_dispatch.mjs`
+- `deploy/worker/internal_routes.mjs`
+- `deploy/worker/realtime_object.mjs`
+
+Application source, `build.zig`, and `wrangler.toml` are user-owned and never
+rewritten. If a managed file's SHA-256 differs from its generation hash, sync
+shows a diff summary and refuses by default. `--force` saves a `.bak` before
+replacement. Pre-manifest v0.1.0 glue migrates only when it exactly matches the
+official normalized v0.1.0 template.
+
+```bash
+akamata update --to=v0.1.1 --sync --dry-run
+akamata update --to=v0.1.1 --sync
+git diff
+```
+
 This page covers behavior changes on `main` after v0.0.1. Run the full test
 suite before deployment; several changes intentionally turn previously
 accepted ambiguous states into startup or request errors.

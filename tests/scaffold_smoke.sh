@@ -23,11 +23,14 @@ if grep -F '../Akamata' build.zig.zon >/dev/null; then
   echo "generated build.zig.zon still depends on ../Akamata" >&2
   exit 1
 fi
-grep -F '.url = "https://github.com/appleuser634/Akamata/archive/' build.zig.zon >/dev/null
+grep -F '.url = "https://github.com/moribit/Akamata/archive/' build.zig.zon >/dev/null
 grep -F '.hash = "akamata-' build.zig.zon >/dev/null
 grep -F 'l === 0 ? new Uint8Array(0)' deploy/worker/index.mjs >/dev/null
 grep -F 'if (b.length > 0) new Uint8Array(memory.buffer' deploy/worker/index.mjs >/dev/null
 grep -F 'wasmDispatchQueue.run(() => dispatchWasm(request))' deploy/worker/index.mjs >/dev/null
+grep -F 'await previous' deploy/worker/wasm_dispatch.mjs >/dev/null
+grep -F 'deploy/worker/index.mjs' .akamata/managed-files.json >/dev/null
+grep -F 'deploy/worker/realtime_object.mjs' .akamata/managed-files.json >/dev/null
 
 zig build
 zig build -Dbackend=workers -Doptimize=ReleaseSmall

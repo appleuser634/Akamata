@@ -1,5 +1,38 @@
 # v0.0.1からのアップグレード
 
+## framework依存と生成fileの更新
+
+対象releaseに付属するCLIを使用してください。Workers projectでは生成済みの
+JavaScript bridgeもframework/runtime ABIの一部なので、`build.zig.zon`だけの更新では
+不十分です。
+
+```bash
+akamata update --to=v0.1.1 --sync
+```
+
+`akamata update`は現在の`.akamata`依存releaseを検出し、対象archiveのhashを解決して、
+その依存のURL/hashだけを更新します。その後Native buildと、Wrangler設定がある場合は
+Workers buildを検証します。`--to`省略時はCLIに組み込まれた最新stable releaseを選び、
+`--dry-run`ではfile更新もbuildも行いません。
+
+`akamata sync`のmanaged fileは`.akamata/managed-files.json`に記録されます。
+
+- `deploy/worker/index.mjs`
+- `deploy/worker/wasm_dispatch.mjs`
+- `deploy/worker/internal_routes.mjs`
+- `deploy/worker/realtime_object.mjs`
+
+application source、`build.zig`、`wrangler.toml`はuser-ownedであり書き換えません。
+managed fileのSHA-256が生成時hashと異なる場合は差分概要を表示してdefaultで拒否します。
+`--force`時も置換前に`.bak`を保存します。manifest導入前のv0.1.0 glueは、公式templateと
+完全一致する場合だけ自動移行します。
+
+```bash
+akamata update --to=v0.1.1 --sync --dry-run
+akamata update --to=v0.1.1 --sync
+git diff
+```
+
 このページはv0.0.1以降の`main`における挙動変更をまとめます。曖昧な状態を意図的に
 startup errorまたはrequest errorへ変えた箇所があるため、deploy前に全testを実行してください。
 

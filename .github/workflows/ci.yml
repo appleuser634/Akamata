@@ -64,6 +64,7 @@ jobs:
           use-cache: false
       - run: ./third_party/sqlite/fetch.sh
       - run: zig build cli
+      - run: zig build project-update-test
       - run: |
           mkdir -p /tmp/cli-smoke && cd /tmp/cli-smoke
           ${GITHUB_WORKSPACE}/zig-out/bin/akamata init testapp --target=both

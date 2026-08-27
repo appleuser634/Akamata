@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-27
+
+### Added
+
+- Added `akamata update` to detect and update the tagged Akamata dependency,
+  resolve release hashes, validate Native and Workers builds, support dry runs,
+  and optionally synchronize generated framework files.
+- Added `akamata sync` with a SHA-256 managed-file manifest for Workers HTTP,
+  JSPI dispatch serialization, internal-route, and realtime Durable Object
+  glue. New scaffolds record their generated file hashes automatically.
+
+### Changed
+
+- `sync-glue` is now a compatibility alias for the safer complete managed-file
+  synchronization flow.
+- New scaffolds pin the immutable v0.1.1 archive pending the post-release
+  v0.1.2 archive hash update.
+
+### Security
+
+- Managed-file synchronization preflights every target before writing, refuses
+  local edits by default with a diff summary, preserves forced replacements as
+  `.bak` files, and never rewrites application source or `wrangler.toml`.
+- Pre-manifest v0.1.0 Workers glue is migrated only when it exactly matches the
+  official normalized template.
+
+### Testing
+
+- Added an end-to-end v0.1.0 project upgrade covering dependency updates,
+  Workers serialization propagation, dry runs, local-edit refusal, forced
+  backups, user-owned configuration preservation, and Native/Workers builds.
+
 ## [0.1.1] - 2026-08-27
 
 ### Fixed

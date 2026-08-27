@@ -2,6 +2,16 @@
 
 An Akamata web app.
 
+Framework upgrades update both the Zig dependency and generated Workers glue:
+
+```bash
+akamata update --sync --dry-run
+akamata update --sync
+```
+
+`wrangler.toml` and application source are user-owned and are never replaced
+by `akamata sync`; generated hashes live in `.akamata/managed-files.json`.
+
 ## Usage
 
 ```bash

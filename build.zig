@@ -167,6 +167,9 @@ pub fn build(b: *std.Build) void {
     const scaffold_smoke = b.addSystemCommand(&.{ "sh", "tests/scaffold_smoke.sh" });
     scaffold_smoke.addArtifactArg(cli_exe);
     b.step("scaffold-test", "generate and build a portable scaffold").dependOn(&scaffold_smoke.step);
+    const project_update_sync = b.addSystemCommand(&.{ "sh", "tests/project_update_sync.sh" });
+    project_update_sync.addArtifactArg(cli_exe);
+    b.step("project-update-test", "upgrade and sync a legacy Native/Workers project safely").dependOn(&project_update_sync.step);
 
     // === Tests ===
     const test_step = b.step("test", "run unit tests");

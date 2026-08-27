@@ -5,13 +5,9 @@
 // in `WebAssembly.promising(...)` so Zig-side code can call D1 synchronously.
 
 import wasm from "../../zig-out/bin/{{NAME}}_worker.wasm";
-import { WasmDispatchQueue } from "./wasm_dispatch.mjs";
 
 let instance, memory, exp, handleFetchAsync;
-let initPromise;
 let jspi = false;
-
-const wasmDispatchQueue = new WasmDispatchQueue();
 
 const d1stmts = new Map();
 let nextStmtId = 1;
@@ -34,13 +30,6 @@ function suspending(fn) {
 
 async function init(env) {
   if (instance) return;
-  if (initPromise) return initPromise;
-  initPromise = initOnce(env);
-  try { await initPromise; }
-  catch (error) { initPromise = undefined; throw error; }
-}
-
-async function initOnce(env) {
   detectJspi();
 
   const envBridge = {
@@ -215,11 +204,6 @@ async function initOnce(env) {
 export default {
   async fetch(request, env, ctx) {
     await init(env);
-    return wasmDispatchQueue.run(() => dispatchWasm(request));
-  },
-};
-
-async function dispatchWasm(request) {
     const url = new URL(request.url);
     const body = new Uint8Array(await request.arrayBuffer());
     const headers = [];
@@ -249,9 +233,9 @@ async function dispatchWasm(request) {
       if (ci < 0) continue;
       respHeaders.set(lines[i].slice(0, ci).trim(), lines[i].slice(ci + 1).trim());
     }
-    if (!Number.isInteger(status) || status < 200 || status > 599) return new Response("invalid wasm response status", { status: 502 });
     return new Response(respBody, { status, headers: respHeaders });
-}
+  },
+};
 
 function findHeaderEnd(bytes) {
   for (let i = 0; i + 3 < bytes.length; i++) {

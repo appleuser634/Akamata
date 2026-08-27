@@ -26,6 +26,13 @@ const tmpl_readme = @embedFile("templates/README.md.tpl");
 const tmpl_wrangler = @embedFile("templates/wrangler.toml.tpl");
 const tmpl_worker_index = @embedFile("templates/worker_index.mjs.tpl");
 const tmpl_dockerfile = @embedFile("templates/Dockerfile.tpl");
+const tmpl_wasm_dispatch = @embedFile("templates/wasm_dispatch.mjs.tpl");
+const tmpl_internal_routes = @embedFile("templates/internal_routes.mjs.tpl");
+const tmpl_realtime_object = @embedFile("templates/realtime_object.mjs.tpl");
+
+const STABLE_VERSION = "v0.1.1";
+const STABLE_HASH = "akamata-0.1.1-uJIoIz4FLAH_S8StLpM_kSPjP7MWvyXKZ3bd7mpiPOMG";
+const MANAGED_MANIFEST = ".akamata/managed-files.json";
 
 pub fn main(init: std.process.Init) !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
@@ -59,6 +66,10 @@ pub fn main(init: std.process.Init) !void {
         try cmdDeploy(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "sync-glue")) {
         try cmdSyncGlue(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "sync")) {
+        try cmdSync(alloc, args[2..]);
+    } else if (std.mem.eql(u8, cmd, "update")) {
+        try cmdUpdate(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "db")) {
         try cmdDb(alloc, args[2..]);
     } else if (std.mem.eql(u8, cmd, "migrate")) {
@@ -105,14 +116,14 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 
 fn isHelpArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
 }
 
 const known_commands = [_][]const u8{
-    "init", "build", "dev", "deploy", "sync-glue", "db", "migrate", "check", "inspect", "routes", "doctor", "config", "test", "runner", "generate", "destroy", "api", "client", "help", "version",
+    "init", "build", "dev", "deploy", "sync", "update", "sync-glue", "db", "migrate", "check", "inspect", "routes", "doctor", "config", "test", "runner", "generate", "destroy", "api", "client", "help", "version",
 };
 
 /// Lightweight nearest-match — if the user typed something within 2 edits
@@ -159,7 +170,7 @@ fn editDistance(a: []const u8, b: []const u8) usize {
 fn usage() !void {
     const msg =
         \\Usage: akamata <command> [args]
-        \\Version: akamata 0.1.1 (use `akamata --version` for the version)
+        \\Version: akamata 0.1.2 (use `akamata --version` for the version)
         \\
         \\Commands:
         \\  init <name> [--target=native|workers|containers|both]
@@ -181,11 +192,13 @@ fn usage() !void {
         \\                             database_id, it is auto-created and the ID is
         \\                             written back into the config.
         \\  sync-glue [--config=PATH] [--force]
-        \\      Regenerate deploy/worker/index.mjs from the CLI's bundled
-        \\      template. Run this after upgrading akamata so the JS host glue
-        \\      matches the framework's current wasm ABI (a stale glue can fail
-        \\      to instantiate, e.g. a missing import). Refuses to overwrite a
-        \\      locally-modified glue unless --force is given.
+        \\      Deprecated alias for the safe managed-file `sync` command.
+        \\  sync [--force] [--dry-run] [--config=PATH]
+        \\      Synchronize framework-managed Workers files without changing
+        \\      wrangler.toml or application source.
+        \\  update [--to=vX.Y.Z] [--sync] [--force] [--dry-run]
+        \\      Update the Akamata dependency, optionally sync managed files,
+        \\      then validate Native and Workers builds.
         \\  db <sql-file> [--local|--remote] [--config=PATH]
         \\      Run a SQL migration against the D1 binding `DB`.
         \\  migrate generate <name> [--dir=migrations]
@@ -257,6 +270,31 @@ fn commandUsage(command: []const u8) !void {
         \\  --migrate=SQL             Apply a SQL file to remote D1 before deploy
         \\  --optimize=MODE           Workers optimize mode
         \\  -h, --help                Show this help without deploying
+        \\
+    else if (std.mem.eql(u8, command, "sync"))
+        \\Usage: akamata sync [options]
+        \\
+        \\Synchronize framework-managed generated files. User-owned source,
+        \\build.zig, and wrangler.toml are never changed.
+        \\
+        \\Options:
+        \\  --config=PATH             Wrangler config used to resolve paths/name
+        \\  --dry-run                 Show changes without writing files
+        \\  --force                   Replace locally modified managed files
+        \\  -h, --help                Show this help
+        \\
+    else if (std.mem.eql(u8, command, "update"))
+        \\Usage: akamata update [options]
+        \\
+        \\Update the .akamata dependency in build.zig.zon and validate builds.
+        \\
+        \\Options:
+        \\  --to=vX.Y.Z               Target release (default: bundled latest stable)
+        \\  --sync                    Also synchronize framework-managed files
+        \\  --dry-run                 Show changes without writing or building
+        \\  --force                   Allow --sync to replace local managed edits
+        \\  --config=PATH             Wrangler config passed to --sync
+        \\  -h, --help                Show this help
         \\
     else if (std.mem.eql(u8, command, "db"))
         \\Usage: akamata db <sql-file> [options]
@@ -421,6 +459,15 @@ fn cmdInit(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
         });
         try renderFile(alloc, opts.name, "deploy/worker/index.mjs", tmpl_worker_index, &.{
             .{ .key = "{{NAME}}", .val = opts.name },
+        });
+        try renderFile(alloc, opts.name, "deploy/worker/wasm_dispatch.mjs", tmpl_wasm_dispatch, &.{});
+        try renderFile(alloc, opts.name, "deploy/worker/internal_routes.mjs", tmpl_internal_routes, &.{});
+        try renderFile(alloc, opts.name, "deploy/worker/realtime_object.mjs", tmpl_realtime_object, &.{});
+        try writeInitialManagedManifest(alloc, opts.name, &.{
+            "deploy/worker/index.mjs",
+            "deploy/worker/wasm_dispatch.mjs",
+            "deploy/worker/internal_routes.mjs",
+            "deploy/worker/realtime_object.mjs",
         });
     }
     if (opts.target == .containers or opts.target == .both) {
@@ -809,63 +856,368 @@ fn cmdDeploy(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
     }
 }
 
-// ---- sync-glue ----
+// ---- project update / managed-file sync ----
+
+const ManagedFile = struct {
+    path: []const u8,
+    content: []const u8,
+};
+
+const SyncOptions = struct {
+    config_path: ?[]const u8 = null,
+    force: bool = false,
+    dry_run: bool = false,
+    assumed_version: ?[]const u8 = null,
+};
+
+const LEGACY_V010_WORKER_TEMPLATE_SHA256 = "9518deaaa60e8b843921648ce42224759794e9e9364e138e99db3c1897d50c19";
+
+fn sha256Hex(bytes: []const u8) [64]u8 {
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    return std.fmt.bytesToHex(digest, .lower);
+}
+
+fn appendPrint(list: *std.ArrayList(u8), alloc: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
+    const rendered = try std.fmt.allocPrint(alloc, fmt, args);
+    defer alloc.free(rendered);
+    try list.appendSlice(alloc, rendered);
+}
+
+fn writeInitialManagedManifest(alloc: std.mem.Allocator, root: []const u8, paths: []const []const u8) !void {
+    const manifest_dir = try std.fmt.allocPrint(alloc, "{s}/.akamata", .{root});
+    defer alloc.free(manifest_dir);
+    try makeDirRecursive(manifest_dir);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+    try appendPrint(&out, alloc, "{{\n  \"schema\": 1,\n  \"framework_version\": \"{s}\",\n  \"files\": {{\n", .{VERSION});
+    for (paths, 0..) |rel, i| {
+        const full = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ root, rel });
+        defer alloc.free(full);
+        const bytes = try readFileAlloc(alloc, full, 4 * 1024 * 1024);
+        defer alloc.free(bytes);
+        const hash = sha256Hex(bytes);
+        try appendPrint(&out, alloc, "    \"{s}\": \"{s}\"{s}\n", .{ rel, hash, if (i + 1 == paths.len) "" else "," });
+    }
+    try out.appendSlice(alloc, "  }\n}\n");
+    const path = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ root, MANAGED_MANIFEST });
+    defer alloc.free(path);
+    try writeFileBytes(path, out.items);
+}
+
+fn manifestHash(alloc: std.mem.Allocator, path: []const u8) !?[]u8 {
+    const bytes = readFileAlloc(alloc, MANAGED_MANIFEST, 1024 * 1024) catch return null;
+    defer alloc.free(bytes);
+    var parsed = std.json.parseFromSlice(std.json.Value, alloc, bytes, .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    const files = parsed.value.object.get("files") orelse return null;
+    if (files != .object) return null;
+    const value = files.object.get(path) orelse return null;
+    if (value != .string or value.string.len != 64) return null;
+    return try alloc.dupe(u8, value.string);
+}
+
+fn writeManagedManifest(alloc: std.mem.Allocator, files: []const ManagedFile) !void {
+    try makeDirRecursive(".akamata");
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+    try appendPrint(&out, alloc, "{{\n  \"schema\": 1,\n  \"framework_version\": \"{s}\",\n  \"files\": {{\n", .{VERSION});
+    for (files, 0..) |file, i| {
+        const hash = sha256Hex(file.content);
+        try appendPrint(&out, alloc, "    \"{s}\": \"{s}\"{s}\n", .{ file.path, hash, if (i + 1 == files.len) "" else "," });
+    }
+    try out.appendSlice(alloc, "  }\n}\n");
+    try writeFileBytes(MANAGED_MANIFEST, out.items);
+}
+
+fn workerDir(alloc: std.mem.Allocator, cfg: []const u8) ![]u8 {
+    const dir = dirName(cfg);
+    return if (std.mem.eql(u8, dir, ".")) try alloc.dupe(u8, "worker") else try std.fmt.allocPrint(alloc, "{s}/worker", .{dir});
+}
+
+fn buildManagedFiles(alloc: std.mem.Allocator, cfg: []const u8, name: []const u8) ![]ManagedFile {
+    const dir = try workerDir(alloc, cfg);
+    const files = try alloc.alloc(ManagedFile, 4);
+    files[0] = .{
+        .path = try std.fmt.allocPrint(alloc, "{s}/index.mjs", .{dir}),
+        .content = try std.mem.replaceOwned(u8, alloc, tmpl_worker_index, "{{NAME}}", name),
+    };
+    files[1] = .{ .path = try std.fmt.allocPrint(alloc, "{s}/wasm_dispatch.mjs", .{dir}), .content = try alloc.dupe(u8, tmpl_wasm_dispatch) };
+    files[2] = .{ .path = try std.fmt.allocPrint(alloc, "{s}/internal_routes.mjs", .{dir}), .content = try alloc.dupe(u8, tmpl_internal_routes) };
+    files[3] = .{ .path = try std.fmt.allocPrint(alloc, "{s}/realtime_object.mjs", .{dir}), .content = try alloc.dupe(u8, tmpl_realtime_object) };
+    return files;
+}
+
+fn printManagedDiff(path: []const u8, old: ?[]const u8, new: []const u8) void {
+    std.debug.print("--- {s} (current)\n+++ {s} (framework {s})\n", .{ path, path, VERSION });
+    if (old == null) {
+        std.debug.print("+ add managed file ({d} bytes)\n", .{new.len});
+        return;
+    }
+    const old_hash = sha256Hex(old.?);
+    const new_hash = sha256Hex(new);
+    std.debug.print("- sha256 {s}\n+ sha256 {s}\n", .{ old_hash, new_hash });
+    var old_lines = std.mem.splitScalar(u8, old.?, '\n');
+    var new_lines = std.mem.splitScalar(u8, new, '\n');
+    var line: usize = 1;
+    while (true) : (line += 1) {
+        const a = old_lines.next();
+        const b = new_lines.next();
+        if (a == null and b == null) break;
+        if (a == null or b == null or !std.mem.eql(u8, a.?, b.?)) {
+            std.debug.print("@@ first difference at line {d} @@\n", .{line});
+            if (a) |value| std.debug.print("- {s}\n", .{value});
+            if (b) |value| std.debug.print("+ {s}\n", .{value});
+            break;
+        }
+    }
+}
+
+fn isLegacyV010WorkerIndex(alloc: std.mem.Allocator, bytes: []const u8) !bool {
+    const prefix = "import wasm from \"../../zig-out/bin/";
+    const suffix = "_worker.wasm\";";
+    const start = std.mem.indexOf(u8, bytes, prefix) orelse return false;
+    const name_start = start + prefix.len;
+    const name_end_rel = std.mem.indexOf(u8, bytes[name_start..], suffix) orelse return false;
+    const name_end = name_start + name_end_rel;
+    var normalized: std.ArrayList(u8) = .empty;
+    defer normalized.deinit(alloc);
+    try normalized.appendSlice(alloc, bytes[0..name_start]);
+    try normalized.appendSlice(alloc, "{{NAME}}");
+    try normalized.appendSlice(alloc, bytes[name_end..]);
+    const hash = sha256Hex(normalized.items);
+    return std.mem.eql(u8, &hash, LEGACY_V010_WORKER_TEMPLATE_SHA256);
+}
+
+fn syncManaged(alloc: std.mem.Allocator, opts: SyncOptions) !void {
+    const zon = try readFileAlloc(alloc, "build.zig.zon", 4 * 1024 * 1024);
+    const project_version = opts.assumed_version orelse dependencyVersion(zon) orelse {
+        std.debug.print("sync: build.zig.zon has no tagged .akamata dependency.\n", .{});
+        return error.AkamataDependencyNotFound;
+    };
+    if (!std.mem.eql(u8, project_version, STABLE_VERSION)) {
+        std.debug.print("sync: project uses {s}, but this CLI bundles {s} templates; run `akamata update --sync`.\n", .{ project_version, STABLE_VERSION });
+        return error.TemplateVersionMismatch;
+    }
+    const cfg = opts.config_path orelse defaultConfigPath() orelse {
+        std.debug.print("sync: no wrangler.toml found; pass --config=PATH.\n", .{});
+        return error.UsageError;
+    };
+    const name = (try readWranglerName(alloc, cfg)) orelse {
+        std.debug.print("sync: {s} has no top-level name.\n", .{cfg});
+        return error.UsageError;
+    };
+    const files = try buildManagedFiles(alloc, cfg, name);
+    var conflicts: usize = 0;
+    var changes: usize = 0;
+    var changed = [_]bool{false} ** 4;
+    var modified = [_]bool{false} ** 4;
+    // Preflight all managed files before writing any of them, so one local
+    // edit cannot leave a project partially synchronized.
+    for (files, 0..) |file, i| {
+        const existing = readFileAlloc(alloc, file.path, 4 * 1024 * 1024) catch null;
+        if (existing) |current| {
+            if (std.mem.eql(u8, current, file.content)) {
+                std.debug.print("unchanged  {s}\n", .{file.path});
+                continue;
+            }
+        }
+        changed[i] = true;
+        changes += 1;
+        printManagedDiff(file.path, existing, file.content);
+        var locally_modified = false;
+        if (existing) |current| {
+            if (try manifestHash(alloc, file.path)) |recorded| {
+                const current_hash = sha256Hex(current);
+                locally_modified = !std.mem.eql(u8, &current_hash, recorded);
+            } else if (std.mem.endsWith(u8, file.path, "/index.mjs") and try isLegacyV010WorkerIndex(alloc, current)) {
+                std.debug.print("  recognized unmodified legacy v0.1.0 template\n", .{});
+            } else {
+                locally_modified = true;
+            }
+        }
+        modified[i] = locally_modified;
+        if (locally_modified and !opts.force) {
+            conflicts += 1;
+            std.debug.print("  REFUSED: local changes detected (use --force to replace)\n", .{});
+        } else {
+            std.debug.print("  would update {s}\n", .{file.path});
+        }
+    }
+    if (conflicts > 0) {
+        std.debug.print("sync: refused {d} locally modified file(s); no manifest update written.\n", .{conflicts});
+        return error.ManagedFileModified;
+    }
+    if (!opts.dry_run) {
+        for (files, 0..) |file, i| {
+            if (!changed[i]) continue;
+            const existing = readFileAlloc(alloc, file.path, 4 * 1024 * 1024) catch null;
+            try makeDirRecursive(dirName(file.path));
+            if (modified[i] and opts.force and existing != null) {
+                const backup = try std.fmt.allocPrint(alloc, "{s}.bak", .{file.path});
+                try writeFileBytes(backup, existing.?);
+                std.debug.print("backup     {s}\n", .{backup});
+            }
+            try writeFileBytes(file.path, file.content);
+            std.debug.print("updated    {s}\n", .{file.path});
+        }
+        try writeManagedManifest(alloc, files);
+    }
+    std.debug.print("sync: {d} change(s){s}; wrangler.toml and application source untouched.\n", .{ changes, if (opts.dry_run) " planned" else " applied" });
+}
+
+fn cmdSync(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    var arena_state: std.heap.ArenaAllocator = .init(parent_alloc);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+    var opts: SyncOptions = .{};
+    for (args) |raw| {
+        const a = std.mem.sliceTo(raw, 0);
+        if (std.mem.eql(u8, a, "--force")) opts.force = true else if (std.mem.eql(u8, a, "--dry-run")) opts.dry_run = true else if (std.mem.startsWith(u8, a, "--config=")) opts.config_path = a["--config=".len..] else {
+            std.debug.print("sync: unknown option {s}\n", .{a});
+            return error.UsageError;
+        }
+    }
+    try syncManaged(alloc, opts);
+}
+
+fn quotedFieldRange(content: []const u8, start: usize, field: []const u8) ?struct { usize, usize } {
+    const rel = std.mem.indexOf(u8, content[start..], field) orelse return null;
+    const field_pos = start + rel;
+    const quote = std.mem.indexOfScalarPos(u8, content, field_pos + field.len, '"') orelse return null;
+    const end = std.mem.indexOfScalarPos(u8, content, quote + 1, '"') orelse return null;
+    return .{ quote + 1, end };
+}
+
+fn replaceRange(alloc: std.mem.Allocator, content: []const u8, start: usize, end: usize, replacement: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.appendSlice(alloc, content[0..start]);
+    try out.appendSlice(alloc, replacement);
+    try out.appendSlice(alloc, content[end..]);
+    return out.toOwnedSlice(alloc);
+}
+
+fn dependencyVersion(content: []const u8) ?[]const u8 {
+    const dep = std.mem.indexOf(u8, content, ".akamata = .{") orelse return null;
+    const marker = "/archive/refs/tags/";
+    const rel = std.mem.indexOf(u8, content[dep..], marker) orelse return null;
+    const start = dep + rel + marker.len;
+    const end_rel = std.mem.indexOf(u8, content[start..], ".tar.gz") orelse return null;
+    return content[start .. start + end_rel];
+}
+
+fn updateDependencyContent(alloc: std.mem.Allocator, content: []const u8, version: []const u8, hash: []const u8) ![]u8 {
+    const dep = std.mem.indexOf(u8, content, ".akamata = .{") orelse return error.AkamataDependencyNotFound;
+    const url = try std.fmt.allocPrint(alloc, "https://github.com/moribit/Akamata/archive/refs/tags/{s}.tar.gz", .{version});
+    defer alloc.free(url);
+    const url_range = quotedFieldRange(content, dep, ".url") orelse return error.AkamataDependencyNotFound;
+    const with_url = try replaceRange(alloc, content, url_range[0], url_range[1], url);
+    defer alloc.free(with_url);
+    const hash_range = quotedFieldRange(with_url, dep, ".hash") orelse return error.AkamataDependencyNotFound;
+    return replaceRange(alloc, with_url, hash_range[0], hash_range[1], hash);
+}
+
+fn resolveReleaseHash(alloc: std.mem.Allocator, version: []const u8) ![]u8 {
+    if (std.mem.eql(u8, version, STABLE_VERSION)) return try alloc.dupe(u8, STABLE_HASH);
+    const url = try std.fmt.allocPrint(alloc, "https://github.com/moribit/Akamata/archive/refs/tags/{s}.tar.gz", .{version});
+    const result = try captureCmdAllowFail(alloc, &.{ "zig", "fetch", url });
+    if (result.rc != 0) {
+        std.debug.print("update: zig fetch failed for {s}:\n{s}\n", .{ version, result.stdout });
+        return error.ReleaseNotFound;
+    }
+    const output = std.mem.trim(u8, result.stdout, " \t\r\n");
+    const line_start = if (std.mem.lastIndexOfScalar(u8, output, '\n')) |i| i + 1 else 0;
+    const hash = output[line_start..];
+    if (!std.mem.startsWith(u8, hash, "akamata-")) return error.InvalidReleaseHash;
+    return try alloc.dupe(u8, hash);
+}
+
+fn cmdUpdate(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    var arena_state: std.heap.ArenaAllocator = .init(parent_alloc);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+    var target: []const u8 = STABLE_VERSION;
+    var with_sync = false;
+    var sync_opts: SyncOptions = .{};
+    for (args) |raw| {
+        const a = std.mem.sliceTo(raw, 0);
+        if (std.mem.startsWith(u8, a, "--to=")) target = a["--to=".len..] else if (std.mem.eql(u8, a, "--sync")) with_sync = true else if (std.mem.eql(u8, a, "--force")) sync_opts.force = true else if (std.mem.eql(u8, a, "--dry-run")) sync_opts.dry_run = true else if (std.mem.startsWith(u8, a, "--config=")) sync_opts.config_path = a["--config=".len..] else {
+            std.debug.print("update: unknown option {s}\n", .{a});
+            return error.UsageError;
+        }
+    }
+    if (target.len < 2 or target[0] != 'v') {
+        std.debug.print("update: --to must use vMAJOR.MINOR.PATCH (for example v0.1.2).\n", .{});
+        return error.UsageError;
+    }
+    const old = try readFileAlloc(alloc, "build.zig.zon", 4 * 1024 * 1024);
+    const current = dependencyVersion(old) orelse {
+        std.debug.print("update: build.zig.zon has no tagged .akamata dependency.\n", .{});
+        return error.AkamataDependencyNotFound;
+    };
+    const hash = try resolveReleaseHash(alloc, target);
+    const updated = try updateDependencyContent(alloc, old, target, hash);
+    std.debug.print("update: Akamata {s} -> {s}\n", .{ current, target });
+    if (with_sync and !std.mem.eql(u8, target, STABLE_VERSION)) {
+        std.debug.print("update: this CLI only bundles managed templates for {s}; install the {s} CLI before using --sync.\n", .{ STABLE_VERSION, target });
+        return error.TemplateVersionMismatch;
+    }
+    sync_opts.assumed_version = target;
+    if (with_sync and sync_opts.dry_run) try syncManaged(alloc, sync_opts);
+    if (std.mem.eql(u8, old, updated)) {
+        std.debug.print("unchanged  build.zig.zon\n", .{});
+    } else if (sync_opts.dry_run) {
+        printManagedDiff("build.zig.zon", old, updated);
+        std.debug.print("  would update build.zig.zon\n", .{});
+    } else {
+        try writeFileBytes("build.zig.zon", updated);
+        std.debug.print("updated    build.zig.zon\n", .{});
+    }
+    if (sync_opts.dry_run) {
+        std.debug.print("update: dry-run complete; builds skipped.\n", .{});
+        return;
+    }
+    if (with_sync) syncManaged(alloc, sync_opts) catch |err| {
+        try writeFileBytes("build.zig.zon", old);
+        std.debug.print("update: sync failed; restored build.zig.zon.\n", .{});
+        return err;
+    };
+    std.debug.print("==> akamata update: validating Native build\n", .{});
+    runChild(alloc, &.{ "zig", "build" }, null) catch |err| {
+        try writeFileBytes("build.zig.zon", old);
+        std.debug.print("update: Native build failed; restored build.zig.zon.\n", .{});
+        return err;
+    };
+    if (defaultConfigPath() != null) {
+        std.debug.print("==> akamata update: validating Workers build\n", .{});
+        runChild(alloc, &.{ "zig", "build", "-Dbackend=workers", "-Doptimize=ReleaseSmall" }, null) catch |err| {
+            try writeFileBytes("build.zig.zon", old);
+            std.debug.print("update: Workers build failed; restored build.zig.zon.\n", .{});
+            return err;
+        };
+        if (!with_sync) std.debug.print("update: dependency updated; run `akamata sync` to review and update Workers managed files.\n", .{});
+    }
+    std.debug.print("update: complete at {s}.\n", .{target});
+}
+
+// ---- sync-glue (deprecated compatibility alias) ----
 
 /// Regenerate `<config-dir>/worker/index.mjs` from the bundled template so the
 /// JS host glue tracks the framework's current wasm ABI. The glue is generated
 /// (not hand-authored) — the only project-specific value is `{{NAME}}` (the
 /// wasm artifact name), read from the wrangler.toml top-level `name`.
-fn cmdSyncGlue(alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
-    var config_path: ?[]const u8 = null;
-    var force = false;
+fn cmdSyncGlue(parent_alloc: std.mem.Allocator, args: []const [:0]const u8) !void {
+    var arena_state: std.heap.ArenaAllocator = .init(parent_alloc);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+    var opts: SyncOptions = .{};
     for (args) |raw| {
         const a = std.mem.sliceTo(raw, 0);
-        if (std.mem.startsWith(u8, a, "--config=")) config_path = a[9..] else if (std.mem.eql(u8, a, "--force")) force = true;
+        if (std.mem.startsWith(u8, a, "--config=")) opts.config_path = a[9..] else if (std.mem.eql(u8, a, "--force")) opts.force = true else if (std.mem.eql(u8, a, "--dry-run")) opts.dry_run = true else return error.UsageError;
     }
-
-    const cfg = config_path orelse defaultConfigPath() orelse {
-        std.debug.print("sync-glue: no wrangler.toml found at deploy/wrangler.toml or ./wrangler.toml. Pass --config=PATH.\n", .{});
-        return error.UsageError;
-    };
-
-    const name = (try readWranglerName(alloc, cfg)) orelse {
-        std.debug.print("sync-glue: {s} has no top-level `name = \"...\"`; can't resolve the wasm artifact name.\n", .{cfg});
-        return error.UsageError;
-    };
-    defer alloc.free(name);
-
-    // The glue lives in a sibling `worker/` dir next to the config.
-    const dir = dirName(cfg); // e.g. "deploy" from "deploy/wrangler.toml", or "."
-    const glue_path = try std.fmt.allocPrint(alloc, "{s}/worker/index.mjs", .{dir});
-    defer alloc.free(glue_path);
-
-    // Render the template with the project name.
-    const rendered = try std.mem.replaceOwned(u8, alloc, tmpl_worker_index, "{{NAME}}", name);
-    defer alloc.free(rendered);
-
-    // No-op if unchanged.
-    const existing: ?[]u8 = readFileAlloc(alloc, glue_path, 4 * 1024 * 1024) catch null;
-    defer if (existing) |e| alloc.free(e);
-    if (existing) |e| {
-        if (std.mem.eql(u8, e, rendered)) {
-            std.debug.print("sync-glue: {s} already up to date.\n", .{glue_path});
-            return;
-        }
-        // The file diverges from the template. Back it up before overwriting,
-        // unless the user opted out with --force.
-        if (!force) {
-            const bak = try std.fmt.allocPrint(alloc, "{s}.bak", .{glue_path});
-            defer alloc.free(bak);
-            try writeFileBytes(bak, e);
-            std.debug.print("==> akamata: backed up existing glue to {s}\n", .{bak});
-        }
-    } else {
-        try makeDirRecursive(try std.fmt.allocPrint(alloc, "{s}/worker", .{dir}));
-    }
-
-    try writeFileBytes(glue_path, rendered);
-    std.debug.print("==> akamata: wrote {s} (name=\"{s}\")\n", .{ glue_path, name });
-    std.debug.print("    Rebuild + redeploy so the wasm and glue ship together: akamata deploy --workers\n", .{});
+    std.debug.print("sync-glue is deprecated; running the safe managed-file sync.\n", .{});
+    try syncManaged(alloc, opts);
 }
 
 /// Read the top-level `name = "..."` from a wrangler.toml (the key before any
@@ -1162,15 +1514,15 @@ test "scaffold names are path-safe and support hyphens" {
 }
 
 test "scaffold dependency is remote, pinned, and locally overridable" {
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, ".url = \"https://github.com/appleuser634/Akamata/archive/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, ".url = \"https://github.com/moribit/Akamata/archive/") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, ".hash = \"akamata-") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "../Akamata") == null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "zig build --fork=") != null);
 }
 
 test "scaffold dependency tracks the current stable release" {
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.1.0.tar.gz") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "akamata-0.1.0-uJIoI4fvKwH--xMKwulRpDc6xEEUfaP0oilU6-dfUqbw") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.1.1.tar.gz") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, STABLE_HASH) != null);
 }
 
 test "Workers scaffold guards zero-length wasm memory access" {
@@ -1180,15 +1532,43 @@ test "Workers scaffold guards zero-length wasm memory access" {
 }
 
 test "Workers scaffold serializes the complete JSPI wasm dispatch" {
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "class WasmDispatchQueue") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "./wasm_dispatch.mjs") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "wasmDispatchQueue.run(() => dispatchWasm(request))") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "const respLen = exp.last_response_length()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_wasm_dispatch, "await previous") != null);
 }
 
 test "Workers scaffold includes current observability clock imports" {
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "akamata_monotonic_ns") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "performance.now()") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "akamata_unix_micros") != null);
+}
+
+test "update detects and rewrites only the tagged Akamata dependency" {
+    const input =
+        \\.{
+        \\  .dependencies = .{
+        \\    .other = .{ .url = "https://example.test/keep", .hash = "keep" },
+        \\    .akamata = .{
+        \\      .url = "https://github.com/appleuser634/Akamata/archive/refs/tags/v0.1.0.tar.gz",
+        \\      .hash = "akamata-old",
+        \\    },
+        \\  },
+        \\}
+    ;
+    try std.testing.expectEqualStrings("v0.1.0", dependencyVersion(input).?);
+    const updated = try updateDependencyContent(std.testing.allocator, input, "v0.1.1", STABLE_HASH);
+    defer std.testing.allocator.free(updated);
+    try std.testing.expectEqualStrings("v0.1.1", dependencyVersion(updated).?);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "https://example.test/keep") != null);
+    try std.testing.expect(std.mem.indexOf(u8, updated, STABLE_HASH) != null);
+}
+
+test "managed templates cover serialization and realtime glue" {
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_worker_index, "wasm_dispatch.mjs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_wasm_dispatch, "await previous") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_internal_routes, "rejectPublicInternalRoute") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_realtime_object, "AkamataRealtimeRoom") != null);
 }
 
 test "generated app exposes the migration runner expected by the CLI" {

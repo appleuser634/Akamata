@@ -1,8 +1,8 @@
 # Akamataドキュメント
 
-このページはAkamata v0.1.1／Zig 0.16.x向けドキュメントの入口です。フレームワークを初めて試す場合はクイックスタートから始め、HandbookまたはTutorialで理解を深めてください。
+このページはAkamata v0.1.2／Zig 0.16.x向けドキュメントの入口です。フレームワークを初めて試す場合はクイックスタートから始め、HandbookまたはTutorialで理解を深めてください。
 
-**リリース状況:** v0.1.1は現在の公開0.x releaseです。`main`は開発向け
+**リリース状況:** v0.1.2は現在の公開0.x releaseです。`main`は開発向け
 のため、再現可能な build が必要な場合はタグ付き release を固定してください。
 
 [English](../en/README.md) · [プロジェクトREADME](../../README.ja.md)
