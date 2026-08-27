@@ -30,22 +30,22 @@ sed 's/{{NAME}}/legacyapp/g' "$repo_dir/tests/fixtures/v0.1.0_worker_index.mjs.t
 rm -f deploy/worker/wasm_dispatch.mjs deploy/worker/internal_routes.mjs deploy/worker/realtime_object.mjs
 rm -f .akamata/managed-files.json
 sed \
-  -e 's#moribit/Akamata/archive/refs/tags/v0.1.1#appleuser634/Akamata/archive/refs/tags/v0.1.0#' \
-  -e 's#akamata-0.1.1-uJIoIz4FLAH_S8StLpM_kSPjP7MWvyXKZ3bd7mpiPOMG#akamata-0.1.0-uJIoI4fvKwH--xMKwulRpDc6xEEUfaP0oilU6-dfUqbw#' \
+  -e 's#moribit/Akamata/archive/refs/tags/v0.1.2#appleuser634/Akamata/archive/refs/tags/v0.1.0#' \
+  -e 's#akamata-0.1.2-uJIoI3FOLAEWewAl6QsxLEl6mh23e9qKnWLlEWP3_quG#akamata-0.1.0-uJIoI4fvKwH--xMKwulRpDc6xEEUfaP0oilU6-dfUqbw#' \
   build.zig.zon > build.zig.zon.old
 mv build.zig.zon.old build.zig.zon
 
 before_zon=$(shasum -a 256 build.zig.zon)
 before_glue=$(shasum -a 256 deploy/worker/index.mjs)
-dry_output=$("$cli" update --to=v0.1.1 --sync --dry-run 2>&1)
+dry_output=$("$cli" update --to=v0.1.2 --sync --dry-run 2>&1)
 printf '%s\n' "$dry_output" | grep -F 'would update build.zig.zon' >/dev/null
 printf '%s\n' "$dry_output" | grep -F 'would update deploy/worker/index.mjs' >/dev/null
 test "$before_zon" = "$(shasum -a 256 build.zig.zon)"
 test "$before_glue" = "$(shasum -a 256 deploy/worker/index.mjs)"
 test ! -e deploy/worker/wasm_dispatch.mjs
 
-"$cli" update --to=v0.1.1 --sync
-grep -F 'refs/tags/v0.1.1.tar.gz' build.zig.zon >/dev/null
+"$cli" update --to=v0.1.2 --sync
+grep -F 'refs/tags/v0.1.2.tar.gz' build.zig.zon >/dev/null
 grep -F 'wasmDispatchQueue.run(() => dispatchWasm(request))' deploy/worker/index.mjs >/dev/null
 grep -F 'await previous' deploy/worker/wasm_dispatch.mjs >/dev/null
 test -f deploy/worker/internal_routes.mjs

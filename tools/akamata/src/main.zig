@@ -30,8 +30,8 @@ const tmpl_wasm_dispatch = @embedFile("templates/wasm_dispatch.mjs.tpl");
 const tmpl_internal_routes = @embedFile("templates/internal_routes.mjs.tpl");
 const tmpl_realtime_object = @embedFile("templates/realtime_object.mjs.tpl");
 
-const STABLE_VERSION = "v0.1.1";
-const STABLE_HASH = "akamata-0.1.1-uJIoIz4FLAH_S8StLpM_kSPjP7MWvyXKZ3bd7mpiPOMG";
+const STABLE_VERSION = "v0.1.2";
+const STABLE_HASH = "akamata-0.1.2-uJIoI3FOLAEWewAl6QsxLEl6mh23e9qKnWLlEWP3_quG";
 const MANAGED_MANIFEST = ".akamata/managed-files.json";
 
 pub fn main(init: std.process.Init) !void {
@@ -1521,7 +1521,7 @@ test "scaffold dependency is remote, pinned, and locally overridable" {
 }
 
 test "scaffold dependency tracks the current stable release" {
-    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.1.1.tar.gz") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, "archive/refs/tags/v0.1.2.tar.gz") != null);
     try std.testing.expect(std.mem.indexOf(u8, tmpl_build_zon, STABLE_HASH) != null);
 }
 
@@ -1557,9 +1557,9 @@ test "update detects and rewrites only the tagged Akamata dependency" {
         \\}
     ;
     try std.testing.expectEqualStrings("v0.1.0", dependencyVersion(input).?);
-    const updated = try updateDependencyContent(std.testing.allocator, input, "v0.1.1", STABLE_HASH);
+    const updated = try updateDependencyContent(std.testing.allocator, input, "v0.1.2", STABLE_HASH);
     defer std.testing.allocator.free(updated);
-    try std.testing.expectEqualStrings("v0.1.1", dependencyVersion(updated).?);
+    try std.testing.expectEqualStrings("v0.1.2", dependencyVersion(updated).?);
     try std.testing.expect(std.mem.indexOf(u8, updated, "https://example.test/keep") != null);
     try std.testing.expect(std.mem.indexOf(u8, updated, STABLE_HASH) != null);
 }
