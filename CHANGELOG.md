@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-27
+
+### Added
+
+- Added arbitrary DTO row mapping, a lightweight equality/IN/order/paging
+  query builder, partial repository updates, and batch `preload.belongsTo`.
+- Added model-independent `validatedJson`, numeric validation rules, portable
+  crypto helpers, typed configuration metadata/loading, standard application
+  error mapping, schema-agnostic session identity helpers, and idempotency
+  claims.
+- Added a portable storage factory, typed management-command dispatch, DB
+  health checks, cookie-jar/CSRF/multipart testing helpers, and English/Japanese
+  application-building guidance.
+
+### Changed
+
+- `akamata init` and `akamata sync` now share capability-aware Workers glue
+  generation. D1, R2, Queue, and Realtime selections are detected from the
+  project configuration and preserved during synchronization.
+- Relation, preload, repository, and raw DTO queries share one positional row
+  mapper while complex SQL remains an explicit raw-SQL escape hatch.
+
+### Security
+
+- CSRF protection can enforce Origin and Fetch Metadata and bind the
+  double-submit token hash to the server-side session.
+- Forced Workers synchronization no longer collapses projects to minimal glue;
+  local modifications are still backed up, and disabled managed capabilities
+  are removed only after hash verification.
+
+### Testing
+
+- Added D1-only, D1+R2, Queue, Realtime, and combined legacy-project sync/build
+  regressions, including the `am.storage.Store` to Workers R2 path.
+- Added SQLite integration coverage for DTO mapping, query construction,
+  partial updates, idempotency, relation preload, and DB health checks.
+
 ## [0.1.2] - 2026-08-27
 
 ### Added
